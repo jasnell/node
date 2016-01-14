@@ -54,7 +54,7 @@ test('writable side consumption', function(t) {
   };
 
   for (var i = 1; i <= 10; i++) {
-    tx.write(new Buffer(i));
+    tx.write(Buffer.unsafe(i));
   }
   tx.end();
 
@@ -109,7 +109,7 @@ test('object passthrough', function(t) {
 test('simple transform', function(t) {
   var pt = new Transform();
   pt._transform = function(c, e, cb) {
-    var ret = new Buffer(c.length);
+    var ret = Buffer.unsafe(c.length);
     ret.fill('x');
     pt.push(ret);
     cb();

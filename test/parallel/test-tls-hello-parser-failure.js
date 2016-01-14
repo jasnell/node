@@ -16,7 +16,7 @@ var options = {
   cert: fs.readFileSync(common.fixturesDir + '/test_cert.pem')
 };
 
-var bonkers = new Buffer(1024 * 1024);
+var bonkers = Buffer.unsafe(1024 * 1024);
 bonkers.fill(42);
 
 var server = tls.createServer(options, function(c) {

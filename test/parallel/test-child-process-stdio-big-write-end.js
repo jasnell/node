@@ -29,14 +29,14 @@ function parent() {
 
   // Write until the buffer fills up.
   do {
-    var buf = new Buffer(BUFSIZE);
+    var buf = Buffer.unsafe(BUFSIZE);
     buf.fill('.');
     sent += BUFSIZE;
   } while (child.stdin.write(buf));
 
   // then write a bunch more times.
   for (var i = 0; i < 100; i++) {
-    var buf = new Buffer(BUFSIZE);
+    var buf = Buffer.unsafe(BUFSIZE);
     buf.fill('.');
     sent += BUFSIZE;
     child.stdin.write(buf);

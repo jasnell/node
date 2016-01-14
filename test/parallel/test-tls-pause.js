@@ -39,7 +39,7 @@ server.listen(common.PORT, function() {
     send();
     function send() {
       console.error('sending');
-      var ret = client.write(new Buffer(bufSize));
+      var ret = client.write(Buffer.unsafe(bufSize));
       console.error('write => %j', ret);
       if (false !== ret) {
         console.error('write again');

@@ -14,7 +14,7 @@ var hwm = 10;
 var r = stream.Readable({ highWaterMark: hwm });
 var chunks = 10;
 
-var data = new Buffer(chunks * hwm + Math.ceil(hwm / 2));
+var data = Buffer.unsafe(chunks * hwm + Math.ceil(hwm / 2));
 for (var i = 0; i < data.length; i++) {
   var c = 'asdf'.charCodeAt(i % 4);
   data[i] = c;
@@ -48,7 +48,7 @@ r._read = function(n) {
 
 function pushError() {
   assert.throws(function() {
-    r.push(new Buffer(1));
+    r.push(Buffer.unsafe(1));
   });
 }
 
@@ -64,7 +64,7 @@ var ended = false;
 r.on('end', function() {
   assert(!ended, 'end emitted more than once');
   assert.throws(function() {
-    r.unshift(new Buffer(1));
+    r.unshift(Buffer.unsafe(1));
   });
   ended = true;
   w.end();

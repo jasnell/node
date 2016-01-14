@@ -77,7 +77,7 @@ function runTest(highWaterMark, objectMode, produce) {
   }
 }
 
-runTest(100, false, function() { return new Buffer(100); });
+runTest(100, false, function() { return Buffer.unsafe(100); });
 runTest(10, false, function() { return new Buffer('xxxxxxxxxx'); });
 runTest(1, true, function() { return { foo: 'bar' }; });
 

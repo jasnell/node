@@ -17,7 +17,7 @@ function pingPongTest(port, host) {
                            ' from ' + rinfo.address + ':' + rinfo.port);
 
     if (/PING/.exec(msg)) {
-      var buf = new Buffer(4);
+      var buf = Buffer.unsafe(4);
       buf.write('PONG');
       server.send(buf, 0, buf.length,
                   rinfo.port, rinfo.address,

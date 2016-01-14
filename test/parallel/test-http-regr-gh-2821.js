@@ -16,7 +16,7 @@ server.listen(common.PORT, function() {
     port: common.PORT
   });
 
-  const payload = new Buffer(16390);
+  const payload = Buffer.unsafe(16390);
   payload.fill('Й');
   req.write(payload);
   req.end();

@@ -7,8 +7,8 @@ const fs = require('fs');
 const filepath = path.join(common.fixturesDir, 'x.txt');
 const fd = fs.openSync(filepath, 'r');
 const expected = 'xyz\n';
-const bufferAsync = new Buffer(expected.length);
-const bufferSync = new Buffer(expected.length);
+const bufferAsync = Buffer.unsafe(expected.length);
+const bufferSync = Buffer.unsafe(expected.length);
 let readCalled = 0;
 
 fs.read(fd, bufferAsync, 0, expected.length, 0, function(err, bytesRead) {

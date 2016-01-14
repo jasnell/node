@@ -66,7 +66,7 @@ TestReader.prototype._read = function(n) {
     }
 
     this.pos += n;
-    var ret = new Buffer(n);
+    var ret = Buffer.unsafe(n);
     ret.fill('a');
 
     console.log('this.push(ret)', ret);

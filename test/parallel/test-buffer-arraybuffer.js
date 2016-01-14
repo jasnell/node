@@ -46,7 +46,7 @@ assert.throws(function() {
 }, TypeError);
 
 // write{Double,Float}{LE,BE} with noAssert should not crash, cf. #3766
-var b = new Buffer(1);
+var b = Buffer.unsafe(1);
 b.writeFloatLE(11.11, 0, true);
 b.writeFloatBE(11.11, 0, true);
 b.writeDoubleLE(11.11, 0, true);

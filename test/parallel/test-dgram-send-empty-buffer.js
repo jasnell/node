@@ -19,7 +19,7 @@ client.on('message', function(buffer, bytes) {
   client.close();
 });
 
-buf = new Buffer(0);
+buf = Buffer.unsafe(0);
 client.send(buf, 0, 0, common.PORT, '127.0.0.1', function(err, len) { });
 
 timer = setTimeout(function() {

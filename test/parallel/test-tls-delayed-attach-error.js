@@ -10,7 +10,7 @@ var tls = require('tls');
 var fs = require('fs');
 var net = require('net');
 
-var bonkers = new Buffer(1024);
+var bonkers = Buffer.unsafe(1024);
 bonkers.fill(42);
 
 var receivedError = false;

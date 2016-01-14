@@ -7,7 +7,7 @@ var once = false;
 var first = null;
 var second = null;
 
-const chunk = new Buffer(1024);
+const chunk = Buffer.unsafe(1024);
 chunk.fill('X');
 
 var size = 0;

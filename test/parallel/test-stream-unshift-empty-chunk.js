@@ -8,7 +8,7 @@ var Readable = require('stream').Readable;
 
 var r = new Readable();
 var nChunks = 10;
-var chunk = new Buffer(10);
+var chunk = Buffer.unsafe(10);
 chunk.fill('x');
 
 r._read = function(n) {
@@ -28,7 +28,7 @@ r.on('readable', function() {
     // stream, like a parser might do.  We just fill it with
     // 'y' so that it's easy to see which bits were touched,
     // and which were not.
-    var putBack = new Buffer(readAll ? 0 : 5);
+    var putBack = Buffer.unsafe(readAll ? 0 : 5);
     putBack.fill('y');
     readAll = !readAll;
     r.unshift(putBack);

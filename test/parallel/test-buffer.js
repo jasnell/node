@@ -24,7 +24,7 @@ for (var i = 0; i < 1024; i++) {
   assert.strictEqual(i % 256, b[i]);
 }
 
-var c = new Buffer(512);
+var c = Buffer.unsafe(512);
 console.log('c.length == %d', c.length);
 assert.strictEqual(512, c.length);
 
@@ -41,7 +41,7 @@ assert.throws(function() {
 // Make sure this doesn't hang indefinitely.
 Buffer(8).fill('');
 
-var buf = new Buffer(64);
+var buf = Buffer.unsafe(64);
 buf.fill(10);
 for (var i = 0; i < buf.length; i++)
   assert.equal(buf[i], 10);
@@ -72,7 +72,7 @@ for (; i < 32; i++)
 for (; i < buf.length; i++)
   assert.equal(0, buf[i]);
 
-var buf = new Buffer(10);
+var buf = Buffer.unsafe(10);
 buf.fill('abc');
 assert.equal(buf.toString(), 'abcabcabca');
 buf.fill('է');
@@ -152,7 +152,7 @@ for (var i = 0; i < b.length; i++) {
 }
 
 // copy string longer than buffer length (failure will segfault)
-var bb = new Buffer(10);
+var bb = Buffer.unsafe(10);
 bb.fill('hello crazy world');
 
 
@@ -216,7 +216,7 @@ assert.strictEqual('Unknown encoding: invalid', caught_error.message);
 new Buffer('');
 new Buffer('', 'ascii');
 new Buffer('', 'binary');
-new Buffer(0);
+Buffer.unsafe(0);
 
 // try to write a 0-length string beyond the end of b
 assert.throws(function() {
@@ -239,14 +239,14 @@ assert.throws(function() {
 }, RangeError);
 
 // try to copy 0 bytes worth of data into an empty buffer
-b.copy(new Buffer(0), 0, 0, 0);
+b.copy(Buffer.unsafe(0), 0, 0, 0);
 
 // try to copy 0 bytes past the end of the target buffer
-b.copy(new Buffer(0), 1, 1, 1);
-b.copy(new Buffer(1), 1, 1, 1);
+b.copy(Buffer.unsafe(0), 1, 1, 1);
+b.copy(Buffer.unsafe(1), 1, 1, 1);
 
 // try to copy 0 bytes from past the end of the source buffer
-b.copy(new Buffer(1), 0, 2048, 2048);
+b.copy(Buffer.unsafe(1), 0, 2048, 2048);
 
 const rangeBuffer = new Buffer('abc');
 
@@ -387,21 +387,21 @@ for (var i = 0; i < 50; i++) {
 
 
 // make sure only top level parent propagates from allocPool
-var b = new Buffer(5);
+var b = Buffer.unsafe(5);
 var c = b.slice(0, 4);
 var d = c.slice(0, 2);
 assert.equal(b.parent, c.parent);
 assert.equal(b.parent, d.parent);
 
 // also from a non-pooled instance
-var b = new SlowBuffer(5);
+var b = SlowBuffer.unsafe(5);
 var c = b.slice(0, 4);
 var d = c.slice(0, 2);
 
 
 // Bug regression test
 var testValue = '\u00F6\u65E5\u672C\u8A9E'; // ö日本語
-var buffer = new Buffer(32);
+var buffer = Buffer.unsafe(32);
 var size = buffer.write(testValue, 0, 'utf8');
 console.log('bytes written to buffer: ' + size);
 var slice = buffer.toString('utf8', 0, size);
@@ -409,7 +409,7 @@ assert.equal(slice, testValue);
 
 
 // Test triple  slice
-var a = new Buffer(8);
+var a = Buffer.unsafe(8);
 for (var i = 0; i < 8; i++) a[i] = i;
 var b = a.slice(4, 8);
 assert.equal(4, b[0]);
@@ -492,7 +492,7 @@ var expected = 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQsIG5vdCBvbmx5IGJ5IGhpcyByZWFzb24s' +
 assert.equal(expected, (new Buffer(quote)).toString('base64'));
 
 
-b = new Buffer(1024);
+b = Buffer.unsafe(1024);
 var bytesWritten = b.write(expected, 0, 'base64');
 assert.equal(quote.length, bytesWritten);
 assert.equal(quote, b.toString('ascii', 0, quote.length));
@@ -504,7 +504,7 @@ var expectedWhite = expected.slice(0, 60) + ' \n' +
                     expected.slice(180, 240) + ' \n' +
                     expected.slice(240, 300) + '\n' +
                     expected.slice(300, 360) + '\n';
-b = new Buffer(1024);
+b = Buffer.unsafe(1024);
 bytesWritten = b.write(expectedWhite, 0, 'base64');
 assert.equal(quote.length, bytesWritten);
 assert.equal(quote, b.toString('ascii', 0, quote.length));
@@ -611,7 +611,7 @@ assert.equal(dot.toString('base64'), '//4uAA==');
 //
 // https://github.com/joyent/node/issues/402
 var segments = ['TWFkbmVzcz8h', 'IFRoaXM=', 'IGlz', 'IG5vZGUuanMh'];
-var buf = new Buffer(64);
+var buf = Buffer.unsafe(64);
 var pos = 0;
 
 for (var i = 0; i < segments.length; ++i) {
@@ -649,7 +649,7 @@ assert.equal(0, Buffer('hello').slice(0, 0).length);
 
 // test hex toString
 console.log('Create hex string from buffer');
-var hexb = new Buffer(256);
+var hexb = Buffer.unsafe(256);
 for (var i = 0; i < 256; i++) {
   hexb[i] = i;
 }
@@ -690,7 +690,7 @@ assert.equal(b2, b4);
 
 function buildBuffer(data) {
   if (Array.isArray(data)) {
-    var buffer = new Buffer(data.length);
+    var buffer = Buffer.unsafe(data.length);
     data.forEach(function(v, k) {
       buffer[k] = v;
     });
@@ -747,7 +747,7 @@ assert.equal(0x6f, z[1]);
 assert.equal(0, Buffer('hello').slice(0, 0).length);
 
 ['ucs2', 'ucs-2', 'utf16le', 'utf-16le'].forEach(function(encoding) {
-  var b = new Buffer(10);
+  var b = Buffer.unsafe(10);
   b.write('あいうえお', encoding);
   assert.equal(b.toString(encoding), 'あいうえお');
 });
@@ -773,7 +773,7 @@ assert.equal(buf.length, 1);
 buf = new Buffer('\0\0');
 assert.equal(buf.length, 2);
 
-buf = new Buffer(2);
+buf = Buffer.unsafe(2);
 var written = buf.write(''); // 0byte
 assert.equal(written, 0);
 written = buf.write('\0'); // 1byte (v8 adds null terminator)
@@ -787,14 +787,14 @@ assert.equal(written, 1);
 written = buf.write('\0\0あ'); // 1byte * 2 + 3bytes
 assert.equal(written, 2);
 
-buf = new Buffer(10);
+buf = Buffer.unsafe(10);
 written = buf.write('あいう'); // 3bytes * 3 (v8 adds null terminator)
 assert.equal(written, 9);
 written = buf.write('あいう\0'); // 3bytes * 3 + 1byte
 assert.equal(written, 10);
 
 // #243 Test write() with maxLength
-var buf = new Buffer(4);
+var buf = Buffer.unsafe(4);
 buf.fill(0xFF);
 var written = buf.write('abcd', 1, 2, 'utf8');
 console.log(buf);
@@ -843,7 +843,7 @@ assert.equal(buf[3], 0xFF);
 });
 
 // test offset returns are correct
-var b = new Buffer(16);
+var b = Buffer.unsafe(16);
 assert.equal(4, b.writeUInt32LE(0, 0));
 assert.equal(6, b.writeUInt16LE(0, 4));
 assert.equal(7, b.writeUInt8(0, 6));
@@ -945,58 +945,58 @@ Buffer(Buffer(0), 0, 0);
 
 // issue GH-4331
 assert.throws(function() {
-  new Buffer(0xFFFFFFFF);
+  Buffer.unsafe(0xFFFFFFFF);
 }, RangeError);
 assert.throws(function() {
-  new Buffer(0xFFFFFFFFF);
+  Buffer.unsafe(0xFFFFFFFFF);
 }, RangeError);
 
 
 // attempt to overflow buffers, similar to previous bug in array buffers
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.readFloatLE(0xffffffff);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.writeFloatLE(0.0, 0xffffffff);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.readFloatLE(0xffffffff);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.writeFloatLE(0.0, 0xffffffff);
 }, RangeError);
 
 
 // ensure negative values can't get past offset
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.readFloatLE(-1);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.writeFloatLE(0.0, -1);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.readFloatLE(-1);
 }, RangeError);
 
 assert.throws(function() {
-  var buf = new Buffer(8);
+  var buf = Buffer.unsafe(8);
   buf.writeFloatLE(0.0, -1);
 }, RangeError);
 
 // offset checks
-var buf = new Buffer(0);
+var buf = Buffer.unsafe(0);
 
 assert.throws(function() { buf.readUInt8(0); }, RangeError);
 assert.throws(function() { buf.readInt8(0); }, RangeError);
@@ -1066,92 +1066,92 @@ assert.equal(buf.readInt8(0), -1);
 
 // test for common write(U)IntLE/BE
 (function() {
-  var buf = new Buffer(3);
+  var buf = Buffer.unsafe(3);
   buf.writeUIntLE(0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x56, 0x34, 0x12]);
   assert.equal(buf.readUIntLE(0, 3), 0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeUIntBE(0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x12, 0x34, 0x56]);
   assert.equal(buf.readUIntBE(0, 3), 0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntLE(0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x56, 0x34, 0x12]);
   assert.equal(buf.readIntLE(0, 3), 0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntBE(0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x12, 0x34, 0x56]);
   assert.equal(buf.readIntBE(0, 3), 0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntLE(-0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0xaa, 0xcb, 0xed]);
   assert.equal(buf.readIntLE(0, 3), -0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntBE(-0x123456, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0xed, 0xcb, 0xaa]);
   assert.equal(buf.readIntBE(0, 3), -0x123456);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntLE(-0x123400, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x00, 0xcc, 0xed]);
   assert.equal(buf.readIntLE(0, 3), -0x123400);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntBE(-0x123400, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0xed, 0xcc, 0x00]);
   assert.equal(buf.readIntBE(0, 3), -0x123400);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntLE(-0x120000, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0x00, 0x00, 0xee]);
   assert.equal(buf.readIntLE(0, 3), -0x120000);
 
-  buf = new Buffer(3);
+  buf = Buffer.unsafe(3);
   buf.writeIntBE(-0x120000, 0, 3);
   assert.deepEqual(buf.toJSON().data, [0xee, 0x00, 0x00]);
   assert.equal(buf.readIntBE(0, 3), -0x120000);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeUIntLE(0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x90, 0x78, 0x56, 0x34, 0x12]);
   assert.equal(buf.readUIntLE(0, 5), 0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeUIntBE(0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x12, 0x34, 0x56, 0x78, 0x90]);
   assert.equal(buf.readUIntBE(0, 5), 0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntLE(0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x90, 0x78, 0x56, 0x34, 0x12]);
   assert.equal(buf.readIntLE(0, 5), 0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntBE(0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x12, 0x34, 0x56, 0x78, 0x90]);
   assert.equal(buf.readIntBE(0, 5), 0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntLE(-0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x70, 0x87, 0xa9, 0xcb, 0xed]);
   assert.equal(buf.readIntLE(0, 5), -0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntBE(-0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0xed, 0xcb, 0xa9, 0x87, 0x70]);
   assert.equal(buf.readIntBE(0, 5), -0x1234567890);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntLE(-0x0012000000, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x00, 0x00, 0x00, 0xee, 0xff]);
   assert.equal(buf.readIntLE(0, 5), -0x0012000000);
 
-  buf = new Buffer(5);
+  buf = Buffer.unsafe(5);
   buf.writeIntBE(-0x0012000000, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0xff, 0xee, 0x00, 0x00, 0x00]);
   assert.equal(buf.readIntBE(0, 5), -0x0012000000);
@@ -1205,7 +1205,7 @@ assert.equal(buf.readInt8(0), -1);
 
   // try to slice a zero length Buffer
   // see https://github.com/joyent/node/issues/5881
-  SlowBuffer(0).slice(0, 1);
+  SlowBuffer.unsafe(0).slice(0, 1);
 })();
 
 // Regression test for #5482: should throw but not assert in C++ land.
@@ -1236,7 +1236,7 @@ assert.throws(function() {
 }, RangeError);
 
 assert.throws(function() {
-  new SlowBuffer((-1 >>> 0) + 1);
+  SlowBuffer.unsafe((-1 >>> 0) + 1);
 }, RangeError);
 
 if (common.hasCrypto) {
@@ -1255,9 +1255,9 @@ if (common.hasCrypto) {
 }
 
 // Test Compare
-var b = new Buffer(1).fill('a');
-var c = new Buffer(1).fill('c');
-var d = new Buffer(2).fill('aa');
+var b = Buffer.unsafe(1).fill('a');
+var c = Buffer.unsafe(1).fill('c');
+var d = Buffer.unsafe(2).fill('aa');
 
 assert.equal(b.compare(c), -1);
 assert.equal(c.compare(d), 1);
@@ -1276,25 +1276,25 @@ assert.equal(Buffer.compare(Buffer(0), Buffer(1)), -1);
 assert.equal(Buffer.compare(Buffer(1), Buffer(0)), 1);
 
 assert.throws(function() {
-  var b = new Buffer(1);
+  var b = Buffer.unsafe(1);
   Buffer.compare(b, 'abc');
 });
 
 assert.throws(function() {
-  var b = new Buffer(1);
+  var b = Buffer.unsafe(1);
   Buffer.compare('abc', b);
 });
 
 assert.throws(function() {
-  var b = new Buffer(1);
+  var b = Buffer.unsafe(1);
   b.compare('abc');
 });
 
 // Test Equals
-var b = new Buffer(5).fill('abcdf');
-var c = new Buffer(5).fill('abcdf');
-var d = new Buffer(5).fill('abcde');
-var e = new Buffer(6).fill('abcdef');
+var b = Buffer.unsafe(5).fill('abcdf');
+var c = Buffer.unsafe(5).fill('abcdf');
+var d = Buffer.unsafe(5).fill('abcde');
+var e = Buffer.unsafe(6).fill('abcdef');
 
 assert.ok(b.equals(c));
 assert.ok(!c.equals(d));
@@ -1302,7 +1302,7 @@ assert.ok(!d.equals(e));
 assert.ok(d.equals(d));
 
 assert.throws(function() {
-  var b = new Buffer(1);
+  var b = Buffer.unsafe(1);
   b.equals('abc');
 });
 

@@ -11,7 +11,7 @@ process.maxTickDepth = N + 2;
 
 var reads = 0;
 r._read = function(n) {
-  var chunk = reads++ === N ? null : new Buffer(1);
+  var chunk = reads++ === N ? null : Buffer.unsafe(1);
   r.push(chunk);
 };
 

@@ -23,7 +23,7 @@ switch (process.argv[2]) {
 
 function parent() {
   const http = require('http');
-  const bigResponse = new Buffer(10240).fill('x');
+  const bigResponse = Buffer.unsafe(10240).fill('x');
   var gotTimeout = false;
   var childClosed = false;
   var requests = 0;

@@ -3,7 +3,7 @@ require('../common');
 const assert = require('assert');
 
 assert.doesNotThrow(function() {
-  new Buffer(10);
+  Buffer.unsafe(10);
 });
 
 assert.throws(function() {
