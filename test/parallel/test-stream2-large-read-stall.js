@@ -49,7 +49,7 @@ function push() {
   }
 
   console.error('   push #%d', pushes);
-  if (r.push(Buffer.unsafe(PUSHSIZE)))
+  if (r.push(Buffer.alloc(PUSHSIZE)))
     setTimeout(push);
 }
 

@@ -3,7 +3,7 @@ const common = require('../common');
 const assert = require('assert');
 const net = require('net');
 
-const buf = Buffer.unsafe(10 * 1024 * 1024);
+const buf = Buffer.alloc(10 * 1024 * 1024);
 
 buf.fill(0x62);
 

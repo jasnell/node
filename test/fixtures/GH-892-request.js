@@ -22,7 +22,7 @@ var req = https.request(options, function(res) {
   res.resume();
 });
 
-req.end(Buffer.unsafe(bytesExpected));
+req.end(Buffer.alloc(bytesExpected));
 
 process.on('exit', function() {
   assert.ok(gotResponse);

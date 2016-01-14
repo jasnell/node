@@ -17,7 +17,7 @@ var headersComplete = 0;
 var messagesComplete = 0;
 
 function flushPool() {
-  Buffer.unsafe(Buffer.poolSize - 1);
+  Buffer.alloc(Buffer.poolSize - 1);
   gc();
 }
 

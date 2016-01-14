@@ -13,7 +13,7 @@ var assert = require('assert'),
     common = require('../common'),
     dgram = require('dgram');
 
-var buf = Buffer.unsafe(1024);
+var buf = Buffer.alloc(1024);
 buf.fill(42);
 
 var packetsReceived = 0,

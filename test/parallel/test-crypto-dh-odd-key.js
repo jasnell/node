@@ -9,7 +9,7 @@ if (!common.hasCrypto) {
 var crypto = require('crypto');
 
 function test() {
-  var odd = Buffer.unsafe(39);
+  var odd = Buffer.alloc(39);
   odd.fill('A');
 
   var c = crypto.createDiffieHellman(32);

@@ -14,7 +14,7 @@ var net = require('net');
 
 var options, a, b;
 
-var body = Buffer.unsafe(400000).fill('A');
+var body = Buffer.alloc(400000).fill('A');
 
 options = {
   key: fs.readFileSync(path.join(common.fixturesDir, 'test_key.pem')),

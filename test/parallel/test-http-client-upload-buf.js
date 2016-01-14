@@ -41,7 +41,7 @@ server.on('listening', function() {
     });
   });
 
-  req.write(Buffer.unsafe(N));
+  req.write(Buffer.alloc(N));
   req.end();
 });
 

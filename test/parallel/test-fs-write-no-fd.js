@@ -4,7 +4,7 @@ const fs = require('fs');
 const assert = require('assert');
 
 assert.throws(function() {
-  fs.write(null, Buffer.unsafe(1), 0, 1);
+  fs.write(null, Buffer.alloc(1), 0, 1);
 }, /TypeError/);
 
 assert.throws(function() {

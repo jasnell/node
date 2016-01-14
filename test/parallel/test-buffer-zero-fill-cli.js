@@ -9,10 +9,10 @@ const SlowBuffer = require('buffer').SlowBuffer;
 const assert = require('assert');
 
 const bufs = [
-  Buffer.safe(10),
-  SlowBuffer.safe(10),
-  Buffer.unsafe(10),
-  SlowBuffer.unsafe(10),
+  Buffer.zalloc(10),
+  SlowBuffer.zalloc(10),
+  Buffer.alloc(10),
+  SlowBuffer.alloc(10),
   new Buffer(10),
   new SlowBuffer(10)
 ];

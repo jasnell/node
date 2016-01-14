@@ -50,7 +50,7 @@ function writer() {
       gc();
       gc();
       gc();
-      var nuBuf = Buffer.unsafe(kBufSize);
+      var nuBuf = Buffer.alloc(kBufSize);
       neverWrittenBuffer.copy(nuBuf);
       if (bufPool.push(nuBuf) > 100) {
         bufPool.length = 0;
@@ -74,7 +74,7 @@ function writerCB(err, written) {
 
 
 function newBuffer(size, value) {
-  var buffer = Buffer.unsafe(size);
+  var buffer = Buffer.alloc(size);
   while (size--) {
     buffer[size] = value;
   }

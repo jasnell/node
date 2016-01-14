@@ -10,7 +10,7 @@ var ww = [];
 var cnt = 100;
 var chunks = 1000;
 var chunkSize = 250;
-var data = Buffer.unsafe(chunkSize);
+var data = Buffer.alloc(chunkSize);
 var wclosed = 0;
 var rclosed = 0;
 

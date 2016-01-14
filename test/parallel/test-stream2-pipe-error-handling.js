@@ -10,7 +10,7 @@ var stream = require('stream');
   source._read = function(n) {
     n = Math.min(count, n);
     count -= n;
-    source.push(Buffer.unsafe(n));
+    source.push(Buffer.alloc(n));
   };
 
   var unpipedDest;
@@ -50,7 +50,7 @@ var stream = require('stream');
   source._read = function(n) {
     n = Math.min(count, n);
     count -= n;
-    source.push(Buffer.unsafe(n));
+    source.push(Buffer.alloc(n));
   };
 
   var unpipedDest;

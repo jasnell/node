@@ -29,7 +29,7 @@ client.on('message', function(buffer, bytes) {
   callback();
 });
 
-client.send(Buffer.unsafe(1), 0, 0, common.PORT, '127.0.0.1', (err, len) => {
+client.send(Buffer.alloc(1), 0, 0, common.PORT, '127.0.0.1', (err, len) => {
   callback();
 });
 

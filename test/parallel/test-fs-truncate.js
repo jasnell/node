@@ -5,7 +5,7 @@ var path = require('path');
 var fs = require('fs');
 var tmp = common.tmpDir;
 var filename = path.resolve(tmp, 'truncate-file.txt');
-var data = Buffer.unsafe(1024 * 16);
+var data = Buffer.alloc(1024 * 16);
 data.fill('x');
 
 common.refreshTmpDir();

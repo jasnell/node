@@ -19,7 +19,7 @@ assert.throws(function() {
 }, TypeError);
 
 assert.throws(function() {
-  Buffer.compare(fb, Buffer.unsafe(0));
+  Buffer.compare(fb, Buffer.alloc(0));
 }, TypeError);
 
 assert.throws(function() {
@@ -35,7 +35,7 @@ assert.throws(function() {
 }, TypeError);
 
 assert.throws(function() {
-  fb.equals(Buffer.unsafe(0));
+  fb.equals(Buffer.alloc(0));
 }, TypeError);
 
 assert.throws(function() {

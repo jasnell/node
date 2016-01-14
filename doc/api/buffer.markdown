@@ -20,12 +20,12 @@ resized.
 The `Buffer` class is a global within Node.js, making it unlikely that one
 would need to ever use `require('buffer')`.
 
-    const buf1 = Buffer.safe(10);
+    const buf1 = Buffer.zalloc(10);
       // creates a zero-filled buffer of length 10
       
-    const buf2 = Buffer.unsafe(10);
+    const buf2 = Buffer.alloc(10);
       // creates an uninitialized buffer of length 10
-      // this is faster than calling Buffer.safe() but the returned
+      // this is faster than calling Buffer.zalloc() but the returned
       // buffer instance might contain old data that needs to be
       // overwritten
 
@@ -38,7 +38,7 @@ would need to ever use `require('buffer')`.
     const buf5 = new Buffer('tést', 'utf8');
       // creates a buffer containing UTF8 bytes [74, c3, a9, 73, 74]
 
-## `Buffer.safe()` vs. `Buffer.unsafe()`
+## `Buffer.zalloc()` vs. `Buffer.alloc()`
 
 In prior versions of Node.js, creating a new `Buffer` instance by passing a
 number as the first argument to `Buffer()` (e.g. `new Buffer(10)`), would
@@ -52,35 +52,36 @@ documented, development experience has demonstrated that a more explicit
 distinction is required between creating a fast-but-uninitialized `Buffer` and
 creating a slower-but-safer `Buffer`.
 
-Accordingly the [`Buffer.safe()`][], [`Buffer.unsafe()`][],
-[`SlowBuffer.safe()`][], and [`SlowBuffer.unsafe()`][] factory methods have
+Accordingly the [`Buffer.zalloc()`][], [`Buffer.alloc()`][],
+[`SlowBuffer.zalloc()`][], and [`SlowBuffer.alloc()`][] factory methods have
 been added and the existing `new Buffer(size)` and `new SlowBuffer(size)`
 constructors have been deprecated.
 
-The `Buffer.unsafe()` and `SlowBuffer.unsafe()` methods are functionally
+The `Buffer.alloc()` and `SlowBuffer.alloc()` methods are functionally
 equivalent to calling `new Buffer(size)` and `new SlowBuffer(size)`. That is,
 each returns a new `Buffer` as a specified size whose content is
 *uninitialized* and *must* be either filled explicitly using `buf.fill()` or
 written to completely in order to reset the content.
 
-The `Buffer.safe()` and `SlowBuffer.safe()` methods, on the other hand,
-always return zero-filled `Buffer` instances. These methods are significantly
-slower that the "unsafe" alternatives but ensure newly created `Buffer`
+The `Buffer.zalloc()` and `SlowBuffer.zalloc()` methods (`zalloc` for
+"zeroed-buffer"), on the other hand, always return zero-filled `Buffer`
+instances. These methods are significantly slower than the `Buffer.alloc()`
+and `SlowBuffer.alloc()` alternatives but ensure newly created `Buffer`
 instances never contain old and potentially sensitive data.
 
 ### The `--zero-fill-buffers` command line flag
 
 Node.js can be started using the `--zero-fill-buffers` command line option to
 force all newly allocated `Buffer` and `SlowBuffer` instances created using
-either `new Buffer(size)`, `Buffer.unsafe(size)`, `new SlowBuffer(size)` or
-`SlowBuffer.unsafe(size)` to be *automatically zero-filled*. Use of this flag
+either `new Buffer(size)`, `Buffer.alloc(size)`, `new SlowBuffer(size)` or
+`SlowBuffer.alloc(size)` to be *automatically zero-filled*. Use of this flag
 *changes the default behavior* of these methods and *will have a significant
 impact* on performance. Use of the `--zero-fill-buffers` option is recommended
 only when absolutely necessary to enforce that newly allocated `Buffer`
 instances cannot contain potentially sensitive data.
 
     $ node --zero-fill-buffers
-    > Buffer.unsafe(5);
+    > Buffer.alloc(5);
     <Buffer 00 00 00 00 00>
 
 ## Buffers and Character Encodings
@@ -240,7 +241,7 @@ TypedArray.
 
 ### new Buffer(size)
 
-    Stability: 0 - Deprecated: Use [`Buffer.safe()`][] or [`Buffer.unsafe()`][]
+    Stability: 0 - Deprecated: Use [`Buffer.zalloc()`][] or [`Buffer.alloc()`][]
     instead.
 
 * `size` Number
@@ -358,7 +359,7 @@ Returns 'true' if `obj` is a Buffer.
 Returns true if the `encoding` is a valid encoding argument, or false
 otherwise.
 
-### Class Method: Buffer.safe(size)
+### Class Method: Buffer.zalloc(size)
 
 * `size` Number
 
@@ -371,15 +372,15 @@ created.
 Like `ArrayBuffers`, the underlying memory for `Buffer` instances created in
 this way is *automatically zero-filled*:
 
-    const buf = Buffer.safe(5);
+    const buf = Buffer.zalloc(5);
     console.log(buf);
       // <Buffer 00 00 00 00 00>
 
-Calling `Buffer.safe(size)` is significantly slower than the alternative
-`Buffer.unsafe(size)` but ensures that the newly created `Buffer` instance
+Calling `Buffer.zalloc(size)` is significantly slower than the alternative
+`Buffer.alloc(size)` but ensures that the newly created `Buffer` instance
 contents will *never contain sensitive data*.
 
-### Class Method: Buffer.unsafe(size)
+### Class Method: Buffer.alloc(size)
 
 * `size` Number
 
@@ -394,7 +395,7 @@ this way is *not initialized*. The contents of a newly created `Buffer` are
 unknown and *could contain sensitive data*. Use [`buf.fill(0)`][] to
 initialize a Buffer to zeroes.
 
-    const buf = Buffer.unsafe(5);
+    const buf = Buffer.alloc(5);
     console.log(buf);
       // <Buffer 78 e0 82 02 01>
       // (octets will be different, every time)
@@ -1321,7 +1322,7 @@ un-pooled Buffer instance using `SlowBuffer` then copy out the relevant bits.
     socket.on('readable', () => {
       var data = socket.read();
       // allocate for retained data
-      var sb = SlowBuffer.unsafe(10);
+      var sb = SlowBuffer.alloc(10);
       // copy the data into the new allocation
       data.copy(sb, 0, 0, 10);
       store.push(sb);
@@ -1332,8 +1333,8 @@ has observed undue memory retention in their applications.
 
 ### new SlowBuffer(size)
 
-    Stability: 0 - Deprecated: Use [`SlowBuffer.safe()`][] or
-    [`SlowBuffer.unsafe()`][] instead.
+    Stability: 0 - Deprecated: Use [`SlowBuffer.zalloc()`][] or
+    [`SlowBuffer.alloc()`][] instead.
 
 * `size` Number
 
@@ -1357,7 +1358,7 @@ initialize a `SlowBuffer` to zeroes.
     console.log(buf);
       // <Buffer 00 00 00 00 00>
 
-### Class Method: SlowBuffer.safe(size)
+### Class Method: SlowBuffer.zalloc(size)
 
 * `size` Number
 
@@ -1370,15 +1371,15 @@ created.
 Like `ArrayBuffers`, the underlying memory for `SlowBuffer` instances created in
 this way is *automatically zero-filled*:
 
-    const buf = require('buffer').SlowBuffer.safe(5);
+    const buf = require('buffer').SlowBuffer.zalloc(5);
     console.log(buf);
       // <Buffer 00 00 00 00 00>
 
-Calling `SlowBuffer.safe(size)` is slower than the alternative
-`SlowBuffer.unsafe(size)` but ensures that the newly created SlowBuffer
+Calling `SlowBuffer.zalloc(size)` is slower than the alternative
+`SlowBuffer.alloc(size)` but ensures that the newly created SlowBuffer
 instance contents will *never contain sensitive data*.
 
-### Class Method: SlowBuffer.unsafe(size)
+### Class Method: SlowBuffer.alloc(size)
 
 * `size` Number
 
@@ -1393,7 +1394,7 @@ in this way is *not initialized*. The contents of a newly created `SlowBuffer`
 are unknown and *could contain sensitive data*. Use [`buf.fill(0)`][] to
 initialize a Buffer to zeroes.
 
-    const buf = require('buffer').SlowBuffer.unsafe(5);
+    const buf = require('buffer').SlowBuffer.alloc(5);
     console.log(buf);
       // <Buffer 78 e0 82 02 01>
       // (octets will be different, every time)

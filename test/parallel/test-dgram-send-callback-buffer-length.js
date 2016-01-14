@@ -8,7 +8,7 @@ var client, timer, buf, len, offset;
 
 client = dgram.createSocket('udp4');
 
-buf = Buffer.unsafe(256);
+buf = Buffer.alloc(256);
 offset = 20;
 
 len = buf.length - offset;

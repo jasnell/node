@@ -4,8 +4,8 @@ require('../common');
 const SlowBuffer = require('buffer').SlowBuffer;
 const assert = require('assert');
 
-const safe = Buffer.safe(10);
-const safeslow = SlowBuffer.safe(10);
+const safe = Buffer.zalloc(10);
+const safeslow = SlowBuffer.zalloc(10);
 
 function isZeroFilled(buf) {
   for (let n = 0; n < buf.length; n++)

@@ -12,7 +12,7 @@ fs.truncateSync(fd, offset);
 assert.equal(fs.statSync(filepath).size, offset);
 var writeBuf = new Buffer(message);
 fs.writeSync(fd, writeBuf, 0, writeBuf.length, offset);
-var readBuf = Buffer.unsafe(writeBuf.length);
+var readBuf = Buffer.alloc(writeBuf.length);
 fs.readSync(fd, readBuf, 0, readBuf.length, offset);
 assert.equal(readBuf.toString(), message);
 fs.readSync(fd, readBuf, 0, 1, 0);

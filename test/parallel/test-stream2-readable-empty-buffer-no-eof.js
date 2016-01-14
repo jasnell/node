@@ -31,16 +31,16 @@ function test1() {
         return r.push(buf);
       case 2:
         setTimeout(r.read.bind(r, 0), timeout);
-        return r.push(Buffer.unsafe(0)); // Not-EOF!
+        return r.push(Buffer.alloc(0)); // Not-EOF!
       case 3:
         setTimeout(r.read.bind(r, 0), timeout);
         return process.nextTick(function() {
-          return r.push(Buffer.unsafe(0));
+          return r.push(Buffer.alloc(0));
         });
       case 4:
         setTimeout(r.read.bind(r, 0), timeout);
         return setTimeout(function() {
-          return r.push(Buffer.unsafe(0));
+          return r.push(Buffer.alloc(0));
         });
       case 5:
         return setTimeout(function() {

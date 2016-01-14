@@ -3,7 +3,7 @@ var assert = require('assert');
 var common = require('../common');
 var dgram = require('dgram');
 
-var buf = Buffer.unsafe(1024);
+var buf = Buffer.alloc(1024);
 buf.fill(42);
 
 var socket = dgram.createSocket('udp4');

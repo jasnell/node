@@ -19,7 +19,7 @@ var options = {
   cert: fs.readFileSync(common.fixturesDir + '/keys/agent2-cert.pem')
 };
 
-var big = Buffer.unsafe(2 * 1024 * 1024);
+var big = Buffer.alloc(2 * 1024 * 1024);
 var connections = 0;
 var bytesRead = 0;
 

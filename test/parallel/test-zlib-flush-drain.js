@@ -3,7 +3,7 @@ require('../common');
 const assert = require('assert');
 const zlib = require('zlib');
 
-const bigData = Buffer.unsafe(10240).fill('x');
+const bigData = Buffer.alloc(10240).fill('x');
 
 const opts = {
   level: 0,

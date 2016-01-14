@@ -7,7 +7,7 @@ var SIZE = 2E5;
 var N = 10;
 var flushed = 0;
 var received = 0;
-var buf = Buffer.unsafe(SIZE);
+var buf = Buffer.alloc(SIZE);
 buf.fill(0x61); // 'a'
 
 var server = net.createServer(function(socket) {

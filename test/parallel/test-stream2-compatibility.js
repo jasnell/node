@@ -10,7 +10,7 @@ var ondataCalled = 0;
 
 function TestReader() {
   R.apply(this);
-  this._buffer = Buffer.unsafe(100);
+  this._buffer = Buffer.alloc(100);
   this._buffer.fill('x');
 
   this.on('data', function() {
@@ -22,7 +22,7 @@ util.inherits(TestReader, R);
 
 TestReader.prototype._read = function(n) {
   this.push(this._buffer);
-  this._buffer = Buffer.unsafe(0);
+  this._buffer = Buffer.alloc(0);
 };
 
 var reader = new TestReader();

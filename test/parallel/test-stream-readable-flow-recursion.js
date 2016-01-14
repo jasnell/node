@@ -22,7 +22,7 @@ stream._read = function(size) {
   if (size === 0)
     stream.push(null);
   else
-    stream.push(Buffer.unsafe(size));
+    stream.push(Buffer.alloc(size));
 };
 
 var depth = 0;

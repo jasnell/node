@@ -2,7 +2,7 @@
 // Flags: --expose_gc
 
 function newBuffer(size, value) {
-  var buffer = Buffer.unsafe(size);
+  var buffer = Buffer.alloc(size);
   while (size--) {
     buffer[size] = value;
   }
@@ -39,7 +39,7 @@ var timeToQuit = Date.now() + 8e3; //Test during no more than this seconds.
   if (PASS) {
     fs.write(testFileFD, newBuffer(kBufSize, 0x61), 0, kBufSize, -1, cb);
     gc();
-    var nuBuf = Buffer.unsafe(kBufSize);
+    var nuBuf = Buffer.alloc(kBufSize);
     neverWrittenBuffer.copy(nuBuf);
     if (bufPool.push(nuBuf) > 100) {
       bufPool.length = 0;
