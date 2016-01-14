@@ -160,6 +160,9 @@ static const char* icu_data_dir = nullptr;
 // used by C++ modules as well
 bool no_deprecation = false;
 
+// if true, all Buffer and SlowBuffer instances will automatically zero-fill
+bool zero_fill_all_buffers = false;
+
 // process-relative uptime base, initialized at start-up
 static double prog_start_time;
 static bool debugger_running;
@@ -3015,6 +3018,11 @@ void SetupProcessObject(Environment* env,
     READONLY_PROPERTY(process, "throwDeprecation", True(env->isolate()));
   }
 
+  // --zero-fill-buffers
+  if (zero_fill_all_buffers) {
+    READONLY_PROPERTY(process, "zeroFillAllBuffers", True(env->isolate()));
+  }
+
   // --prof-process
   if (prof_process) {
     READONLY_PROPERTY(process, "profProcess", True(env->isolate()));
@@ -3259,6 +3267,8 @@ static void PrintHelp() {
          "snapshots\n"
          "  --prof-process        process v8 profiler output generated\n"
          "                        using --prof\n"
+         "  --zero-fill-buffers   automatically zero-fill all newly allocated\n"
+         "                        Buffer and SlowBuffer instances\n"
          "  --v8-options          print v8 command line options\n"
 #if HAVE_OPENSSL
          "  --tls-cipher-list=val use an alternative default TLS cipher list\n"
@@ -3395,6 +3405,8 @@ static void ParseArgs(int* argc,
     } else if (strcmp(arg, "--prof-process") == 0) {
       prof_process = true;
       short_circuit = true;
+    } else if (strcmp(arg, "--zero-fill-buffers") == 0) {
+      zero_fill_all_buffers = true;
     } else if (strcmp(arg, "--v8-options") == 0) {
       new_v8_argv[new_v8_argc] = "--help";
       new_v8_argc += 1;

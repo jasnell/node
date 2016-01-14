@@ -1,19 +1,22 @@
-SlowBuffer = require('buffer').SlowBuffer;
+'use strict';
+const SlowBuffer = require('buffer').SlowBuffer;
 
-var common = require('../common.js');
-var bench = common.createBenchmark(main, {
-  type: ['fast', 'slow'],
-  len: [10, 1024],
+const common = require('../common.js');
+const bench = common.createBenchmark(main, {
+  type: ['fast-safe', 'slow-safe', 'fast-unsafe', 'slow-unsafe'],
+  len: [10, 1024, 2048, 4096, 8192],
   n: [1024]
 });
 
 function main(conf) {
-  var len = +conf.len;
-  var n = +conf.n;
-  var clazz = conf.type === 'fast' ? Buffer : SlowBuffer;
+  const len = +conf.len;
+  const n = +conf.n;
+  const clazz = /^fast/.test(conf.type) ? Buffer : SlowBuffer;
+  const fn = /unsafe/.test(conf.type) ? clazz.unsafe : clazz.safe;
+
   bench.start();
-  for (var i = 0; i < n * 1024; i++) {
-    b = new clazz(len);
+  for (let i = 0; i < n * 1024; i++) {
+    fn(len);
   }
   bench.end(n);
 }
