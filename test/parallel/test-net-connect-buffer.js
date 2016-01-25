@@ -83,7 +83,7 @@ tcp.listen(common.PORT, function() {
   console.error('socket.bytesWritten', socket.bytesWritten);
   console.error('write returned', r);
 
-  assert.equal(socket.bytesWritten, Buffer(a).length);
+  assert.equal(socket.bytesWritten, Buffer.from(a).length);
 
   assert.equal(false, r);
   socket.end(b);

@@ -16,7 +16,7 @@ var bench = common.createBenchmark(main, {
 function main(conf) {
   var len = +conf.len;
   try { fs.unlinkSync(filename); } catch (e) {}
-  var data = new Buffer(len);
+  var data = Buffer.allocUnsafe(len);
   data.fill('x');
   fs.writeFileSync(filename, data);
   data = null;

@@ -44,7 +44,7 @@ function runTest(dur, size, type) {
       var chunk = new Array(size + 1).join('a');
       break;
     case 'buffer':
-      var chunk = new Buffer(size);
+      var chunk = Buffer.allocUnsafe(size);
       chunk.fill('a');
       break;
   }

@@ -8,7 +8,7 @@ var EE = require('events').EventEmitter;
 
 function TestReader(n) {
   R.apply(this);
-  this._buffer = new Buffer(n || 100);
+  this._buffer = Buffer.allocUnsafe(n || 100);
   this._buffer.fill('x');
   this._pos = 0;
   this._bufs = 10;
@@ -383,7 +383,7 @@ test('read(0) for ended streams', function(t) {
   var ended = false;
   r._read = function(n) {};
 
-  r.push(new Buffer('foo'));
+  r.push(Buffer.from('foo'));
   r.push(null);
 
   var v = r.read(0);
@@ -435,7 +435,7 @@ test('adding readable triggers data flow', function(t) {
     if (readCalled++ === 2)
       r.push(null);
     else
-      r.push(new Buffer('asdf'));
+      r.push(Buffer.from('asdf'));
   };
 
   r.on('readable', function() {

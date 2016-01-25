@@ -49,6 +49,10 @@
   size_t length = end - start;
 
 namespace node {
+
+// if true, all Buffer and SlowBuffer instances will automatically zero-fill
+bool zero_fill_all_buffers = false;
+
 namespace Buffer {
 
 using v8::ArrayBuffer;
@@ -220,7 +224,11 @@ MaybeLocal<Object> New(Isolate* isolate,
   // nullptr for zero-sized allocation requests.  Normalize by always using
   // a nullptr.
   if (length > 0) {
-    data = static_cast<char*>(malloc(length));
+    if (zero_fill_all_buffers) {
+      data = static_cast<char*>(calloc(length, 1));
+    } else {
+      data = static_cast<char*>(malloc(length));
+    }
 
     if (data == nullptr)
       return Local<Object>();
@@ -266,7 +274,11 @@ MaybeLocal<Object> New(Environment* env, size_t length) {
 
   void* data;
   if (length > 0) {
-    data = malloc(length);
+    if (zero_fill_all_buffers) {
+      data = calloc(length, 1);
+    } else {
+      data = malloc(length);
+    }
     if (data == nullptr)
       return Local<Object>();
   } else {

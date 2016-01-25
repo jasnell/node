@@ -76,7 +76,7 @@ function client() {
   var chunk;
   switch (type) {
     case 'buf':
-      chunk = new Buffer(len);
+      chunk = Buffer.allocUnsafe(len);
       chunk.fill('x');
       break;
     case 'utf':

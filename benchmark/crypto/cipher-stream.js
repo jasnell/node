@@ -47,7 +47,7 @@ function main(conf) {
       encoding = 'utf8';
       break;
     case 'buf':
-      message = new Buffer(conf.len);
+      message = Buffer.allocUnsafe(conf.len);
       message.fill('b');
       break;
     default:

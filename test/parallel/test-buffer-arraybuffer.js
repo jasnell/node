@@ -9,7 +9,7 @@ const LENGTH = 16;
 const ab = new ArrayBuffer(LENGTH);
 const dv = new DataView(ab);
 const ui = new Uint8Array(ab);
-const buf = new Buffer(ab);
+const buf = Buffer.from(ab);
 
 
 assert.ok(buf instanceof Buffer);
@@ -42,11 +42,11 @@ assert.throws(function() {
   function AB() { }
   Object.setPrototypeOf(AB, ArrayBuffer);
   Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
-  new Buffer(new AB());
+  Buffer.from(new AB());
 }, TypeError);
 
 // write{Double,Float}{LE,BE} with noAssert should not crash, cf. #3766
-var b = new Buffer(1);
+var b = Buffer.allocUnsafe(1);
 b.writeFloatLE(11.11, 0, true);
 b.writeFloatBE(11.11, 0, true);
 b.writeDoubleLE(11.11, 0, true);

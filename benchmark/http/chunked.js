@@ -18,7 +18,7 @@ var bench = common.createBenchmark(main, {
 
 function main(conf) {
   http = require('http');
-  var chunk = new Buffer(conf.size);
+  var chunk = Buffer.allocUnsafe(conf.size);
   chunk.fill('8');
 
   var args = ['-d', '10s', '-t', 8, '-c', conf.c];

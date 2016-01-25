@@ -35,7 +35,7 @@ function main(conf) {
       encoding = 'utf8';
       break;
     case 'buf':
-      message = new Buffer(conf.len);
+      message = Buffer.allocUnsafe(conf.len);
       message.fill('b');
       break;
     default:
@@ -60,7 +60,7 @@ function legacyWrite(algo, message, encoding, writes, len, outEnc) {
 
     // include buffer creation costs for older versions
     if (outEnc === 'buffer' && typeof res === 'string')
-      res = new Buffer(res, 'binary');
+      res = Buffer.from(res, 'binary');
   }
 
   bench.end(gbits);

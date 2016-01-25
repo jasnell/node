@@ -22,7 +22,7 @@ function main(conf) {
   var chunk;
   switch (type) {
     case 'buf':
-      chunk = new Buffer(size);
+      chunk = Buffer.allocUnsafe(size);
       chunk.fill('b');
       break;
     case 'asc':
@@ -72,4 +72,3 @@ function main(conf) {
     server.close();
   }
 }
-

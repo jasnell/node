@@ -18,7 +18,7 @@ function main(conf) {
   var chunk;
   switch (conf.type) {
     case 'buf':
-      chunk = new Buffer(len);
+      chunk = Buffer.allocUnsafe(len);
       chunk.fill('x');
       break;
     case 'utf':

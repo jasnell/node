@@ -23,7 +23,7 @@ var bench = common.createBenchmark(main, {
 
 function main(conf) {
   var crypto = require('crypto');
-  var message = (new Buffer(conf.len)).fill('b');
+  var message = (Buffer.from(conf.len)).fill('b');
 
   bench.start();
   StreamWrite(conf.algo, conf.keylen, message, conf.n, conf.len);

@@ -20,7 +20,7 @@ function test1() {
   // r.read(0) again later, otherwise there is no more work being done
   // and the process just exits.
 
-  const buf = Buffer(5).fill('x');
+  const buf = Buffer.allocUnsafe(5).fill('x');
   let reads = 5;
   const timeout = common.platformTimeout(50);
   r._read = function(n) {
@@ -31,16 +31,16 @@ function test1() {
         return r.push(buf);
       case 2:
         setTimeout(r.read.bind(r, 0), timeout);
-        return r.push(new Buffer(0)); // Not-EOF!
+        return r.push(Buffer.allocUnsafe(0)); // Not-EOF!
       case 3:
         setTimeout(r.read.bind(r, 0), timeout);
         return process.nextTick(function() {
-          return r.push(new Buffer(0));
+          return r.push(Buffer.allocUnsafe(0));
         });
       case 4:
         setTimeout(r.read.bind(r, 0), timeout);
         return setTimeout(function() {
-          return r.push(new Buffer(0));
+          return r.push(Buffer.allocUnsafe(0));
         });
       case 5:
         return setTimeout(function() {
@@ -76,7 +76,7 @@ function test2() {
     if (!reads--)
       return r.push(null); // EOF
     else
-      return r.push(new Buffer('x'));
+      return r.push(Buffer.from('x'));
   };
 
   var results = [];
