@@ -42,7 +42,7 @@ const buf5 = Buffer.from('tést', 'utf8');
 
 ## `Buffer.from()`, `Buffer.alloc()`, and `Buffer.allocUnsafe()`
 
-In prior version of Node.js, `Buffer` instances were created using the
+In versions of Node.js prior to v6, `Buffer` instances were created using the
 `new Buffer()` constructor function, which allocates and initializes the
 returned `Buffer` differently based on what arguments are provided:
 
