@@ -19,7 +19,7 @@ function isZeroFilled(buf) {
 // contain all zeroes. The test is run multiple
 // times to improve the reliability.
 for (let i = 0; i < 50; i++) {
-  let bufs = [
+  const bufs = [
     Buffer.alloc(20),
     Buffer.allocUnsafe(20),
     SlowBuffer(20),
