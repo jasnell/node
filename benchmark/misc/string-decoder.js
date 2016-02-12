@@ -8,7 +8,7 @@ var bench = common.createBenchmark(main, {
   n: [25e4]
 });
 
-var UTF_ALPHA = 'Bl�b�rsyltet�y';
+var UTF_ALPHA = 'Blåbærsyltetøy';
 var ASC_ALPHA = 'Blueberry jam';
 
 function main(conf) {
