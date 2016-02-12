@@ -23,28 +23,31 @@ would need to ever use `require('buffer')`.
 ```js
 const buf1 = Buffer.alloc(10);
   // creates a zero-filled buffer of length 10
+
+const buf2 = Buffer.alloc(10, 1);
+  // creates a buffer of length 10, filled with 0x01
   
-const buf2 = Buffer.allocUnsafe(10);
+const buf3 = Buffer.allocUnsafe(10);
   // creates an uninitialized buffer of length 10
   // this is faster than calling Buffer.alloc() but the returned
   // buffer instance might contain old data that needs to be
   // overwritten
 
-const buf3 = Buffer.from([1,2,3]);
+const buf4 = Buffer.from([1,2,3]);
   // creates a buffer containing [01, 02, 03]
 
-const buf4 = Buffer.from('test');
+const buf5 = Buffer.from('test');
   // creates a buffer containing ASCII bytes [74, 65, 73, 74]
 
-const buf5 = Buffer.from('tést', 'utf8');
+const buf6 = Buffer.from('tést', 'utf8');
   // creates a buffer containing UTF8 bytes [74, c3, a9, 73, 74]
 ```
 
 ## `Buffer.from()`, `Buffer.alloc()`, and `Buffer.allocUnsafe()`
 
 In versions of Node.js prior to v6, `Buffer` instances were created using the
-`new Buffer()` constructor function, which allocates and initializes the
-returned `Buffer` differently based on what arguments are provided:
+`new Buffer()` constructor function, which allocates the returned `Buffer` 
+differently based on what arguments are provided:
 
 * Passing a number as the first argument to `Buffer()` (e.g. `new Buffer(10)`),
   allocates a new `Buffer` object of the specified size. The memory allocated
@@ -75,8 +78,9 @@ one of these new APIs.*
 
 * [`Buffer.from(array)`][buffer_from_array] returns a new `Buffer` containing 
   a *copy* of the provided octets.
-* [`Buffer.from(arrayBuffer)`][buffer_from_arraybuffer] returns a new `Buffer` 
-  that *shares the same allocated memory as the given `ArrayBuffer`.
+* [`Buffer.from(arrayBuffer[, byteOffset [, length]])`][buffer_from_arraybuf]
+  returns a new `Buffer` that *shares* the same allocated memory as the given 
+  `ArrayBuffer`.
 * [`Buffer.from(buffer)`][buffer_from_buffer] returns a new `Buffer` 
   containing a *copy* of the contents of the given `Buffer`.
 * [`Buffer.from(str[, encoding])`][buffer_from_string] returns a new `Buffer` 
@@ -89,6 +93,10 @@ one of these new APIs.*
 * [`Buffer.allocUnsafe(size)`][buffer_allocunsafe] returns a new `Buffer` of 
   the specified `size` whose content *must* be initialized using either 
   [`buf.fill(0)`][] or written to completely.
+
+`Buffer` instances returned by `Buffer.allocUnsafe(size)` *may* be allocated
+off a shared internal memory pool if the `size` is less than or equal to half
+`Buffer.poolSize`.
 
 ### The `--zero-fill-buffers` command line option
 
@@ -198,23 +206,21 @@ console.log(buf2);
   // Prints: <Buffer 88 13 70 17>
 ```
 
-Note that when creating a `Buffer` using the TypedArray's `.buffer`, it is not
-currently possible to use only a portion of the underlying `ArrayBuffer`. To
-create a `Buffer` that uses only a part of the `ArrayBuffer`, use the
-`buf.slice()` function after the `Buffer` is created:
+Note that when creating a `Buffer` using the TypedArray's `.buffer`, it is
+possible to use only a portion of the underlying `ArrayBuffer` by passing in 
+`byteOffset` and `length` parameters:
 
 ```js
 const arr = new Uint16Array(20);
-const buf = Buffer.from(arr.buffer).slice(0, 16);
+const buf = Buffer.from(arr.buffer, 0, 16);
 console.log(buf.length);
   // Prints: 16
 ```
 
-Further, the `Buffer.from()` and [`TypedArray.from()`][] (e.g.
-`Uint8Array.from()`) have different signatures and implementations.
-Specifically, the TypedArray variants accept three arguments, where
-the second is a mapping function that is invoked on every element of the
-typed array:
+The `Buffer.from()` and [`TypedArray.from()`][] (e.g.`Uint8Array.from()`) have 
+different signatures and implementations. Specifically, the TypedArray variants 
+accept a second argument that is a mapping function that is invoked on every 
+element of the typed array:
 
 * `TypedArray.from(source[, mapFn[, thisArg]])`
 
@@ -223,7 +229,7 @@ function:
 
 * [`Buffer.from(array)`][buffer_from_array]
 * [`Buffer.from(buffer)`][buffer_from_buffer]
-* [`Buffer.from(arrayBuffer)`][buffer_from_arraybuffer]
+* [`Buffer.from(arrayBuffer[, byteOffset [, length]])`][buffer_from_arraybuf]
 * [`Buffer.from(str[, encoding])`][buffer_from_string]
 
 ## Buffers and ES6 iteration
@@ -288,14 +294,20 @@ console.log(buf2.toString());
 ### new Buffer(arrayBuffer)
 
     Stability: 0 - Deprecated: Use 
-    [`Buffer.from(arrayBuffer)`][buffer_from_arraybuffer] instead.
+    [`Buffer.from(arrayBuffer[, byteOffset [, length]])`][buffer_from_arraybuf]
+    instead.
 
-* `arrayBuffer` - The `.buffer` property of a `TypedArray` or a `new
-  ArrayBuffer()`
+* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or a 
+  `new ArrayBuffer()`
+* `byteOffset` {Number} Default: `0`
+* `length` {Number}
 
 When passed a reference to the `.buffer` property of a `TypedArray` instance,
 the newly created Buffer will share the same allocated memory as the
 TypedArray.
+
+The optional `byteOffset` and `length` arguments specify a memory range within
+the `arrayBuffer` that will be shared by the `Buffer`.
 
 ```js
 const arr = new Uint16Array(2);
@@ -368,9 +380,9 @@ console.log(buf2.toString());
 
 ### Class Method: Buffer.alloc(size[, fill[, encoding]])
 
-* `size` Number
-* `fill` Optional, Default `undefined`
-* `encoding` String, Optional, Default `utf8`
+* `size` {Number}
+* `fill` {Value} Default: `undefined`
+* `encoding` {String} Default: `utf8`
 
 Allocates a new `Buffer` of `size` bytes. If `fill` is `undefined`, the
 `Buffer` will be *zero-filled*.
@@ -396,8 +408,7 @@ console.log(buf);
 ```
 
 If both `fill` and `encoding` are specified, the allocated `Buffer` will be
-initialized by calling 
-`buf.fill(Buffer.from(fill, encoding).toString('binary'))`.
+initialized by calling `buf.fill(fill, encoding)`. For example:
 
 ```js
 const buf = Buffer.alloc(11, 'aGVsbG8gd29ybGQ=', 'base64');
@@ -413,7 +424,7 @@ A `TypeError` will be thrown if `size` is not a number.
 
 ### Class Method: Buffer.allocUnsafe(size)
 
-* `size` Number
+* `size` {Number}
 
 Allocates a new *non-zero-filled* `Buffer` of `size` bytes.  The `size` must
 be less than or equal to the value of `require('buffer').kMaxLength` (on 64-bit
@@ -442,10 +453,10 @@ Note that the `Buffer` module pre-allocates an internal `Buffer` instance of
 size `Buffer.poolSize` that is used as a pool for the fast allocation of new
 `Buffer` instances created using `Buffer.allocUnsafe(size)` (and the deprecated
 `new Buffer(size)` constructor) only when `size` is less than or equal to
-`Buffer.poolSize >> 2` (`Buffer.poolSize` divided by two). The default value
-of `Buffer.poolSize` is `8192` but can be modified.
+`Buffer.poolSize >> 2` (floor of `Buffer.poolSize` divided by two). The default 
+value of `Buffer.poolSize` is `8192` but can be modified.
 
-Use of this pre-allocated internal memory pool is the key difference between 
+Use of this pre-allocated internal memory pool is a key difference between 
 calling `Buffer.alloc(size, fill)` vs. `Buffer.allocUnsafe(size).fill(fill)`.
 Specifically, `Buffer.alloc(size, fill)` will *never* use the internal Buffer 
 pool, while `Buffer.allocUnsafe(size).fill(fill)` *will* use the internal 
@@ -491,7 +502,8 @@ arr.sort(Buffer.compare);
 ### Class Method: Buffer.concat(list[, totalLength])
 
 * `list` {Array} List of Buffer objects to concat
-* `totalLength` {Number} Total length of the Buffers in the list when concatenated
+* `totalLength` {Number} Total length of the Buffers in the list 
+  when concatenated
 * Return: {Buffer}
 
 Returns a new Buffer which is the result of concatenating all the Buffers in
@@ -524,7 +536,7 @@ console.log(bufA.length);
 
 ### Class Method: Buffer.from(array)
 
-* `array` Array
+* `array` {Array}
 
 Allocates a new `Buffer` using an `array` of octets.
 
@@ -534,12 +546,14 @@ const buf = Buffer.from([0x62,0x75,0x66,0x66,0x65,0x72]);
   // ['b','u','f','f','e','r']
 ```
 
-A `TypeError` will be thrown if `array` is a number.
+A `TypeError` will be thrown if `array` is not an `Array`.
 
-### Class Method: Buffer.from(arrayBuffer)
+### Class Method: Buffer.from(arrayBuffer[, byteOffset[, length]])
 
-* `arrayBuffer` - The `.buffer` property of a `TypedArray` or a `new
-  ArrayBuffer()`
+* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or 
+  a `new ArrayBuffer()`
+* `byteOffset` {Number} Default: `0`
+* `length` {Number}
 
 When passed a reference to the `.buffer` property of a `TypedArray` instance,
 the newly created `Buffer` will share the same allocated memory as the
@@ -562,7 +576,17 @@ console.log(buf);
   // Prints: <Buffer 88 13 70 17>
 ```
 
-A `TypeError` will be thrown if `arrayBuffer` is a number.
+The optional `byteOffset` and `length` arguments specify a memory range within
+the `arrayBuffer` that will be shared by the `Buffer`.
+
+```
+const ab = new ArrayBuffer(10);
+const buf = Buffer.from(ab, 0, 2);
+console.log(buf.length);
+  // Prints: 2
+```
+
+A `TypeError` will be thrown if `arrayBuffer` is not an `ArrayBuffer`.
 
 ### Class Method: Buffer.from(buffer)
 
@@ -581,12 +605,12 @@ console.log(buf2.toString());
   // 'buffer' (copy is not changed)
 ```
 
-A `TypeError` will be thrown if `buffer` is a number.
+A `TypeError` will be thrown if `buffer` is not a `Buffer`.
 
 ### Class Method: Buffer.from(str[, encoding])
 
-* `str` String - string to encode.
-* `encoding` String - encoding to use, Optional.
+* `str` {String} String to encode.
+* `encoding` {String} Encoding to use, Default: `'utf8'`
 
 Creates a new `Buffer` containing the given JavaScript string `str`. If
 provided, the `encoding` parameter identifies the strings character encoding.
@@ -604,7 +628,7 @@ console.log(buf2.toString());
   // prints: this is a tést
 ```
 
-A `TypeError` will be thrown if `str` is a number.
+A `TypeError` will be thrown if `str` is not a string.
 
 ### Class Method: Buffer.isBuffer(obj)
 
@@ -1695,7 +1719,7 @@ console.log(buf);
 [`util.inspect()`]: util.html#util_util_inspect_object_options
 [buffer_from_array]: #buffer_class_method_buffer_from_array
 [buffer_from_buffer]: #buffer_class_method_buffer_from_buffer
-[buffer_from_arraybuffer]: #buffer_class_method_buffer_from_arraybuffer
+[buffer_from_arraybuf]: #buffer_class_method_buffer_from_arraybuffer
 [buffer_from_string]: #buffer_class_method_buffer_from_str_encoding
 [buffer_allocunsafe]: #buffer_class_method_buffer_allocraw_size
 [buffer_alloc]: #buffer_class_method_buffer_alloc_size_fill_encoding

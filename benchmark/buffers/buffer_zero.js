@@ -6,7 +6,7 @@ const bench = common.createBenchmark(main, {
   n: [1024]
 });
 
-const zero = Buffer.allocUnsafe(0);
+const zero = Buffer.alloc(0);
 
 function main(conf) {
   var n = +conf.n;

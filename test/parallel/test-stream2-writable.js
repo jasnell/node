@@ -335,7 +335,7 @@ test('dont end while writing', function(t) {
     assert(wrote);
     t.end();
   });
-  w.write(Buffer.allocUnsafe(0));
+  w.write(Buffer.alloc(0));
   w.end();
 });
 
@@ -352,7 +352,7 @@ test('finish does not come before write cb', function(t) {
     assert(writeCb);
     t.end();
   });
-  w.write(Buffer.allocUnsafe(0));
+  w.write(Buffer.alloc(0));
   w.end();
 });
 
@@ -366,7 +366,7 @@ test('finish does not come before sync _write cb', function(t) {
     assert(writeCb);
     t.end();
   });
-  w.write(Buffer.allocUnsafe(0), function(er) {
+  w.write(Buffer.alloc(0), function(er) {
     writeCb = true;
   });
   w.end();
@@ -381,5 +381,5 @@ test('finish is emitted if last chunk is empty', function(t) {
     t.end();
   });
   w.write(Buffer.allocUnsafe(1));
-  w.end(Buffer.allocUnsafe(0));
+  w.end(Buffer.alloc(0));
 });

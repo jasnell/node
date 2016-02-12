@@ -27,8 +27,7 @@ function main(conf) {
   }
 
   if (conf.type === 'buffer') {
-    search = Buffer.from(Buffer.from(search).toString(),
-             encoding);
+    search = Buffer.from(Buffer.from(search).toString(), encoding);
   }
 
   bench.start();

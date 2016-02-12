@@ -236,7 +236,7 @@ assert.strictEqual('Unknown encoding: invalid', caught_error.message);
 Buffer.from('');
 Buffer.from('', 'ascii');
 Buffer.from('', 'binary');
-Buffer.allocUnsafe(0);
+Buffer.alloc(0);
 
 // try to write a 0-length string beyond the end of b
 assert.throws(function() {
@@ -259,10 +259,10 @@ assert.throws(function() {
 }, RangeError);
 
 // try to copy 0 bytes worth of data into an empty buffer
-b.copy(Buffer.allocUnsafe(0), 0, 0, 0);
+b.copy(Buffer.alloc(0), 0, 0, 0);
 
 // try to copy 0 bytes past the end of the target buffer
-b.copy(Buffer.allocUnsafe(0), 1, 1, 1);
+b.copy(Buffer.alloc(0), 1, 1, 1);
 b.copy(Buffer.allocUnsafe(1), 1, 1, 1);
 
 // try to copy 0 bytes from past the end of the source buffer
@@ -991,7 +991,7 @@ assert.equal(Buffer.from('13.37').length, 5);
 }
 
 // issue GH-3416
-Buffer.from(Buffer.allocUnsafe(0), 0, 0);
+Buffer.from(Buffer.alloc(0), 0, 0);
 
 [ 'hex',
   'utf8',
@@ -1092,7 +1092,7 @@ assert.throws(function() {
 
 // offset checks
 {
-  const buf = Buffer.allocUnsafe(0);
+  const buf = Buffer.alloc(0);
 
   assert.throws(function() { buf.readUInt8(0); }, RangeError);
   assert.throws(function() { buf.readInt8(0); }, RangeError);
@@ -1371,12 +1371,12 @@ if (common.hasCrypto) {
   assert.equal(Buffer.compare(b, d), -1);
   assert.equal(Buffer.compare(c, c), 0);
 
-  assert.equal(Buffer.compare(Buffer.allocUnsafe(0),
-                              Buffer.allocUnsafe(0)), 0);
-  assert.equal(Buffer.compare(Buffer.allocUnsafe(0),
+  assert.equal(Buffer.compare(Buffer.alloc(0),
+                              Buffer.alloc(0)), 0);
+  assert.equal(Buffer.compare(Buffer.alloc(0),
                               Buffer.allocUnsafe(1)), -1);
   assert.equal(Buffer.compare(Buffer.allocUnsafe(1),
-                              Buffer.allocUnsafe(0)), 1);
+                              Buffer.alloc(0)), 1);
 }
 
 assert.throws(function() {
@@ -1464,4 +1464,3 @@ assert.equal(SlowBuffer.prototype.offset, undefined);
 assert.throws(() => Buffer.alloc('foo'), TypeError);
 assert.throws(() => Buffer.allocUnsafe('foo'), TypeError);
 assert.throws(() => Buffer.from(1), TypeError);
-assert.throws(() => Buffer.allocUnsafe(10, 'bar'), TypeError);

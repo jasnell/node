@@ -22,10 +22,10 @@ assert(flatLongLen.toString() === (new Array(10 + 1).join('asdf')));
 
 assertWrongList();
 assertWrongList(null);
-assertWrongList(new Buffer('hello'));
+assertWrongList(Buffer.from('hello'));
 assertWrongList([42]);
 assertWrongList(['hello', 'world']);
-assertWrongList(['hello', new Buffer('world')]);
+assertWrongList(['hello', Buffer.from('world')]);
 
 function assertWrongList(value) {
   assert.throws(function() {

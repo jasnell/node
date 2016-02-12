@@ -22,7 +22,7 @@ util.inherits(TestReader, R);
 
 TestReader.prototype._read = function(n) {
   this.push(this._buffer);
-  this._buffer = Buffer.allocUnsafe(0);
+  this._buffer = Buffer.alloc(0);
 };
 
 var reader = new TestReader();
