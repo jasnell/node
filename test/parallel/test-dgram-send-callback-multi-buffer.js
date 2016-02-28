@@ -16,9 +16,8 @@ const onMessage = common.mustCall(function(err, bytes) {
   client.close();
 });
 
-const buf1 = new Buffer(256);
-
-const buf2 = new Buffer(256);
+const buf1 = Buffer.allocUnsafe(256);
+const buf2 = Buffer.allocUnsafe(256);
 
 buf1.fill('x');
 buf2.fill('y');

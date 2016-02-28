@@ -32,7 +32,7 @@ function main(conf) {
 
   chunk = []
   for (var i = 0; i < chunks; i++) {
-    chunk.push(new Buffer(Math.round(len / chunks)));
+    chunk.push(Buffer.allocUnsafe(Math.round(len / chunks)));
   }
 
   server();
