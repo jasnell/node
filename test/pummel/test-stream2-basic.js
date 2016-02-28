@@ -8,8 +8,7 @@ var EE = require('events').EventEmitter;
 
 function TestReader(n) {
   R.apply(this);
-  this._buffer = Buffer.allocUnsafe(n || 100);
-  this._buffer.fill('x');
+  this._buffer = Buffer.alloc(n || 100, 'x');
   this._pos = 0;
   this._bufs = 10;
 }

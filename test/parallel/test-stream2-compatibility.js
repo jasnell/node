@@ -10,8 +10,7 @@ var ondataCalled = 0;
 
 function TestReader() {
   R.apply(this);
-  this._buffer = Buffer.allocUnsafe(100);
-  this._buffer.fill('x');
+  this._buffer = Buffer.alloc(100, 'x');
 
   this.on('data', function() {
     ondataCalled++;

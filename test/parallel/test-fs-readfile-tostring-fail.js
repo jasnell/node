@@ -14,7 +14,7 @@ const stream = fs.createWriteStream(file, {
 });
 
 const size = kStringMaxLength / 200;
-const a = Buffer.allocUnsafe(size).fill('a');
+const a = Buffer.alloc(size, 'a');
 
 for (var i = 0; i < 201; i++) {
   stream.write(a);

@@ -77,7 +77,7 @@ tcp.listen(common.PORT, function() {
     dataWritten = true;
     assert.ok(connectHappened);
     console.error('socket.bytesWritten', socket.bytesWritten);
-    //assert.equal(socket.bytesWritten, Buffer(a + b).length);
+    //assert.equal(socket.bytesWritten, Buffer.from(a + b).length);
     console.error('data written');
   });
   console.error('socket.bytesWritten', socket.bytesWritten);

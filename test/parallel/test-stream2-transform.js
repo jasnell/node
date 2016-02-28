@@ -109,8 +109,7 @@ test('object passthrough', function(t) {
 test('simple transform', function(t) {
   var pt = new Transform();
   pt._transform = function(c, e, cb) {
-    var ret = Buffer.allocUnsafe(c.length);
-    ret.fill('x');
+    var ret = Buffer.alloc(c.length, 'x');
     pt.push(ret);
     cb();
   };

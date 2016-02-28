@@ -50,8 +50,7 @@ function server() {
     var chunk;
     switch (type) {
       case 'buf':
-        chunk = Buffer.allocUnsafe(len);
-        chunk.fill('x');
+        chunk = Buffer.alloc(len, 'x');
         break;
       case 'utf':
         chunk = new Array(len / 2 + 1).join('ü');
