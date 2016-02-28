@@ -10,9 +10,9 @@ test2();
 function test1() {
   const r = new Readable();
 
-  // should not end when we get a Buffer(0) or '' as the _read result
-  // that just means that there is *temporarily* no data, but to go
-  // ahead and try again later.
+  // should not end when we get a Buffer.alloc(0) or '' as the _read
+  // result that just means that there is *temporarily* no data, but to
+  // go ahead and try again later.
   //
   // note that this is very unusual.  it only works for crypto streams
   // because the other side of the stream will call read(0) to cycle
