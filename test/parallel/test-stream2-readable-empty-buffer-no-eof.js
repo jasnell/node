@@ -20,7 +20,7 @@ function test1() {
   // r.read(0) again later, otherwise there is no more work being done
   // and the process just exits.
 
-  const buf = Buffer.allocUnsafe(5).fill('x');
+  const buf = Buffer.alloc(5, 'x');
   let reads = 5;
   const timeout = common.platformTimeout(50);
   r._read = function(n) {

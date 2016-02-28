@@ -23,8 +23,7 @@ function main(conf) {
   var len = conf.kb * 1024;
   switch (conf.type) {
     case 'buf':
-      chunk = Buffer.allocUnsafe(len);
-      chunk.fill('x');
+      chunk = Buffer.alloc(len, 'x');
       break;
     case 'utf':
       encoding = 'utf8';

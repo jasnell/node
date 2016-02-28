@@ -19,8 +19,7 @@ switch (process.argv[2]) {
 
 function server() {
   var net = require('net');
-  var content = Buffer.allocUnsafe(64 * 1024 * 1024);
-  content.fill('#');
+  var content = Buffer.alloc(64 * 1024 * 1024, '#');
   net.createServer(function(socket) {
     this.close();
     socket.on('end', function() {

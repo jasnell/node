@@ -8,8 +8,8 @@ var bench = common.createBenchmark(main, {
 function main(conf) {
   const iter = (conf.millions >>> 0) * 1e6;
   const size = (conf.size >>> 0);
-  const b0 = Buffer.allocUnsafe(size).fill('a');
-  const b1 = Buffer.allocUnsafe(size).fill('a');
+  const b0 = Buffer.alloc(size, 'a');
+  const b1 = Buffer.alloc(size, 'a');
 
   b1[size - 1] = 'b'.charCodeAt(0);
 

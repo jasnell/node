@@ -12,7 +12,7 @@ function main(conf) {
   const arg = conf.arg;
   const len = conf.len | 0;
   const n = conf.n | 0;
-  const buf = Buffer.allocUnsafe(len).fill(42);
+  const buf = Buffer.alloc(len, 42);
 
   bench.start();
   if (arg) {
