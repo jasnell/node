@@ -26,7 +26,7 @@ const buf1 = Buffer.alloc(10);
 
 const buf2 = Buffer.alloc(10, 1);
   // Creates a Buffer of length 10, filled with 0x01.
-  
+
 const buf3 = Buffer.allocUnsafe(10);
   // Creates an uninitialized buffer of length 10.
   // This is faster than calling Buffer.alloc() but the returned
@@ -46,7 +46,7 @@ const buf6 = Buffer.from('tést', 'utf8');
 ## `Buffer.from()`, `Buffer.alloc()`, and `Buffer.allocUnsafe()`
 
 In versions of Node.js prior to v6, `Buffer` instances were created using the
-`Buffer` constructor function, which allocates the returned `Buffer` 
+`Buffer` constructor function, which allocates the returned `Buffer`
 differently based on what arguments are provided:
 
 * Passing a number as the first argument to `Buffer()` (e.g. `new Buffer(10)`),

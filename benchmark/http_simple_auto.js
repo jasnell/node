@@ -48,7 +48,7 @@ var server = http.createServer(function(req, res) {
     if (n <= 0) throw new Error('bytes called with n <= 0');
     if (storedBuffer[n] === undefined) {
       storedBuffer[n] = Buffer.allocUnsafe(n);
-      for (var i = 0; i < n; i++) {
+      for (i = 0; i < n; i++) {
         storedBuffer[n][i] = 'C'.charCodeAt(0);
       }
     }
