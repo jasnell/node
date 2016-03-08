@@ -455,7 +455,7 @@ Note that the `Buffer` module pre-allocates an internal `Buffer` instance of
 size `Buffer.poolSize` that is used as a pool for the fast allocation of new
 `Buffer` instances created using `Buffer.allocUnsafe(size)` (and the deprecated
 `new Buffer(size)` constructor) only when `size` is less than or equal to
-`Buffer.poolSize >> 2` (floor of `Buffer.poolSize` divided by two). The default 
+`Buffer.poolSize >> 1` (floor of `Buffer.poolSize` divided by two). The default 
 value of `Buffer.poolSize` is `8192` but can be modified.
 
 Use of this pre-allocated internal memory pool is a key difference between 

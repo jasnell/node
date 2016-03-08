@@ -6,9 +6,9 @@ const dgram = require('dgram');
 
 const client = dgram.createSocket('udp4');
 
-const toSend = [Buffer.alloc(256, 'x'), 
-                Buffer.alloc(256, 'y'), 
-                Buffer.alloc(256, 'z'), 
+const toSend = [Buffer.alloc(256, 'x'),
+                Buffer.alloc(256, 'y'),
+                Buffer.alloc(256, 'z'),
                 'hello'];
 
 client.on('listening', function() {

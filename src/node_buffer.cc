@@ -48,6 +48,9 @@
   CHECK_NOT_OOB(end <= end_max);                                            \
   size_t length = end - start;
 
+#define BUFFER_MALLOC(length)                                               \
+  zero_fill_all_buffers ? calloc(length, 1) : malloc(length)
+
 namespace node {
 
 // if true, all Buffer and SlowBuffer instances will automatically zero-fill
@@ -77,7 +80,6 @@ using v8::Uint32Array;
 using v8::Uint8Array;
 using v8::Value;
 using v8::WeakCallbackInfo;
-
 
 class CallbackInfo {
  public:
@@ -214,11 +216,7 @@ MaybeLocal<Object> New(Isolate* isolate,
   // nullptr for zero-sized allocation requests.  Normalize by always using
   // a nullptr.
   if (length > 0) {
-    if (zero_fill_all_buffers) {
-      data = static_cast<char*>(calloc(length, 1));
-    } else {
-      data = static_cast<char*>(malloc(length));
-    }
+    data = static_cast<char*>(BUFFER_MALLOC(length));
 
     if (data == nullptr)
       return Local<Object>();
@@ -264,11 +262,7 @@ MaybeLocal<Object> New(Environment* env, size_t length) {
 
   void* data;
   if (length > 0) {
-    if (zero_fill_all_buffers) {
-      data = calloc(length, 1);
-    } else {
-      data = malloc(length);
-    }
+    data = BUFFER_MALLOC(length);
     if (data == nullptr)
       return Local<Object>();
   } else {
