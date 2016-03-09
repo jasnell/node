@@ -62,36 +62,36 @@ differently based on what arguments are provided:
 * Passing an `ArrayBuffer` returns a `Buffer` that shares allocated memory with
   the given `ArrayBuffer`.
 
-Because the behavior of `new Buffer()` changes significantly based on the type 
-of value passed as the first argument, applications that do not properly 
-validate the input arguments passed to `new Buffer()`, or that fail to 
-appropriately initialize newly allocated `Buffer` content, can inadvertently 
+Because the behavior of `new Buffer()` changes significantly based on the type
+of value passed as the first argument, applications that do not properly
+validate the input arguments passed to `new Buffer()`, or that fail to
+appropriately initialize newly allocated `Buffer` content, can inadvertently
 introduce security and reliability issues into their code.
 
 To make the creation of `Buffer` objects more reliable and less error prone,
 the various forms of the `new Buffer()` constructor have been **deprecated**
 and replaced by separate `Buffer.from()`, `Buffer.alloc()`, and
-`Buffer.allocUnsafe()` methods. 
+`Buffer.allocUnsafe()` methods.
 
-*Developers should migrate all existing uses of the `new Buffer()` constructors 
+*Developers should migrate all existing uses of the `new Buffer()` constructors
 to one of these new APIs.*
 
-* [`Buffer.from(array)`][buffer_from_array] returns a new `Buffer` containing 
+* [`Buffer.from(array)`][buffer_from_array] returns a new `Buffer` containing
   a *copy* of the provided octets.
 * [`Buffer.from(arrayBuffer[, byteOffset [, length]])`][buffer_from_arraybuf]
-  returns a new `Buffer` that *shares* the same allocated memory as the given 
+  returns a new `Buffer` that *shares* the same allocated memory as the given
   `ArrayBuffer`.
-* [`Buffer.from(buffer)`][buffer_from_buffer] returns a new `Buffer` 
+* [`Buffer.from(buffer)`][buffer_from_buffer] returns a new `Buffer`
   containing a *copy* of the contents of the given `Buffer`.
-* [`Buffer.from(str[, encoding])`][buffer_from_string] returns a new `Buffer` 
+* [`Buffer.from(str[, encoding])`][buffer_from_string] returns a new `Buffer`
   containing a *copy* of the provided string.
-* [`Buffer.alloc(size[, fill[, encoding]])`][buffer_alloc] returns a "filled" 
-  `Buffer` instance of the specified size. This method can be significantly 
-  slower than [`Buffer.allocUnsafe(size)`][buffer_allocunsafe] but ensures that 
-  newly created `Buffer` instances never contain old and potentially sensitive 
+* [`Buffer.alloc(size[, fill[, encoding]])`][buffer_alloc] returns a "filled"
+  `Buffer` instance of the specified size. This method can be significantly
+  slower than [`Buffer.allocUnsafe(size)`][buffer_allocunsafe] but ensures that
+  newly created `Buffer` instances never contain old and potentially sensitive
   data.
-* [`Buffer.allocUnsafe(size)`][buffer_allocunsafe] returns a new `Buffer` of 
-  the specified `size` whose content *must* be initialized using either 
+* [`Buffer.allocUnsafe(size)`][buffer_allocunsafe] returns a new `Buffer` of
+  the specified `size` whose content *must* be initialized using either
   [`buf.fill(0)`][] or written to completely.
 
 `Buffer` instances returned by `Buffer.allocUnsafe(size)` *may* be allocated
@@ -117,11 +117,11 @@ $ node --zero-fill-buffers
 
 ### What makes `Buffer.allocUnsafe(size)` "unsafe"?
 
-When calling `Buffer.allocUnsafe()`, the segment of allocated memory is 
-*uninitialized* (it is not zeroed-out). While this design makes the allocation 
-of memory quite fast, the allocated segment of memory might contain old data 
-that is potentially sensitive. Using a `Buffer` created by 
-`Buffer.allocUnsafe(size)` without *completely* overwriting the memory can 
+When calling `Buffer.allocUnsafe()`, the segment of allocated memory is
+*uninitialized* (it is not zeroed-out). While this design makes the allocation
+of memory quite fast, the allocated segment of memory might contain old data
+that is potentially sensitive. Using a `Buffer` created by
+`Buffer.allocUnsafe(size)` without *completely* overwriting the memory can
 allow this old data to be leaked when the `Buffer` memory is read.
 
 While there are clear performance advantages to using `Buffer.allocUnsafe()`,
@@ -209,7 +209,7 @@ console.log(buf2);
 ```
 
 Note that when creating a `Buffer` using the TypedArray's `.buffer`, it is
-possible to use only a portion of the underlying `ArrayBuffer` by passing in 
+possible to use only a portion of the underlying `ArrayBuffer` by passing in
 `byteOffset` and `length` parameters:
 
 ```js
@@ -219,9 +219,9 @@ console.log(buf.length);
   // Prints: 16
 ```
 
-The `Buffer.from()` and [`TypedArray.from()`][] (e.g.`Uint8Array.from()`) have 
-different signatures and implementations. Specifically, the TypedArray variants 
-accept a second argument that is a mapping function that is invoked on every 
+The `Buffer.from()` and [`TypedArray.from()`][] (e.g.`Uint8Array.from()`) have
+different signatures and implementations. Specifically, the TypedArray variants
+accept a second argument that is a mapping function that is invoked on every
 element of the typed array:
 
 * `TypedArray.from(source[, mapFn[, thisArg]])`
@@ -260,7 +260,7 @@ It can be constructed in a variety of ways.
 
 ### new Buffer(array)
 
-    Stability: 0 - Deprecated: Use [`Buffer.from(array)`][buffer_from_array] 
+    Stability: 0 - Deprecated: Use [`Buffer.from(array)`][buffer_from_array]
     instead.
 
 * `array` {Array}
@@ -275,7 +275,7 @@ const buf = new Buffer([0x62,0x75,0x66,0x66,0x65,0x72]);
 
 ### new Buffer(buffer)
 
-    Stability: 0 - Deprecated: Use [`Buffer.from(buffer)`][buffer_from_buffer] 
+    Stability: 0 - Deprecated: Use [`Buffer.from(buffer)`][buffer_from_buffer]
     instead.
 
 * `buffer` {Buffer}
@@ -295,11 +295,11 @@ console.log(buf2.toString());
 
 ### new Buffer(arrayBuffer[, byteOffset [, length]])
 
-    Stability: 0 - Deprecated: Use 
+    Stability: 0 - Deprecated: Use
     [`Buffer.from(arrayBuffer[, byteOffset [, length]])`][buffer_from_arraybuf]
     instead.
 
-* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or a 
+* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or a
   `new ArrayBuffer()`
 * `byteOffset` {Number} Default: `0`
 * `length` {Number} Default: `arrayBuffer.length - byteOffset`
@@ -331,7 +331,7 @@ console.log(buf);
 ### new Buffer(size)
 
     Stability: 0 - Deprecated: Use
-    [`Buffer.alloc(size[, fill[, encoding]])`][buffer_alloc] instead (also 
+    [`Buffer.alloc(size[, fill[, encoding]])`][buffer_alloc] instead (also
     see [`Buffer.allocUnsafe(size)`][buffer_allocunsafe]).
 
 * `size` {Number}
@@ -359,7 +359,7 @@ console.log(buf);
 
 ### new Buffer(str[, encoding])
 
-    Stability: 0 - Deprecated: 
+    Stability: 0 - Deprecated:
     Use [`Buffer.from(str[, encoding])`][buffer_from_string] instead.
 
 * `str` {String} string to encode.
@@ -434,9 +434,9 @@ architectures, `kMaxLength` is `(2^31)-1`). Otherwise, a [`RangeError`][] is
 thrown. If a `size` less than 0 is specified, a zero-length `Buffer` will be
 created.
 
-The underlying memory for `Buffer` instances created in this way is *not 
-initialized*. The contents of the newly created `Buffer` are unknown and 
-*may contain sensitive data*. Use [`buf.fill(0)`][] to initialize such 
+The underlying memory for `Buffer` instances created in this way is *not
+initialized*. The contents of the newly created `Buffer` are unknown and
+*may contain sensitive data*. Use [`buf.fill(0)`][] to initialize such
 `Buffer` instances to zeroes.
 
 ```js
@@ -455,16 +455,16 @@ Note that the `Buffer` module pre-allocates an internal `Buffer` instance of
 size `Buffer.poolSize` that is used as a pool for the fast allocation of new
 `Buffer` instances created using `Buffer.allocUnsafe(size)` (and the deprecated
 `new Buffer(size)` constructor) only when `size` is less than or equal to
-`Buffer.poolSize >> 1` (floor of `Buffer.poolSize` divided by two). The default 
+`Buffer.poolSize >> 1` (floor of `Buffer.poolSize` divided by two). The default
 value of `Buffer.poolSize` is `8192` but can be modified.
 
-Use of this pre-allocated internal memory pool is a key difference between 
+Use of this pre-allocated internal memory pool is a key difference between
 calling `Buffer.alloc(size, fill)` vs. `Buffer.allocUnsafe(size).fill(fill)`.
-Specifically, `Buffer.alloc(size, fill)` will *never* use the internal Buffer 
-pool, while `Buffer.allocUnsafe(size).fill(fill)` *will* use the internal 
-Buffer pool if `size` is less than or equal to half `Buffer.poolSize`. The 
-difference is subtle but can be important when an application requires the 
-additional performance that `Buffer.allocUnsafe(size)` provides. 
+Specifically, `Buffer.alloc(size, fill)` will *never* use the internal Buffer
+pool, while `Buffer.allocUnsafe(size).fill(fill)` *will* use the internal
+Buffer pool if `size` is less than or equal to half `Buffer.poolSize`. The
+difference is subtle but can be important when an application requires the
+additional performance that `Buffer.allocUnsafe(size)` provides.
 
 ### Class Method: Buffer.byteLength(string[, encoding])
 
@@ -504,7 +504,7 @@ arr.sort(Buffer.compare);
 ### Class Method: Buffer.concat(list[, totalLength])
 
 * `list` {Array} List of Buffer objects to concat
-* `totalLength` {Number} Total length of the Buffers in the list 
+* `totalLength` {Number} Total length of the Buffers in the list
   when concatenated
 * Return: {Buffer}
 
@@ -552,7 +552,7 @@ A `TypeError` will be thrown if `array` is not an `Array`.
 
 ### Class Method: Buffer.from(arrayBuffer[, byteOffset[, length]])
 
-* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or 
+* `arrayBuffer` {ArrayBuffer} The `.buffer` property of a `TypedArray` or
   a `new ArrayBuffer()`
 * `byteOffset` {Number} Default: `0`
 * `length` {Number} Default: `arrayBuffer.length - byteOffset`
@@ -1691,8 +1691,8 @@ architectures, `kMaxLength` is `(2^31)-1`). Otherwise, a [`RangeError`][] is
 thrown. If a `size` less than 0 is specified, a zero-length `SlowBuffer` will be
 created.
 
-The underlying memory for `SlowBuffer` instances is *not initialized*. The 
-contents of a newly created `SlowBuffer` are unknown and could contain 
+The underlying memory for `SlowBuffer` instances is *not initialized*. The
+contents of a newly created `SlowBuffer` are unknown and could contain
 sensitive data. Use [`buf.fill(0)`][] to initialize a `SlowBuffer` to zeroes.
 
 ```js
