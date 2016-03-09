@@ -49,7 +49,7 @@ function main(conf) {
     case 'buffer()':
       bench.start();
       for (let i = 0; i < n * 1024; i++) {
-        Buffer.allocUnsafe(len);
+        Buffer(len);
       }
       bench.end(n);
       break;
