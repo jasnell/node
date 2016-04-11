@@ -1,5 +1,137 @@
 # Node.js ChangeLog
 
+## 2016-04-11, Version 6.0.0 (Release Candidate), @jasnell
+
+Node.js v6.0.0 Release Candidate 1. *This is not an officially Node.js
+release*.
+
+### Notable changes
+
+The following significant (semver-major) changes have been made since the
+previous Node v5.0.0 release.
+
+* Buffer
+  * New Buffer constructors have been added   
+    [#4682](https://github.com/nodejs/node/pull/4682)
+  * Previously deprecated Buffer APIs are removed 
+    [#5048](https://github.com/nodejs/node/pull/5048),
+    [#4594](https://github.com/nodejs/node/pull/4594)
+  * Improved error handling [#4514](https://github.com/nodejs/node/pull/4514)
+* Cluster
+  * Worker emitted as first argument in 'message' event
+    [#5361](https://github.com/nodejs/node/pull/5361).
+* Crypto
+  * Improved error handling [#3100](https://github.com/nodejs/node/pull/3100),
+    [#5611](https://github.com/nodejs/node/pull/5611)
+  * Simplified Certificate class bindings 
+    [#5382](https://github.com/nodejs/node/pull/5382)
+  * Improved control over FIPS mode  
+    [#5181](https://github.com/nodejs/node/pull/5181)
+  * pbkdf2 digest overloading is deprecated  
+    [#4047](https://github.com/nodejs/node/pull/4047)
+* Dependencies
+  * Reintroduce shared c-ares build support 
+    [#5775](https://github.com/nodejs/node/pull/5775).
+* DNS
+  * Add resolvePtr API to query plain DNS PTR records 
+    [#4921](https://github.com/nodejs/node/pull/4921).
+* Domains
+  * Clear stack when no error handler 
+  [#4659](https://github.com/nodejs/node/pull/4659).
+* File System
+  * FS apis can now accept and return paths as Buffers
+    [#5616](https://github.com/nodejs/node/pull/5616).
+  * Error handling and type checking improvements
+    [#5616](https://github.com/nodejs/node/pull/5616),
+    [#5590](https://github.com/nodejs/node/pull/5590),
+    [#4518](https://github.com/nodejs/node/pull/4518),
+    [#3917](https://github.com/nodejs/node/pull/3917).
+  * fs.read's string interface is deprecated
+    [#4525](https://github.com/nodejs/node/pull/4525)
+* HTTP
+  * 'clientError' can now be used to return custom errors from an
+    HTTP server [#4557](https://github.com/nodejs/node/pull/4557).
+* Modules
+  * Current directory is now prioritized for local lookups
+    [#5689](https://github.com/nodejs/node/pull/5689)
+* Net
+  * DNS hints no longer implicitly set
+    [#6021](https://github.com/nodejs/node/pull/6021).
+  * Improved error handling and type checking 
+    [#5981](https://github.com/nodejs/node/pull/5981),
+    [#5733](https://github.com/nodejs/node/pull/5733), 
+    [#2904](https://github.com/nodejs/node/pull/2904)
+* Path
+  * Improved type checking [#5348](https://github.com/nodejs/node/pull/5348).
+* Process
+  * Introduce process warnings API 
+    [#4782](https://github.com/nodejs/node/pull/4782).
+  * Throw exception when non-function passed to nextTick
+    [#3860](https://github.com/nodejs/node/pull/3860).
+* Readline
+  * Emit key info unconditionally 
+    [#6024](https://github.com/nodejs/node/pull/6024)
+* REPL
+  * Assignment to `_` will emit a warning.
+    [#5535](https://github.com/nodejs/node/pull/5535)
+* Timers
+  * Fail early when callback is not a function
+    [#4362](https://github.com/nodejs/node/pull/4362)
+* TLS
+  * Rename 'clientError' to 'tlsClientError'
+    [#4557](https://github.com/nodejs/node/pull/4557)
+  * SHA1 used for sessionIdContext 
+    [#3866](https://github.com/nodejs/node/pull/3866)
+* TTY
+  * Previously deprecated setRawMode wrapper is removed
+    [#2528](https://github.com/nodejs/node/pull/2528).
+* Util
+  * Changes to Error object formatting
+    [#4582](https://github.com/nodejs/node/pull/4582).
+* Windows
+  * Windows XP and Vista are no longer supported
+    [#5167](https://github.com/nodejs/node/pull/5167),
+    [#5167](https://github.com/nodejs/node/pull/5167).
+
+### Commits
+
+Commits since the last v5.x tag (v5.10.1):
+
+* [[`a2466896dd`](https://github.com/nodejs/node/commit/a2466896dd)] - **(SEMVER-MINOR)** **buffer**: add Buffer.prototype.compare by offset (James M Snell) [#5880](https://github.com/nodejs/node/pull/5880)
+* [[`9d94cc584e`](https://github.com/nodejs/node/commit/9d94cc584e)] - **buffer**: standardize array index check (Trevor Norris) [#6084](https://github.com/nodejs/node/pull/6084)
+* [[`71544c5eca`](https://github.com/nodejs/node/commit/71544c5eca)] - **build**: remove -f{data,function}-sections flags (Ben Noordhuis) [#6077](https://github.com/nodejs/node/pull/6077)
+* [[`937ac3760a`](https://github.com/nodejs/node/commit/937ac3760a)] - **deps**: backport 125ac66 from v8 upstream (Myles Borins) [#6086](https://github.com/nodejs/node/pull/6086)
+* [[`c3cec1eefc`](https://github.com/nodejs/node/commit/c3cec1eefc)] - **deps**: upgrade libuv to 1.9.0 (Saúl Ibarra Corretgé) [#5994](https://github.com/nodejs/node/pull/5994)
+* [[`3a8e8230ee`](https://github.com/nodejs/node/commit/3a8e8230ee)] - **deps**: upgrade to V8 4.9.385.35 (Ben Noordhuis) [#6077](https://github.com/nodejs/node/pull/6077)
+* [[`59d23ad63d`](https://github.com/nodejs/node/commit/59d23ad63d)] - **doc**: add copy about how to curl SHA256.txt (Myles Borins) [#6120](https://github.com/nodejs/node/pull/6120)
+* [[`ad2df3ac1f`](https://github.com/nodejs/node/commit/ad2df3ac1f)] - **doc**: clarification for maxBuffer and Unicode output (James M Snell) [#6030](https://github.com/nodejs/node/pull/6030)
+* [[`8f4fdc93f0`](https://github.com/nodejs/node/commit/8f4fdc93f0)] - **doc**: describe child.kill() pitfalls on linux (Robert Jefe Lindstaedt) [#2098](https://github.com/nodejs/node/issues/2098)
+* [[`d2577def93`](https://github.com/nodejs/node/commit/d2577def93)] - **doc**: fix scrolling on iOS devices (Luigi Pinca) [#5878](https://github.com/nodejs/node/pull/5878)
+* [[`820844d673`](https://github.com/nodejs/node/commit/820844d673)] - **doc**: path.format provide more examples (John Eversole) [#5838](https://github.com/nodejs/node/pull/5838)
+* [[`e67fee0fb5`](https://github.com/nodejs/node/commit/e67fee0fb5)] - **doc**: add topic - event loop, timers, `nextTick()` (Jeff Harris) [#4936](https://github.com/nodejs/node/pull/4936)
+* [[`945454894b`](https://github.com/nodejs/node/commit/945454894b)] - **doc**: add example using algorithms not directly exposed (Brad Hill) [#6108](https://github.com/nodejs/node/pull/6108)
+* [[`853d8fb4e7`](https://github.com/nodejs/node/commit/853d8fb4e7)] - **doc**: update openssl LICENSE using license-builder.sh (Steven R. Loomis) [#6065](https://github.com/nodejs/node/pull/6065)
+* [[`31524d7310`](https://github.com/nodejs/node/commit/31524d7310)] - **doc**: fix a typo in 5.10.1's changelog (Vladimir Varankin) [#6076](https://github.com/nodejs/node/pull/6076)
+* [[`1879e1ef17`](https://github.com/nodejs/node/commit/1879e1ef17)] - **doc**: simple doc typo fix (Brendon Pierson) [#6041](https://github.com/nodejs/node/pull/6041)
+* [[`0f3c3b4bdb`](https://github.com/nodejs/node/commit/0f3c3b4bdb)] - **doc**: note about Android support (Rich Trott) [#6040](https://github.com/nodejs/node/pull/6040)
+* [[`b743d82ffc`](https://github.com/nodejs/node/commit/b743d82ffc)] - **doc**: improve github templates by using comments (Johan Bergström) [#5710](https://github.com/nodejs/node/pull/5710)
+* [[`7d8882ba9a`](https://github.com/nodejs/node/commit/7d8882ba9a)] - **(SEMVER-MINOR)** **handle_wrap**: expose an `isRefed()` check to JS (Jeremiah Senkpiel) [#5834](https://github.com/nodejs/node/pull/5834)
+* [[`1384de29f7`](https://github.com/nodejs/node/commit/1384de29f7)] - **path**: fixing a test that breaks on some machines. (Mike Kaufman) [#6067](https://github.com/nodejs/node/pull/6067)
+* [[`c5afd98b48`](https://github.com/nodejs/node/commit/c5afd98b48)] - **repl**: refactor repl.js (Rich Trott) [#6071](https://github.com/nodejs/node/pull/6071)
+* [[`f938ef7492`](https://github.com/nodejs/node/commit/f938ef7492)] - **src**: fix -Wunused-variable compiler warning (Ben Noordhuis) [#6129](https://github.com/nodejs/node/pull/6129)
+* [[`ffe5c8385e`](https://github.com/nodejs/node/commit/ffe5c8385e)] - **test**: fix issues for ESLint 2.7.0 (silverwind) [#6132](https://github.com/nodejs/node/pull/6132)
+* [[`eaab17c6a7`](https://github.com/nodejs/node/commit/eaab17c6a7)] - **test**: move some test from sequential to parallel (Santiago Gimeno) [#6087](https://github.com/nodejs/node/pull/6087)
+* [[`a9aa199543`](https://github.com/nodejs/node/commit/a9aa199543)] - **test**: fix flaky test-http-client-abort (Rich Trott) [#6124](https://github.com/nodejs/node/pull/6124)
+* [[`7c9a691ee7`](https://github.com/nodejs/node/commit/7c9a691ee7)] - **test**: refactor test-file-write-stream3 (Rich Trott) [#6050](https://github.com/nodejs/node/pull/6050)
+* [[`d4eafd0c11`](https://github.com/nodejs/node/commit/d4eafd0c11)] - **test**: enforce strict mode for test-domain-crypto (Rich Trott) [#6047](https://github.com/nodejs/node/pull/6047)
+* [[`b73e1b3c5a`](https://github.com/nodejs/node/commit/b73e1b3c5a)] - **test**: fix another flaky stringbytes test (Ali Ijaz Sheikh) [#6073](https://github.com/nodejs/node/pull/6073)
+* [[`f4ebd5989a`](https://github.com/nodejs/node/commit/f4ebd5989a)] - **test**: fix flakiness of stringbytes-external (Ali Ijaz Sheikh) [#6039](https://github.com/nodejs/node/pull/6039)
+* [[`2f6ff1bb64`](https://github.com/nodejs/node/commit/2f6ff1bb64)] - **tools**: update ESLint to 2.7.0 (silverwind) [#6132](https://github.com/nodejs/node/pull/6132)
+* [[`8ffa20c495`](https://github.com/nodejs/node/commit/8ffa20c495)] - **(SEMVER-MAJOR)** **tools**: do not rewrite npm shebang in install.py (Evan Lucas) [#6098](https://github.com/nodejs/node/pull/6098)
+* [[`6222e5b76d`](https://github.com/nodejs/node/commit/6222e5b76d)] - **tools,doc**: fix json for grouped optional params (firedfox) [#5977](https://github.com/nodejs/node/pull/5977)
+* [[`05d0e9e6a3`](https://github.com/nodejs/node/commit/05d0e9e6a3)] - **tools,doc**: fix incomplete json produced by doctool (firedfox) [#5966](https://github.com/nodejs/node/pull/5966)
+
+
 ## 2016-04-05, Version 5.10.1 (Stable), @thealphanerd
 
 ### Notable changes
