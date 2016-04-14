@@ -123,6 +123,7 @@ namespace node {
   V(file_string, "file")                                                      \
   V(fingerprint_string, "fingerprint")                                        \
   V(flags_string, "flags")                                                    \
+  V(fromutf8converter_string, "FromUtf8Converter")                            \
   V(fsevent_string, "FSEvent")                                                \
   V(gid_string, "gid")                                                        \
   V(handle_string, "handle")                                                  \
@@ -130,6 +131,7 @@ namespace node {
   V(heap_used_string, "heapUsed")                                             \
   V(homedir_string, "homedir")                                                \
   V(hostmaster_string, "hostmaster")                                          \
+  V(icuconverter_string, "ICUConverter")                                      \
   V(ignore_string, "ignore")                                                  \
   V(immediate_callback_string, "_immediateCallback")                          \
   V(infoaccess_string, "infoAccess")                                          \

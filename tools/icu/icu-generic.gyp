@@ -21,7 +21,7 @@
       'toolsets': [ 'target' ],
       'direct_dependent_settings': {
         'defines': [
-          'UCONFIG_NO_CONVERSION=1',
+          #'UCONFIG_NO_CONVERSION=1',
         ]
       },
     },

@@ -20,6 +20,7 @@ namespace node {
   V(GETADDRINFOREQWRAP)                                                       \
   V(GETNAMEINFOREQWRAP)                                                       \
   V(HTTPPARSER)                                                               \
+  V(ICUCONVERTER)                                                             \
   V(JSSTREAM)                                                                 \
   V(PIPEWRAP)                                                                 \
   V(PIPECONNECTWRAP)                                                          \
