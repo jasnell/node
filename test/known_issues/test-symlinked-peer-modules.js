@@ -12,49 +12,67 @@ const common = require('../common');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const exec = require('child_process').exec;
 
-common.refreshTmpDir();
+if (common.isWindows) {
+  // On Windows, creating symlinks requires admin privileges.
+  // We'll only try to run symlink test if we have enough privileges.
+  exec('whoami /priv', function(err, o) {
+    if (err || o.indexOf('SeCreateSymbolicLinkPrivilege') == -1) {
+      console.log('Skipped: insufficient privileges');
+      return;
+    } else {
+      test();
+    }
+  });
+} else {
+  test();
+}
 
-const tmpDir = common.tmpDir;
+function test() {
+  common.refreshTmpDir();
 
-// Creates the following structure
-// {tmpDir}
-// ├── app
-// │   ├── index.js
-// │   └── node_modules
-// │       ├── moduleA -> {tmpDir}/moduleA
-// │       └── moduleB
-// │           ├── index.js
-// │           └── package.json
-// └── moduleA
-//     ├── index.js
-//     └── package.json
+  const tmpDir = common.tmpDir;
 
-const moduleA = path.join(tmpDir, 'moduleA');
-const app = path.join(tmpDir, 'app');
-const moduleB = path.join(app, 'node_modules', 'moduleB');
-const moduleA_link = path.join(app, 'node_modules', 'moduleA');
+  // Creates the following structure
+  // {tmpDir}
+  // ├── app
+  // │   ├── index.js
+  // │   └── node_modules
+  // │       ├── moduleA -> {tmpDir}/moduleA
+  // │       └── moduleB
+  // │           ├── index.js
+  // │           └── package.json
+  // └── moduleA
+  //     ├── index.js
+  //     └── package.json
 
-fs.mkdirSync(moduleA);
-fs.writeFileSync(path.join(moduleA, 'package.json'),
-                 JSON.stringify({name: 'moduleA', main: 'index.js'}), 'utf8');
-fs.writeFileSync(path.join(moduleA, 'index.js'),
-                 'module.exports = require(\'moduleB\');');
+  const moduleA = path.join(tmpDir, 'moduleA');
+  const app = path.join(tmpDir, 'app');
+  const moduleB = path.join(app, 'node_modules', 'moduleB');
+  const moduleA_link = path.join(app, 'node_modules', 'moduleA');
 
-fs.mkdirSync(app);
-fs.writeFileSync(path.join(app, 'index.js'),
-                 '\'use strict\'; require(\'moduleA\');');
-fs.mkdirSync(path.join(app, 'node_modules'));
+  fs.mkdirSync(moduleA);
+  fs.writeFileSync(path.join(moduleA, 'package.json'),
+                   JSON.stringify({name: 'moduleA', main: 'index.js'}), 'utf8');
+  fs.writeFileSync(path.join(moduleA, 'index.js'),
+                   'module.exports = require(\'moduleB\');');
 
-fs.mkdirSync(moduleB);
-fs.writeFileSync(path.join(moduleB, 'package.json'),
-                 JSON.stringify({name: 'moduleB', main: 'index.js'}), 'utf8');
-fs.writeFileSync(path.join(moduleB, 'index.js'),
-                 'module.exports = 1;');
+  fs.mkdirSync(app);
+  fs.writeFileSync(path.join(app, 'index.js'),
+                   '\'use strict\'; require(\'moduleA\');');
+  fs.mkdirSync(path.join(app, 'node_modules'));
 
-fs.symlinkSync(moduleA, moduleA_link);
+  fs.mkdirSync(moduleB);
+  fs.writeFileSync(path.join(moduleB, 'package.json'),
+                   JSON.stringify({name: 'moduleB', main: 'index.js'}), 'utf8');
+  fs.writeFileSync(path.join(moduleB, 'index.js'),
+                   'module.exports = 1;');
 
-// This should not throw, but it does
-assert.doesNotThrow(() => {
-  console.log(require(path.join(app, 'index')));
-});
+  fs.symlinkSync(moduleA, moduleA_link);
+
+  // This should not throw, but it does
+  assert.doesNotThrow(() => {
+    console.log(require(path.join(app, 'index')));
+  });
+}
