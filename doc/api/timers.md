@@ -2,87 +2,127 @@
 
     Stability: 3 - Locked
 
-All of the timer functions are globals.  You do not need to `require()`
-this module in order to use them.
+The `timer` module exposes a global API for scheduling callback functions to
+execute at some future period of time. Because the timer functions are globals,
+there is no need to call `require('timers')` to use the API.
 
-## clearImmediate(immediateObject)
+The timer functions within Node.js implement the same API as the timers API
+provided by Web Browsers but use a different internal implementation that is
+built around [the Node.js Event Loop][].
 
-Stops an `immediateObject`, as created by [`setImmediate`][], from triggering.
+## Scheduling Timers
 
-## clearInterval(intervalObject)
+A timer in Node.js is an internal construct that calls a given function after
+a certain period of time. When a timer's function is called is a factor of
+which method was used to create the timer and what other work the Node.js
+event loop is doing.
 
-Stops an `intervalObject`, as created by [`setInterval`][], from triggering.
+### setImmediate(callback[, arg][, ...])
 
-## clearTimeout(timeoutObject)
+* `callback` {Function} The function to call when the timer elapses.
+* `[, arg][, ...]` Optional arguments to pass when the `callback` is called.
 
-Prevents a `timeoutObject`, as created by [`setTimeout`][], from triggering.
+Schedules the "immediate" execution of `callback` after I/O events'
+callbacks and before timers created using [`setTimeout`][] and [`setInterval`][]
+are triggered. Returns an `immediateObject` for possible use with
+[`clearImmediate`][].
 
-## ref()
+Callbacks for "immediate timers" are queued in the order in which they were
+created. The entire callback queue is processed every event loop iteration. If
+an immediate is queued from inside an executing callback, that immediate will
+not fire until the next event loop iteration.
 
-If a timer was previously `unref()`d, then `ref()` can be called to explicitly
-request the timer hold the program open. If the timer is already `ref`d calling
-`ref` again will have no effect.
+If `callback` is not a function, an [`Error`][] will be thrown.
 
-Returns the timer.
+### setInterval(callback, delay[, arg][, ...])
 
-## setImmediate(callback[, arg][, ...])
-
-Schedules "immediate" execution of `callback` after I/O events'
-callbacks and before timers set by [`setTimeout`][] and [`setInterval`][] are
-triggered. Returns an `immediateObject` for possible use with
-[`clearImmediate`][]. Additional optional arguments may be passed to the
-callback.
-
-Callbacks for immediates are queued in the order in which they were created.
-The entire callback queue is processed every event loop iteration. If an
-immediate is queued from inside an executing callback, that immediate won't fire
-until the next event loop iteration.
-
-If `callback` is not a function `setImmediate()` will throw immediately.
-
-## setInterval(callback, delay[, arg][, ...])
+* `callback` {Function} The function to call when the timer elapses.
+* `delay` {number} The number of milliseconds to wait before calling the
+  `callback`.
+* `[, arg][, ...]` Optional arguments to pass when the `callback` is called.
 
 Schedules repeated execution of `callback` every `delay` milliseconds.
-Returns a `intervalObject` for possible use with [`clearInterval`][]. Additional
-optional arguments may be passed to the callback.
+Returns a `intervalObject` for possible use with [`clearInterval`][].
 
-To follow browser behavior, when using delays larger than 2147483647
-milliseconds (approximately 25 days) or less than 1, Node.js will use 1 as the
-`delay`.
+When `delay` is larger than `2147483647` or less than `1`, the `delay` will be
+set to `1`.
 
-If `callback` is not a function `setInterval()` will throw immediately.
+If `callback` is not a function, an [`Error`][] will be thrown.
 
-## setTimeout(callback, delay[, arg][, ...])
+### setTimeout(callback, delay[, arg][, ...])
+
+* `callback` {Function} The function to call when the timer elapses.
+* `delay` {number} The number of milliseconds to wait before calling the
+  `callback`.
+* `[, arg][, ...]` Optional arguments to pass when the `callback` is called.
 
 Schedules execution of a one-time `callback` after `delay` milliseconds.
-Returns a `timeoutObject` for possible use with [`clearTimeout`][]. Additional
-optional arguments may be passed to the callback.
+Returns a `timeoutObject` for possible use with [`clearTimeout`][].
 
-The callback will likely not be invoked in precisely `delay` milliseconds.
+The `callback` will likely not be invoked in precisely `delay` milliseconds.
 Node.js makes no guarantees about the exact timing of when callbacks will fire,
 nor of their ordering. The callback will be called as close as possible to the
 time specified.
 
-To follow browser behavior, when using delays larger than 2147483647
-milliseconds (approximately 25 days) or less than 1, the timeout is executed
-immediately, as if the `delay` was set to 1.
+When `delay` is larger than `2147483647` or less than `1`, the `delay` will be
+set to `1`.
 
-If `callback` is not a function `setTimeout()` will throw immediately.
+If `callback` is not a function, an [`Error`][] will be thrown.
 
-## unref()
+## Cancel Timers
 
-The opaque value returned by [`setTimeout`][] and [`setInterval`][] also has the
-method `timer.unref()` which allows the creation of a timer that is active but
-if it is the only item left in the event loop, it won't keep the program
-running. If the timer is already `unref`d calling `unref` again will have no
-effect.
+The `setImmediate()`, `setInterval()`, and `setTimeout()` methods each return
+opaque objects that represent the scheduled timers. These can be used to
+cancel the timer and prevent it from triggering.
 
-In the case of [`setTimeout`][], `unref` creates a separate timer that will
-wakeup the event loop, creating too many of these may adversely effect event
-loop performance -- use wisely.
+### clearImmediate(immediateObject)
 
-Returns the timer.
+* `immediateObject` {Object} An immediate timer object as returned by
+  `setImmediate()`.
 
+Cancels an "immediate timer".
+
+### clearInterval(intervalObject)
+
+* `intervalObject` {Object} An interval timer object as returned by
+  `setInterval()`.
+
+Cancels an "interval timer".
+
+### clearTimeout(timeoutObject)
+
+* `timeoutObject` {Object} A timeout timer object as returned by `setTimeout()`.
+
+Cancels a "timeout timer".
+
+## Timer Reference Tracking
+
+By default, when a timer is scheduled using either `setTimeout()` or
+`setInterval()`, the Node.js event loop will continue running as long as the
+timer is active. Each of the opaque timer objects returned by these functions
+export both `timer.ref()` and `timer.unref()` functions that can be used to
+control this default behavior.
+
+### timer.ref()
+
+When called, requests that the Node.js event loop *not* exit so long as the
+timer is active. Calling `timer.ref()` multiple times will have no effect.
+
+Returns a reference to the timer object.
+
+### timer.unref()
+
+When called, allows the Node.js event loop to exit if the timer is the only
+item left in the Node.js event loop. Calling `timer.unref()` multiple times
+will have no effect.
+
+In the case of [`setTimeout`][], `timer.unref()` creates a separate timer that
+will wake the Node.js event loop. Creating too many of these can adversely 
+impact the performance of the event.
+
+Returns a reference to the timer object.
+
+[the Node.js Event Loop]: ../topics/the-event-loop-timers-and-nexttick.md
 [`clearImmediate`]: timers.html#timers_clearimmediate_immediateobject
 [`clearInterval`]: timers.html#timers_clearinterval_intervalobject
 [`clearTimeout`]: timers.html#timers_cleartimeout_timeoutobject
