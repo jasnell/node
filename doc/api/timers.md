@@ -122,7 +122,8 @@ impact the performance of the event.
 
 Returns a reference to the timer object.
 
-[the Node.js Event Loop]: ../topics/the-event-loop-timers-and-nexttick.md
+[the Node.js Event Loop]: ../topics/the-event-loop-timers-and-nexttick.html
+[`Error`][]: errors.html
 [`clearImmediate`]: timers.html#timers_clearimmediate_immediateobject
 [`clearInterval`]: timers.html#timers_clearinterval_intervalobject
 [`clearTimeout`]: timers.html#timers_cleartimeout_timeoutobject
