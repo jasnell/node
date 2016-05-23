@@ -2,11 +2,11 @@
 
     Stability: 3 - Locked
 
-The `timer` module exposes a global API for scheduling callback functions to
-execute at some future period of time. Because the timer functions are globals,
-there is no need to call `require('timers')` to use the API.
+The `timer` module exposes a global API for scheduling functions to
+be called at some future period of time. Because the timer functions are
+globals, there is no need to call `require('timers')` to use the API.
 
-The timer functions within Node.js implement the same API as the timers API
+The timer functions within Node.js implement a similar API as the timers API
 provided by Web Browsers but use a different internal implementation that is
 built around [the Node.js Event Loop][].
 
@@ -29,8 +29,8 @@ are triggered. Returns an `immediateObject` for possible use with
 
 Callbacks for "immediate timers" are queued in the order in which they were
 created. The entire callback queue is processed every event loop iteration. If
-an immediate is queued from inside an executing callback, that immediate will
-not fire until the next event loop iteration.
+an immediate timer is queued from inside an executing callback, that timer will
+not be triggered until the next event loop iteration.
 
 If `callback` is not a function, an [`Error`][] will be thrown.
 
@@ -117,7 +117,7 @@ item left in the Node.js event loop. Calling `timer.unref()` multiple times
 will have no effect.
 
 In the case of [`setTimeout`][], `timer.unref()` creates a separate timer that
-will wake the Node.js event loop. Creating too many of these can adversely 
+will wake the Node.js event loop. Creating too many of these can adversely
 impact the performance of the event.
 
 Returns a reference to the timer object.
