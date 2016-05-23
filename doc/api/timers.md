@@ -69,7 +69,7 @@ set to `1`.
 
 If `callback` is not a function, an [`Error`][] will be thrown.
 
-## Cancel Timers
+## Cancelling Timers
 
 The `setImmediate()`, `setInterval()`, and `setTimeout()` methods each return
 opaque objects that represent the scheduled timers. These can be used to
