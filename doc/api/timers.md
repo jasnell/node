@@ -72,8 +72,8 @@ If `callback` is not a function, an [`Error`][] will be thrown.
 ## Cancelling Timers
 
 The `setImmediate()`, `setInterval()`, and `setTimeout()` methods each return
-opaque objects that represent the scheduled timers. These can be used to
-cancel the timer and prevent it from triggering.
+opaque (internally managed) objects that represent the scheduled timers. These
+can be used to cancel the timer and prevent it from triggering.
 
 ### clearImmediate(immediateObject)
 
@@ -122,7 +122,7 @@ impact the performance of the event.
 
 Returns a reference to the timer object.
 
-[the Node.js Event Loop]: ../topics/the-event-loop-timers-and-nexttick.html
+[the Node.js Event Loop]: https://github.com/nodejs/node/blob/master/doc/topics/the-event-loop-timers-and-nexttick.md
 [`Error`][]: errors.html
 [`clearImmediate`]: timers.html#timers_clearimmediate_immediateobject
 [`clearInterval`]: timers.html#timers_clearinterval_intervalobject
