@@ -10,6 +10,42 @@ The timer functions within Node.js implement a similar API as the timers API
 provided by Web Browsers but use a different internal implementation that is
 built around [the Node.js Event Loop][].
 
+## Class: Immediate
+
+This object is created internally and is returned from [`setImmediate`][]. It
+can be passed to [`clearImmediate`] in order to cancel the scheduled actions.
+
+## Class: Timeout
+
+This object is created internally and is returned from [`setTimeout`][] and
+[`setInterval`][]. It can be passed to [`clearTimeout`][] or [`clearInterval`][]
+respectively in order to cancel the scheduled actions.
+
+By default, when a timer is scheduled using either [`setTimeout`] or
+[`setInterval`][], the Node.js event loop will continue running as long as the
+timer is active. Each of the `Timeout` objects returned by these functions
+export both `timer.ref()` and `timer.unref()` functions that can be used to
+control this default behavior.
+
+### ref()
+
+When called, requests that the Node.js event loop *not* exit so long as the
+timer is active. Calling `timer.ref()` multiple times will have no effect.
+
+Returns a reference to the `Timeout`.
+
+### unref()
+
+When called, allows the Node.js event loop to exit if the timer is the only
+item left in the Node.js event loop. Calling `timer.unref()` multiple times
+will have no effect.
+
+In the case of [`setTimeout`][], `timer.unref()` creates a separate timer that
+will wake the Node.js event loop. Creating too many of these can adversely
+impact the performance of the event.
+
+Returns a reference to the `Timeout`.
+
 ## Scheduling Timers
 
 A timer in Node.js is an internal construct that calls a given function after
@@ -71,56 +107,31 @@ If `callback` is not a function, an [`Error`][] will be thrown.
 
 ## Cancelling Timers
 
-The `setImmediate()`, `setInterval()`, and `setTimeout()` methods each return
-opaque (internally managed) objects that represent the scheduled timers. These
-can be used to cancel the timer and prevent it from triggering.
+The [`setImmediate`][], [`setInterval`][], and [`setTimeout`][] methods each
+return objects that represent the scheduled timers. These can be used to cancel
+the timer and prevent it from triggering.
 
 ### clearImmediate(immediateObject)
 
-* `immediateObject` {Object} An immediate timer object as returned by
-  `setImmediate()`.
+* `immediateObject` {Immediate} An immediate timer object as returned by
+  [`setImmediate`][].
 
 Cancels an "immediate timer".
 
 ### clearInterval(intervalObject)
 
-* `intervalObject` {Object} An interval timer object as returned by
-  `setInterval()`.
+* `intervalObject` {Timeout} An interval timer object as returned by
+  [`setInterval`][].
 
 Cancels an "interval timer".
 
 ### clearTimeout(timeoutObject)
 
-* `timeoutObject` {Object} A timeout timer object as returned by `setTimeout()`.
+* `timeoutObject` {Timeout} A timeout timer object as returned by
+  [`setTimeout`][].
 
 Cancels a "timeout timer".
 
-## Timer Reference Tracking
-
-By default, when a timer is scheduled using either `setTimeout()` or
-`setInterval()`, the Node.js event loop will continue running as long as the
-timer is active. Each of the opaque timer objects returned by these functions
-export both `timer.ref()` and `timer.unref()` functions that can be used to
-control this default behavior.
-
-### timer.ref()
-
-When called, requests that the Node.js event loop *not* exit so long as the
-timer is active. Calling `timer.ref()` multiple times will have no effect.
-
-Returns a reference to the timer object.
-
-### timer.unref()
-
-When called, allows the Node.js event loop to exit if the timer is the only
-item left in the Node.js event loop. Calling `timer.unref()` multiple times
-will have no effect.
-
-In the case of [`setTimeout`][], `timer.unref()` creates a separate timer that
-will wake the Node.js event loop. Creating too many of these can adversely
-impact the performance of the event.
-
-Returns a reference to the timer object.
 
 [the Node.js Event Loop]: https://github.com/nodejs/node/blob/master/doc/topics/the-event-loop-timers-and-nexttick.md
 [`Error`][]: errors.html
