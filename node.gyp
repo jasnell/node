@@ -110,7 +110,8 @@
       'dependencies': [
         'node_js2c#host',
         'deps/v8/tools/gyp/v8.gyp:v8',
-        'deps/v8/tools/gyp/v8.gyp:v8_libplatform'
+        'deps/v8/tools/gyp/v8.gyp:v8_libplatform',
+        'deps/nghttp2/nghttp2.gyp:nghttp2'
       ],
 
       'include_dirs': [
@@ -118,7 +119,8 @@
         'tools/msvs/genfiles',
         'deps/uv/src/ares',
         '<(SHARED_INTERMEDIATE_DIR)', # for node_natives.h
-        'deps/v8' # include/v8_platform.h
+        'deps/v8', # include/v8_platform.h
+        "deps/nghttp2/lib/includes"
       ],
 
       'sources': [

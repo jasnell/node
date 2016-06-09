@@ -1,0 +1,55 @@
+
+const http2 = require('http2');
+
+// The typical API is similar to existing HTTP API.
+// There are notable exceptions where the current API no longer makes sense.
+const server = http2.createServer((req, res) => {
+
+  // Much of the existing API will be preserved...
+  res.writeHead(200, {Header: 'Value'});
+  res.addHeader(); // ...
+
+  // New APIs for managing priority
+  req.getPriority();
+  res.setPriority();
+
+  // New API for dealing with Push streams... essentially creates a
+  // new response object...
+  res.push(options, (res) => {
+    res.writeHead(200, {Header: 'Value'});
+    res.end('ok');
+  });
+
+  // For example:
+  res.push(options, (res) => readable.pipe(res));
+
+  // req.stream and res.stream should be the same object...
+
+});
+
+The req.socket property will return an HTTP/2 Socket, this is an extension of
+net.Socket that will provide additional APIs that are specific to HTTP/2
+
+For instance...
+
+// Sending an HTTP/2 Ping
+req.socket.ping('data', (data) => {
+  // callback is called when the pong is received
+});
+
+// Sending a SETTINGS frame
+res.socket.settings(settings, () => {
+  // callback is called when settings frame is acknowledged
+});
+
+res.socket.on('ping', (data) => {
+  // called when a ping is received. The ping itself is handled
+  // automatically by the server.
+});
+
+res.socket.on('settings', (settings) => {
+  // called when a new settings frame has been received
+});
+
+The HTTP2 server object will also have HTTP/2 specific APIs, including
+methods to tune hpack settings, new stream defaults, etc
