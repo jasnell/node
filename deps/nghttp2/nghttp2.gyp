@@ -15,7 +15,7 @@
       'sources': [
         'lib/includes/nghttp2/nghttp2ver.h',
         'lib/includes/nghttp2/nghttp2.h',
-        'lib/nghttp2_buf.c'
+        'lib/nghttp2_buf.c',
         'lib/nghttp2_buf.h',
         'lib/nghttp2_callbacks.c',
         'lib/nghttp2_callbacks.h',

@@ -23,6 +23,8 @@
 # endif  // !OPENSSL_NO_ENGINE
 #endif
 
+#include "nghttp2/nghttp2.h"
+
 namespace node {
 
 using v8::Local;
@@ -1223,6 +1225,37 @@ void DefineZlibConstants(Local<Object> target) {
   NODE_DEFINE_CONSTANT(target, Z_DEFAULT_LEVEL);
 }
 
+void DefineHTTP2Constants(Local<Object> target) {
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_HCAT_REQUEST);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_HCAT_RESPONSE);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_HCAT_PUSH_RESPONSE);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_HCAT_HEADERS);
+  
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_NO_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_PROTOCOL_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_INTERNAL_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_FLOW_CONTROL_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_SETTINGS_TIMEOUT);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_STREAM_CLOSED);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_FRAME_SIZE_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_REFUSED_STREAM);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_CANCEL);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_COMPRESSION_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_CONNECT_ERROR);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_ENHANCE_YOUR_CALM);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_INADEQUATE_SECURITY);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_HTTP_1_1_REQUIRED);
+
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_ERR_DEFERRED);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_ERR_CALLBACK_FAILURE);
+
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_FLAG_END_STREAM);
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_DATA_FLAG_EOF);
+
+  NODE_DEFINE_CONSTANT(target, NGHTTP2_DATA);
+}
+
 void DefineConstants(v8::Isolate* isolate, Local<Object> target) {
   Local<Object> os_constants = Object::New(isolate);
   Local<Object> err_constants = Object::New(isolate);
@@ -1230,6 +1263,7 @@ void DefineConstants(v8::Isolate* isolate, Local<Object> target) {
   Local<Object> fs_constants = Object::New(isolate);
   Local<Object> crypto_constants = Object::New(isolate);
   Local<Object> zlib_constants = Object::New(isolate);
+  Local<Object> http2_constants = Object::New(isolate);
 
   DefineErrnoConstants(err_constants);
   DefineWindowsErrorConstants(err_constants);
@@ -1239,6 +1273,7 @@ void DefineConstants(v8::Isolate* isolate, Local<Object> target) {
   DefineOpenSSLConstants(crypto_constants);
   DefineCryptoConstants(crypto_constants);
   DefineZlibConstants(zlib_constants);
+  DefineHTTP2Constants(http2_constants);
 
   os_constants->Set(OneByteString(isolate, "errno"), err_constants);
   os_constants->Set(OneByteString(isolate, "signals"), sig_constants);
@@ -1246,6 +1281,7 @@ void DefineConstants(v8::Isolate* isolate, Local<Object> target) {
   target->Set(OneByteString(isolate, "fs"), fs_constants);
   target->Set(OneByteString(isolate, "crypto"), crypto_constants);
   target->Set(OneByteString(isolate, "zlib"), zlib_constants);
+  target->Set(OneByteString(isolate, "http2"), http2_constants);
 }
 
 }  // namespace node
