@@ -37,6 +37,7 @@
 * [TLS/SSL](tls.html)
 * [TTY](tty.html)
 * [UDP/Datagram](dgram.html)
+* [Unicode](unicode.html)
 * [URL](url.html)
 * [Utilities](util.html)
 * [V8](v8.html)
