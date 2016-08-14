@@ -59,36 +59,17 @@ extern "C" const char U_DATA_API SMALL_ICUDATA_ENTRY_POINT[];
 
 namespace node {
 
-using v8::ArrayBuffer;
 using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::Local;
 using v8::Object;
 using v8::String;
 using v8::Uint32;
-using v8::Uint8Array;
 using v8::Value;
 
 bool flag_icu_data_dir = false;
 
 namespace i18n {
-
-#define THROW_AND_RETURN_UNLESS_BUFFER(env, obj)                              \
-  do {                                                                        \
-    if (!Buffer::HasInstance(obj))                                            \
-      return env->ThrowTypeError("argument must be a Buffer");                \
-  } while (0)
-
-#define SPREAD_ARG(val, name)                                                 \
-  CHECK((val)->IsUint8Array());                                               \
-  Local<Uint8Array> name = (val).As<Uint8Array>();                            \
-  ArrayBuffer::Contents name##_c = name->Buffer()->GetContents();             \
-  const size_t name##_offset = name->ByteOffset();                            \
-  const size_t name##_length = name->ByteLength();                            \
-  char* const name##_data =                                                   \
-      static_cast<char*>(name##_c.Data()) + name##_offset;                    \
-  if (name##_length > 0)                                                      \
-    CHECK_NE(name##_data, nullptr);
 
 #define OPEN_CONVERTER(conv, name, status)                                    \
   conv = ucnv_open(name, &status);                                            \
@@ -219,7 +200,7 @@ static void ToASCII(const FunctionCallbackInfo<Value>& args) {
                           len).ToLocalChecked());
 }
 
-// Get's the codepoint at a given offset for UTF-8 or UCS2
+// Gets the codepoint at a given offset for UTF-8 or UCS2
 // args[0] must be a buffer instance
 // args[1] must be a boolean, true = utf8, false = ucs2
 // args[2] must be the integer offset within the buffer to check
