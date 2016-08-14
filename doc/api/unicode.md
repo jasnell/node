@@ -1,6 +1,6 @@
-# icu
+# unicode
 
-    Stability: 1 - Experimental
+> Stability: 1 - Experimental
 
 The `unicode` module provides an interface to Unicode and Internationalization
 functionality provided by the ICU4C library.
