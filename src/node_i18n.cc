@@ -238,7 +238,7 @@ void GetCodePointAt(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(codepoint);
 }
 
-// Get's the char at a given offset for UTF-8 or UCS2
+// Gets the char at a given offset for UTF-8 or UCS2
 // args[0] must be a buffer instance
 // args[1] must be a boolean, true = utf8, false = ucs2
 // args[2] must be the integer offset within the buffer to check
