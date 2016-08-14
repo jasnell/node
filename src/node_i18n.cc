@@ -71,11 +71,22 @@ bool flag_icu_data_dir = false;
 
 namespace i18n {
 
-#define OPEN_CONVERTER(conv, name, status)                                    \
-  conv = ucnv_open(name, &status);                                            \
-  if (U_FAILURE(status))                                                      \
-    goto error;                                                               \
-  status = U_ZERO_ERROR;
+struct Converter {
+  Converter(Environment* env, const char* name)
+      : conv(nullptr) {
+    UErrorCode status;
+    conv = ucnv_open(name, &status);
+    if (U_FAILURE(status))
+      env->ThrowError(u_errorName(status));
+  }
+
+  ~Converter() {
+    if (conv != nullptr)
+      ucnv_close(conv);
+  }
+
+  UConverter* conv;
+};
 
 bool InitializeICUDirectory(const char* icu_data_path) {
   if (icu_data_path != nullptr) {
@@ -299,8 +310,6 @@ void Convert(const FunctionCallbackInfo<Value>& args) {
 
   SPREAD_ARG(args[2], ts_obj);
 
-  UConverter* to_conv = nullptr;
-  UConverter* from_conv = nullptr;
   UErrorCode status = U_ZERO_ERROR;
 
   MaybeStackBuffer<char> buf;
@@ -308,17 +317,19 @@ void Convert(const FunctionCallbackInfo<Value>& args) {
   char* target;
   const char* data = ts_obj_data;
 
-  OPEN_CONVERTER(to_conv, *to_name, status);
-  OPEN_CONVERTER(from_conv, *from_name, status);
+  Converter to(env, *to_name);
+  Converter from(env, *from_name);
+  if (to.conv == nullptr || from.conv == nullptr)
+    return;
 
-  ucnv_setSubstChars(to_conv, "?", 1, &status);
+  ucnv_setSubstChars(to.conv, "?", 1, &status);
   status = U_ZERO_ERROR;
 
-  limit = ts_obj_length * ucnv_getMaxCharSize(to_conv);
-  buf.AllocateSufficientStorage(ts_obj_length * ucnv_getMaxCharSize(to_conv));
+  limit = ts_obj_length * ucnv_getMaxCharSize(to.conv);
+  buf.AllocateSufficientStorage(ts_obj_length * ucnv_getMaxCharSize(to.conv));
   target = *buf;
 
-  ucnv_convertEx(to_conv, from_conv,
+  ucnv_convertEx(to.conv, from.conv,
                  &target, target + limit,
                  &data, ts_obj_data + ts_obj_length,
                  NULL, NULL, NULL, NULL,
@@ -329,17 +340,9 @@ void Convert(const FunctionCallbackInfo<Value>& args) {
     len = target - *buf;
     args.GetReturnValue().Set(
       Buffer::Copy(env->isolate(), *buf, len).ToLocalChecked());
-    goto cleanup;
+  } else {
+    env->ThrowError(u_errorName(status));
   }
-
- error:
-  env->ThrowError(u_errorName(status));
-
- cleanup:
-  if (to_conv != nullptr)
-    ucnv_close(to_conv);
-  if (from_conv != nullptr)
-    ucnv_close(from_conv);
 }
 
 // Converts to UCS2 from ISO-8859-1 and US-ASCII
@@ -355,16 +358,17 @@ void ConvertToUcs2(const FunctionCallbackInfo<Value>& args) {
 
   SPREAD_ARG(args[1], ts_obj);
 
-  UConverter* to_conv = nullptr;
   UErrorCode status = U_ZERO_ERROR;
   size_t len;
 
   MaybeStackBuffer<UChar> buf;
   buf.AllocateSufficientStorage(ts_obj_length);
 
-  OPEN_CONVERTER(to_conv, *name, status);
+  Converter to(env, *name);
+  if (to.conv == nullptr)
+    return;
 
-  len = ucnv_toUChars(to_conv,
+  len = ucnv_toUChars(to.conv,
                       *buf, ts_obj_length << 1,
                       ts_obj_data, ts_obj_length,
                       &status);
@@ -378,15 +382,9 @@ void ConvertToUcs2(const FunctionCallbackInfo<Value>& args) {
       Buffer::Copy(env->isolate(),
                   reinterpret_cast<char*>(*buf),
                   ts_obj_length << 1).ToLocalChecked());
-    goto cleanup;
+  } else {
+    env->ThrowError(u_errorName(status));
   }
-
- error:
-  env->ThrowError(u_errorName(status));
-
- cleanup:
-  if (to_conv != nullptr)
-    ucnv_close(to_conv);
 }
 
 // Convert to a named encoding from UCS2
@@ -401,7 +399,6 @@ void ConvertFromUcs2(const FunctionCallbackInfo<Value>& args) {
   Utf8Value name(env->isolate(), args[0]);
   SPREAD_ARG(args[1], ts_obj);
 
-  UConverter* to_conv = nullptr;
   UErrorCode status = U_ZERO_ERROR;
 
   UChar* source = nullptr;
@@ -424,24 +421,19 @@ void ConvertFromUcs2(const FunctionCallbackInfo<Value>& args) {
   MaybeStackBuffer<char> buf;
   buf.AllocateSufficientStorage(length);
 
-  OPEN_CONVERTER(to_conv, *name, status);
-  ucnv_setSubstChars(to_conv, "?", 1, &status);
+  Converter to(env, *name);
+  if (to.conv == nullptr) return;
+  ucnv_setSubstChars(to.conv, "?", 1, &status);
   status = U_ZERO_ERROR;
 
-  len = ucnv_fromUChars(to_conv, *buf, length, source, length, &status);
+  len = ucnv_fromUChars(to.conv, *buf, length, source, length, &status);
 
   if (U_SUCCESS(status)) {
     args.GetReturnValue().Set(
       Buffer::Copy(env->isolate(), *buf, len).ToLocalChecked());
-    goto cleanup;
+  } else {
+    env->ThrowError(u_errorName(status));
   }
-
- error:
-  env->ThrowError(u_errorName(status));
-
- cleanup:
-  if (to_conv != nullptr)
-    ucnv_close(to_conv);
 }
 
 // Converts from UTF-8 to UCS2
