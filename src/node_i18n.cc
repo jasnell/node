@@ -222,14 +222,13 @@ void GetCodePointAt(const FunctionCallbackInfo<Value>& args) {
   } else {
     if (IsBigEndian()) {
       const uint32_t len = ts_obj_length >> 1;
-      UChar* copy = static_cast<UChar*>(malloc(len));
+      MaybeStackBuffer<UChar> copy(len);
       for (uint32_t n = 0, i = 0; n < len; n += 1, i += 2) {
         uint8_t hi = ts_obj_data[i + 0];
         uint8_t lo = ts_obj_data[i + 1];
         copy[n] = (hi << 8) | lo;
       }
-      U16_GET_UNSAFE(copy, pos >> 1, codepoint);
-      free(copy);
+      U16_GET_UNSAFE(*copy, pos >> 1, codepoint);
     } else {
       UChar* source = reinterpret_cast<UChar*>(ts_obj_data);
       U16_GET_UNSAFE(source, pos >> 1, codepoint);
@@ -260,28 +259,26 @@ void GetCharAt(const FunctionCallbackInfo<Value>& args) {
   } else {
     if (IsBigEndian()) {
       const uint32_t len = ts_obj_length >> 1;
-      UChar* copy = static_cast<UChar*>(malloc(len));
+      MaybeStackBuffer<UChar> copy(len);
       for (uint32_t n = 0, i = 0; n < len; n += 1, i += 2) {
         uint8_t hi = ts_obj_data[i + 0];
         uint8_t lo = ts_obj_data[i + 1];
         copy[n] = (hi << 8) | lo;
       }
-      U16_GET_UNSAFE(copy, pos >> 1, codepoint);
-      free(copy);
+      U16_GET_UNSAFE(*copy, pos >> 1, codepoint);
     } else {
       UChar* source = reinterpret_cast<UChar*>(ts_obj_data);
       U16_GET_UNSAFE(source, pos >> 1, codepoint);
     }
   }
 
-  UChar* c = static_cast<UChar*>(malloc(U16_LENGTH(codepoint)));
+  MaybeStackBuffer<UChar> c(U16_LENGTH(codepoint));
   int i = 0;
-  U16_APPEND_UNSAFE(c, i, codepoint);
+  U16_APPEND_UNSAFE(*c, i, codepoint);
   args.GetReturnValue().Set(
-    String::NewFromTwoByte(env->isolate(), c,
+    String::NewFromTwoByte(env->isolate(), *c,
                            v8::NewStringType::kNormal,
                            U16_LENGTH(codepoint)).ToLocalChecked());
-  free(c);
 }
 
 // One-Shot Converters
