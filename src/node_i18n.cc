@@ -412,7 +412,6 @@ void ConvertFromUcs2(const FunctionCallbackInfo<Value>& args) {
     source = reinterpret_cast<UChar*>(ts_obj_data);
   } else {
     swapspace.AllocateSufficientStorage(length);
-    source = static_cast<UChar*>(malloc(ts_obj_length >> 1));
     for (size_t n = 0, i = 0; i < length; n += 2, i += 1) {
       const uint8_t hi = static_cast<uint8_t>(ts_obj_data[n + 0]);
       const uint8_t lo = static_cast<uint8_t>(ts_obj_data[n + 1]);
