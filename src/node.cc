@@ -23,6 +23,7 @@
 #include "node_buffer.h"
 #include "node_constants.h"
 #include "node_javascript.h"
+#include "node_options.h"
 #include "node_platform.h"
 #include "node_version.h"
 #include "node_internals.h"
