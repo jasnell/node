@@ -328,37 +328,32 @@ template <typename NativeT, typename V8T>
 v8::Local<v8::Value> FillStatsArray(AliasedBuffer<NativeT, V8T>* fields_ptr,
                     const uv_stat_t* s, int offset = 0) {
   AliasedBuffer<NativeT, V8T>& fields = *fields_ptr;
-  fields[offset + 0] = s->st_dev;
-  fields[offset + 1] = s->st_mode;
-  fields[offset + 2] = s->st_nlink;
-  fields[offset + 3] = s->st_uid;
-  fields[offset + 4] = s->st_gid;
-  fields[offset + 5] = s->st_rdev;
+  fields[offset + kDev] = s->st_dev;
+  fields[offset + kMode] = s->st_mode;
+  fields[offset + kNlink] = s->st_nlink;
+  fields[offset + kUid] = s->st_uid;
+  fields[offset + kGid] = s->st_gid;
+  fields[offset + kRdev] = s->st_rdev;
 #if defined(__POSIX__)
-  fields[offset + 6] = s->st_blksize;
+  fields[offset + kBlkSize] = s->st_blksize;
 #else
-  fields[offset + 6] = 0;
+  fields[offset + kBlkSize] = 0;
 #endif
-  fields[offset + 7] = s->st_ino;
-  fields[offset + 8] = s->st_size;
+  fields[offset + kIno] = s->st_ino;
+  fields[offset + kSize] = s->st_size;
 #if defined(__POSIX__)
-  fields[offset + 9] = s->st_blocks;
+  fields[offset + kBlocks] = s->st_blocks;
 #else
-  fields[offset + 9] = 0;
+  fields[offset + kBlocks] = 0;
 #endif
-// Dates.
-// NO-LINT because the fields are 'long' and we just want to cast to `unsigned`
-#define X(idx, name)                                                    \
-  /* NOLINTNEXTLINE(runtime/int) */                                     \
-  fields[offset + idx] = ((unsigned long)(s->st_##name.tv_sec) * 1e3) + \
-  /* NOLINTNEXTLINE(runtime/int) */                                     \
-                ((unsigned long)(s->st_##name.tv_nsec) / 1e6);          \
-
-  X(10, atim)
-  X(11, mtim)
-  X(12, ctim)
-  X(13, birthtim)
-#undef X
+  fields[offset + kATimeSec] = s->st_atim.tv_sec;
+  fields[offset + kATimeNsec] = s->st_atim.tv_nsec;
+  fields[offset + kMTimeSec] = s->st_mtim.tv_sec;
+  fields[offset + kMTimeNsec] = s->st_mtim.tv_nsec;
+  fields[offset + kCTimeSec] = s->st_ctim.tv_sec;
+  fields[offset + kCTimeNsec] = s->st_ctim.tv_nsec;
+  fields[offset + kBirthTimeSec] = s->st_birthtim.tv_sec;
+  fields[offset + kBirthTimeNsec] = s->st_birthtim.tv_nsec;
 
   return fields_ptr->GetJSArray();
 }

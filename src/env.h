@@ -427,6 +427,27 @@ enum class DebugCategory {
   CATEGORY_COUNT
 };
 
+enum StatsOffset {
+  kDev = 0,
+  kMode,
+  kNlink,
+  kUid,
+  kGid,
+  kRdev,
+  kBlkSize,
+  kIno,
+  kSize,
+  kBlocks,
+  kATimeSec,
+  kATimeNsec,
+  kMTimeSec,
+  kMTimeNsec,
+  kCTimeSec,
+  kCTimeNsec,
+  kBirthTimeSec,
+  kBirthTimeNsec
+};
+
 class Environment {
  public:
   class AsyncHooks {
@@ -695,7 +716,7 @@ class Environment {
 
   // stat fields contains twice the number of entries because `fs.StatWatcher`
   // needs room to store data for *two* `fs.Stats` instances.
-  static const int kFsStatsFieldsLength = 14;
+  static const int kFsStatsFieldsLength = kBirthTimeNsec + 1;
 
   inline std::vector<std::unique_ptr<fs::FileHandleReadWrap>>&
       file_handle_read_wrap_freelist();

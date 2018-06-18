@@ -416,7 +416,8 @@ A `fs.Stats` object provides information about a file.
 Objects returned from [`fs.stat()`][], [`fs.lstat()`][] and [`fs.fstat()`][] and
 their synchronous counterparts are of this type.
 If `bigint` in the `options` passed to those methods is true, the numeric values
-will be `bigint` instead of `number`.
+will be `bigint` instead of `number`, and the object will contain additional
+nanosecond-precision properties suffixed with `Ns`.
 
 ```console
 Stats {
@@ -443,7 +444,7 @@ Stats {
 `bigint` version:
 
 ```console
-Stats {
+BigIntStats {
   dev: 2114n,
   ino: 48064969n,
   mode: 33188n,
@@ -458,6 +459,10 @@ Stats {
   mtimeMs: 1318289051000n,
   ctimeMs: 1318289051000n,
   birthtimeMs: 1318289051000n,
+  atimeNs: 1318289051000000000n,
+  mtimeNs: 1318289051000000000n,
+  ctimeNs: 1318289051000000000n,
+  birthtimeNs: 1318289051000000000n,
   atime: Mon, 10 Oct 2011 23:24:11 GMT,
   mtime: Mon, 10 Oct 2011 23:24:11 GMT,
   ctime: Mon, 10 Oct 2011 23:24:11 GMT,
@@ -630,6 +635,54 @@ added: v8.1.0
 The timestamp indicating the creation time of this file expressed in
 milliseconds since the POSIX Epoch.
 
+### stats.atimeNs
+<!-- YAML
+added: REPLACEME
+-->
+
+* {bigint}
+
+Only present when `bigint: true` is passed into the method that generates
+the object.
+The timestamp indicating the last time this file was accessed expressed in
+nanosecons since the POSIX Epoch.
+
+### stats.mtimeNs
+<!-- YAML
+added: REPLACEME
+-->
+
+* {bigint}
+
+Only present when `bigint: true` is passed into the method that generates
+the object.
+The timestamp indicating the last time this file was modified expressed in
+nanoseconds since the POSIX Epoch.
+
+### stats.ctimeNs
+<!-- YAML
+added: REPLACEME
+-->
+
+* {bigint}
+
+Only present when `bigint: true` is passed into the method that generates
+the object.
+The timestamp indicating the last time the file status was changed expressed
+in nanoseconds since the POSIX Epoch.
+
+### stats.birthtimeNs
+<!-- YAML
+added: REPLACEME
+-->
+
+* {bigint}
+
+Only present when `bigint: true` is passed into the method that generates
+the object.
+The timestamp indicating the creation time of this file expressed in
+nanoseconds since the POSIX Epoch.
+
 ### stats.atime
 <!-- YAML
 added: v0.11.13
@@ -669,8 +722,17 @@ The timestamp indicating the creation time of this file.
 ### Stat Time Values
 
 The `atimeMs`, `mtimeMs`, `ctimeMs`, `birthtimeMs` properties are
-[numbers][MDN-Number] that hold the corresponding times in milliseconds. Their
-precision is platform specific. `atime`, `mtime`, `ctime`, and `birthtime` are
+numeric values that hold the corresponding times in milliseconds. Their
+precision is platform specific. When `bigint: true` is passed into the
+method that generates the object, the properies will be [bigints][],
+otherwise they will be [numbers][MDN-Number].
+
+The `atimeNs`, `mtimeNs`, `ctimeNs`, `birthtimeNs` properties are
+[bigints][] that hold the corresponding times in nanoseconds. They are
+only present when `bigint: true` is passed into the method that generates
+the object. Their precision is platform specific.
+
+`atime`, `mtime`, `ctime`, and `birthtime` are
 [`Date`][MDN-Date] object alternate representations of the various times. The
 `Date` and number values are not connected. Assigning a new number value, or
 mutating the `Date` value, will not be reflected in the corresponding alternate
