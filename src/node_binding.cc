@@ -59,6 +59,7 @@
   V(os)                                                                        \
   V(performance)                                                               \
   V(pipe_wrap)                                                                 \
+  V(policy)                                                                    \
   V(process_wrap)                                                              \
   V(process_methods)                                                           \
   V(report)                                                                    \

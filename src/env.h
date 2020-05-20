@@ -52,6 +52,10 @@
 
 namespace node {
 
+namespace policy {
+class Policy;
+}
+
 namespace contextify {
 class ContextifyScript;
 class CompiledFnEntry;
@@ -1384,6 +1388,7 @@ class Environment : public MemoryRetainer {
   static void CheckImmediate(uv_check_t* handle);
 
   BindingDataStore bindings_;
+  std::unique_ptr<policy::Policy> policy_;
 
   // Use an unordered_set, so that we have efficient insertion and removal.
   std::unordered_set<CleanupHookCallback,

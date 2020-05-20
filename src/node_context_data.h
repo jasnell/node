@@ -29,12 +29,17 @@ namespace node {
 #define NODE_BINDING_LIST_INDEX 36
 #endif
 
+#ifndef NODE_POLICY_INDEX
+#define NODE_POLICY_INDEX 37
+#endif
+
 enum ContextEmbedderIndex {
   kEnvironment = NODE_CONTEXT_EMBEDDER_DATA_INDEX,
   kSandboxObject = NODE_CONTEXT_SANDBOX_OBJECT_INDEX,
   kAllowWasmCodeGeneration = NODE_CONTEXT_ALLOW_WASM_CODE_GENERATION_INDEX,
   kContextTag = NODE_CONTEXT_TAG,
-  kBindingListIndex = NODE_BINDING_LIST_INDEX
+  kBindingListIndex = NODE_BINDING_LIST_INDEX,
+  kPolicyIndex = NODE_POLICY_INDEX
 };
 
 }  // namespace node

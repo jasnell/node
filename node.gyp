@@ -616,6 +616,7 @@
         'src/node_watchdog.cc',
         'src/node_worker.cc',
         'src/node_zlib.cc',
+        'src/policy/policy.cc',
         'src/pipe_wrap.cc',
         'src/process_wrap.cc',
         'src/signal_wrap.cc',
@@ -709,6 +710,8 @@
         'src/node_wasi.h',
         'src/node_watchdog.h',
         'src/node_worker.h',
+        'src/policy/policy.h',
+        'src/policy/policy-inl.h',
         'src/pipe_wrap.h',
         'src/req_wrap.h',
         'src/req_wrap-inl.h',
@@ -1166,6 +1169,7 @@
         'test/cctest/test_traced_value.cc',
         'test/cctest/test_util.cc',
         'test/cctest/test_url.cc',
+        'test/cctest/test_policy.cc'
       ],
 
       'conditions': [

@@ -18,6 +18,7 @@
 #include "tracing/traced_value.h"
 #include "util-inl.h"
 #include "v8-profiler.h"
+#include "policy/policy-inl.h"
 
 #include <algorithm>
 #include <atomic>
@@ -331,6 +332,7 @@ Environment::Environment(IsolateData* isolate_data,
       flags_(flags),
       thread_id_(thread_id.id == static_cast<uint64_t>(-1) ?
           AllocateEnvironmentThreadId().id : thread_id.id),
+      policy_(std::make_unique<policy::Policy>()),
       context_(context->GetIsolate(), context) {
   // We'll be creating new objects so make sure we've entered the context.
   HandleScope handle_scope(isolate());
@@ -352,6 +354,17 @@ Environment::Environment(IsolateData* isolate_data,
   // part of the per-Isolate option set, for which in turn the defaults are
   // part of the per-process option set.
   options_.reset(new EnvironmentOptions(*isolate_data->options()->per_env));
+
+  if (options_->policy_deny.length() || options_->policy_grant.length()) {
+    // Intentionally ignoring unknown permissions on startup
+    std::vector<std::string> policy_errors;
+    policy::Policy::Apply(
+        policy_.get(),
+        options_->policy_deny,
+        options_->policy_grant,
+        &policy_errors);
+  }
+
   inspector_host_port_.reset(
       new ExclusiveAccess<HostPort>(options_->debug_options().host_port));
 

@@ -33,6 +33,7 @@
 #include "v8.h"
 #include "node_perf_common.h"
 #include "node_context_data.h"
+#include "policy/policy-inl.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -291,6 +292,8 @@ inline void Environment::AssignToContext(v8::Local<v8::Context> context,
   // Used to retrieve bindings
   context->SetAlignedPointerInEmbedderData(
       ContextEmbedderIndex::kBindingListIndex, &(this->bindings_));
+  context->SetAlignedPointerInEmbedderData(
+      ContextEmbedderIndex::kPolicyIndex, this->policy_.get());
 
 #if HAVE_INSPECTOR
   inspector_agent()->ContextCreated(context, info);
