@@ -5,6 +5,7 @@
 #include "node_buffer.h"
 #include "node_process.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #include <cinttypes>
 
@@ -130,6 +131,10 @@ void PerformanceEntry::Notify(Environment* env,
 // Create a User Timing Mark
 void Mark(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   HandleScope scope(env->isolate());
   Utf8Value name(env->isolate(), args[0]);
   uint64_t now = PERFORMANCE_NOW();
@@ -149,6 +154,10 @@ void Mark(const FunctionCallbackInfo<Value>& args) {
 
 void ClearMark(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   auto marks = env->performance_marks();
 
   if (args.Length() == 0) {
@@ -169,6 +178,10 @@ inline uint64_t GetPerformanceMark(Environment* env, const std::string& name) {
 // measures the duration between two distinct user timing marks
 void Measure(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   HandleScope scope(env->isolate());
   Utf8Value name(env->isolate(), args[0]);
   Utf8Value startMark(env->isolate(), args[1]);
@@ -376,6 +389,10 @@ void TimerFunctionCall(const FunctionCallbackInfo<Value>& args) {
 // Wraps a Function in a TimerFunctionCall
 void Timerify(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   Local<Context> context = env->context();
   CHECK(args[0]->IsFunction());
   CHECK(args[1]->IsNumber());

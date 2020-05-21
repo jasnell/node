@@ -8,6 +8,7 @@
 #include "util-inl.h"
 #include "uv.h"
 #include "v8.h"
+#include "policy/policy-inl.h"
 
 #include <vector>
 
@@ -146,6 +147,11 @@ static void Cwd(const FunctionCallbackInfo<Value>& args) {
 // because there is no Uint64Array in JS.
 // The third entry contains the remaining nanosecond part of the value.
 static void Hrtime(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   uint64_t t = uv_hrtime();
 
   Local<ArrayBuffer> ab = args[0].As<Uint32Array>()->Buffer();
@@ -157,6 +163,11 @@ static void Hrtime(const FunctionCallbackInfo<Value>& args) {
 }
 
 static void HrtimeBigInt(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   Local<ArrayBuffer> ab = args[0].As<BigUint64Array>()->Buffer();
   uint64_t* fields = static_cast<uint64_t*>(ab->GetBackingStore()->Data());
   fields[0] = uv_hrtime();
