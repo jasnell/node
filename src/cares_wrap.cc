@@ -28,6 +28,7 @@
 #include "req_wrap-inl.h"
 #include "util-inl.h"
 #include "uv.h"
+#include "policy/policy-inl.h"
 
 #include <cerrno>
 #include <cstring>
@@ -1781,6 +1782,10 @@ class GetHostByAddrWrap: public QueryWrap {
 template <class Wrap>
 static void Query(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetDNS);
+  if (policy_scope.threw)
+    return;
+
   ChannelWrap* channel;
   ASSIGN_OR_RETURN_UNWRAP(&channel, args.Holder());
 
@@ -1936,6 +1941,9 @@ void CanonicalizeIP(const FunctionCallbackInfo<Value>& args) {
 
 void GetAddrInfo(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetDNS);
+  if (policy_scope.threw)
+    return;
 
   CHECK(args[0]->IsObject());
   CHECK(args[1]->IsString());
@@ -1996,6 +2004,9 @@ void GetAddrInfo(const FunctionCallbackInfo<Value>& args) {
 
 void GetNameInfo(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetDNS);
+  if (policy_scope.threw)
+    return;
 
   CHECK(args[0]->IsObject());
   CHECK(args[1]->IsString());
@@ -2066,6 +2077,10 @@ void GetServers(const FunctionCallbackInfo<Value>& args) {
 
 void SetServers(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetDNS);
+  if (policy_scope.threw)
+    return;
+
   ChannelWrap* channel;
   ASSIGN_OR_RETURN_UNWRAP(&channel, args.Holder());
 
