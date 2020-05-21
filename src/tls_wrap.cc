@@ -31,6 +31,7 @@
 #include "node_errors.h"
 #include "stream_base-inl.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 namespace node {
 
@@ -163,6 +164,9 @@ void TLSWrap::InitSSL() {
 
 void TLSWrap::Wrap(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetTLS);
+  if (policy_scope.threw)
+    return;
 
   CHECK_EQ(args.Length(), 3);
   CHECK(args[0]->IsObject());
@@ -941,6 +945,11 @@ void TLSWrap::EnableSessionCallbacks(
 
 void TLSWrap::EnableKeylogCallback(
     const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  if (UNLIKELY(!policy::Policy::GetCurrent(env)
+          ->granted(policy::Permissions::kNetTLSLog))) {
+    return;
+  }
   TLSWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
   CHECK_NOT_NULL(wrap->sc_);

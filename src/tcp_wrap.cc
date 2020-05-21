@@ -30,6 +30,7 @@
 #include "stream_base-inl.h"
 #include "stream_wrap.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #include <cstdlib>
 
@@ -138,6 +139,9 @@ void TCPWrap::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
   CHECK(args[0]->IsInt32());
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetTCP);
+  if (policy_scope.threw)
+    return;
 
   int type_value = args[0].As<Int32>()->Value();
   TCPWrap::SocketType type = static_cast<TCPWrap::SocketType>(type_value);
@@ -267,6 +271,10 @@ void TCPWrap::Listen(const FunctionCallbackInfo<Value>& args) {
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
   Environment* env = wrap->env();
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetTCPIn);
+  if (policy_scope.threw)
+    return;
+
   int backlog;
   if (!args[0]->Int32Value(env->context()).To(&backlog)) return;
   int err = uv_listen(reinterpret_cast<uv_stream_t*>(&wrap->handle_),
@@ -302,6 +310,10 @@ template <typename T>
 void TCPWrap::Connect(const FunctionCallbackInfo<Value>& args,
     std::function<int(const char* ip_address, T* addr)> uv_ip_addr) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kNetTCPOut);
+  if (policy_scope.threw)
+    return;
 
   TCPWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
