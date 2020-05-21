@@ -25,6 +25,7 @@
 #include "node_internals.h"
 #include "string_bytes.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #include <cstring>
 
@@ -370,6 +371,11 @@ void SyncProcessRunner::Initialize(Local<Object> target,
 
 void SyncProcessRunner::Spawn(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kSpecialChildProcess);
+  if (policy_scope.threw)
+    return;
+
   env->PrintSyncTrace();
   SyncProcessRunner p(env);
   Local<Value> result;

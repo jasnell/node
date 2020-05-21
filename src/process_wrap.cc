@@ -80,6 +80,11 @@ class ProcessWrap : public HandleWrap {
     // normal function.
     CHECK(args.IsConstructCall());
     Environment* env = Environment::GetCurrent(args);
+    policy::PolicyEnforcedScope policy_scope(env,
+        policy::Permissions::kSpecialChildProcess);
+    if (policy_scope.threw)
+      return;
+
     new ProcessWrap(env, args.This());
   }
 
