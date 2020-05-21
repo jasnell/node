@@ -7,6 +7,7 @@
 #include "node_perf.h"
 #include "util-inl.h"
 #include "async_wrap-inl.h"
+#include "policy/policy-inl.h"
 
 #include <memory>
 #include <string>
@@ -441,6 +442,10 @@ Worker::~Worker() {
 
 void Worker::New(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kWorkers);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = args.GetIsolate();
 
   CHECK(args.IsConstructCall());
