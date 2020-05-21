@@ -175,6 +175,10 @@ static void HrtimeBigInt(const FunctionCallbackInfo<Value>& args) {
 
 static void Kill(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kSignal);
+  if (policy_scope.threw)
+    return;
+
   Local<Context> context = env->context();
 
   if (args.Length() != 2)
