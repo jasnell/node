@@ -9,6 +9,7 @@
 #include "uv.h"
 #include "uvwasi.h"
 #include "node_wasi.h"
+#include "policy/policy-inl.h"
 
 namespace node {
 namespace wasi {
@@ -162,13 +163,18 @@ void WASI::DecreaseAllocatedSize(size_t size) {
 }
 
 void WASI::New(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kExperimentalWasi);
+  if (policy_scope.threw)
+    return;
+
   CHECK(args.IsConstructCall());
   CHECK_EQ(args.Length(), 3);
   CHECK(args[0]->IsArray());
   CHECK(args[1]->IsArray());
   CHECK(args[2]->IsArray());
 
-  Environment* env = Environment::GetCurrent(args);
   Local<Context> context = env->context();
   Local<Array> argv = args[0].As<Array>();
   const uint32_t argc = argv->Length();
@@ -346,6 +352,10 @@ void WASI::ClockResGet(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::ClockTimeGet(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t clock_id;
   uint64_t precision;
@@ -451,6 +461,11 @@ void WASI::EnvironSizesGet(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdAdvise(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint64_t offset;
@@ -469,6 +484,11 @@ void WASI::FdAdvise(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdAllocate(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint64_t offset;
@@ -497,6 +517,11 @@ void WASI::FdClose(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdDatasync(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   RETURN_IF_BAD_ARG_COUNT(args, 1);
@@ -509,6 +534,11 @@ void WASI::FdDatasync(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdFdstatGet(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t buf;
@@ -569,6 +599,11 @@ void WASI::FdFdstatSetRights(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdFilestatGet(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t buf;
@@ -592,6 +627,11 @@ void WASI::FdFilestatGet(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdFilestatSetSize(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint64_t st_size;
@@ -606,6 +646,11 @@ void WASI::FdFilestatSetSize(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdFilestatSetTimes(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint64_t st_atim;
@@ -633,6 +678,11 @@ void WASI::FdFilestatSetTimes(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdPread(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t iovs_ptr;
@@ -687,6 +737,11 @@ void WASI::FdPread(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdPrestatGet(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t buf;
@@ -710,6 +765,11 @@ void WASI::FdPrestatGet(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdPrestatDirName(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t path_ptr;
@@ -733,6 +793,11 @@ void WASI::FdPrestatDirName(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdPwrite(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t iovs_ptr;
@@ -794,6 +859,11 @@ void WASI::FdPwrite(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdRead(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t iovs_ptr;
@@ -840,6 +910,11 @@ void WASI::FdRead(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdReaddir(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t buf_ptr;
@@ -883,6 +958,11 @@ void WASI::FdReaddir(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdRenumber(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t from;
   uint32_t to;
@@ -897,6 +977,11 @@ void WASI::FdRenumber(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdSeek(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   int64_t offset;
@@ -930,6 +1015,11 @@ void WASI::FdSeek(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdSync(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   RETURN_IF_BAD_ARG_COUNT(args, 1);
@@ -942,6 +1032,11 @@ void WASI::FdSync(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdTell(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t offset_ptr;
@@ -968,6 +1063,11 @@ void WASI::FdTell(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::FdWrite(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t iovs_ptr;
@@ -1026,6 +1126,11 @@ void WASI::FdWrite(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathCreateDirectory(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t path_ptr;
@@ -1049,6 +1154,11 @@ void WASI::PathCreateDirectory(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathFilestatGet(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t flags;
@@ -1090,6 +1200,11 @@ void WASI::PathFilestatGet(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathFilestatSetTimes(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t flags;
@@ -1133,6 +1248,11 @@ void WASI::PathFilestatSetTimes(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathLink(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t old_fd;
   uint32_t old_flags;
@@ -1177,6 +1297,11 @@ void WASI::PathLink(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathOpen(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t dirfd;
   uint32_t dirflags;
@@ -1233,6 +1358,11 @@ void WASI::PathOpen(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathReadlink(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t path_ptr;
@@ -1281,6 +1411,11 @@ void WASI::PathReadlink(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathRemoveDirectory(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t path_ptr;
@@ -1304,6 +1439,11 @@ void WASI::PathRemoveDirectory(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathRename(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t old_fd;
   uint32_t old_path_ptr;
@@ -1344,6 +1484,11 @@ void WASI::PathRename(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathSymlink(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t old_path_ptr;
   uint32_t old_path_len;
@@ -1380,6 +1525,11 @@ void WASI::PathSymlink(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::PathUnlinkFile(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t fd;
   uint32_t path_ptr;
@@ -1489,6 +1639,10 @@ void WASI::ProcExit(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::ProcRaise(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kSignal);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t sig;
   RETURN_IF_BAD_ARG_COUNT(args, 1);
@@ -1531,6 +1685,12 @@ void WASI::SchedYield(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::SockRecv(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn,
+      policy::Permissions::kNet);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t sock;
   uint32_t ri_data_ptr;
@@ -1601,6 +1761,12 @@ void WASI::SockRecv(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::SockSend(const FunctionCallbackInfo<Value>& args) {
+Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut,
+      policy::Permissions::kNet);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t sock;
   uint32_t si_data_ptr;
@@ -1666,6 +1832,13 @@ void WASI::SockSend(const FunctionCallbackInfo<Value>& args) {
 
 
 void WASI::SockShutdown(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn,
+      policy::Permissions::kFileSystemOut,
+      policy::Permissions::kNet);
+  if (policy_scope.threw)
+    return;
   WASI* wasi;
   uint32_t sock;
   uint8_t how;
