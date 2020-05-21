@@ -7,11 +7,20 @@
 
 <!-- name=policy -->
 
-Node.js contains experimental support for creating policies on loading code.
+Node.js contains experimental support for creating policies on loading code
+and performing various core functions.
 
-Policies are a security feature intended to allow guarantees
-about what code Node.js is able to load. The use of policies assumes
-safe practices for the policy files such as ensuring that policy
+Node.js supports two experimental policy mechanisms:
+
+* One that performs verification checks on loaded code before it can be
+  executed.
+* One that limits the system functions loaded code may perform.
+
+## Integrity Policies
+
+Integrity Policies are a security feature intended to allow guarantees
+about what code Node.js is able to load. The use of integrity policies
+assumes safe practices for the policy files such as ensuring that policy
 files cannot be overwritten by the Node.js application by using
 file permissions.
 
@@ -21,12 +30,12 @@ by the running Node.js application in any way. A typical setup would be to
 create the policy file as a different user id than the one running Node.js
 and granting read permissions to the user id running Node.js.
 
-## Enabling
+### Enabling
 
 <!-- type=misc -->
 
-The `--experimental-policy` flag can be used to enable features for policies
-when loading modules.
+The `--experimental-policy` flag can be used to enable the integrity policy
+feature when loading modules.
 
 Once this has been set, all modules must conform to a policy manifest file
 passed to the flag:
@@ -47,9 +56,9 @@ even if the file is changed on disk.
 node --experimental-policy=policy.json --policy-integrity="sha384-SggXRQHwCG8g+DktYYzxkXRIkTiEYWBHqev0xnpCxYlqMBufKZHAHQM3/boDaI/0" app.js
 ```
 
-## Features
+### Features
 
-### Error Behavior
+#### Error Behavior
 
 When a policy check fails, Node.js by default will throw an error.
 It is possible to change the error behavior to one of a few possibilities
@@ -73,7 +82,7 @@ available to change the behavior:
 }
 ```
 
-### Integrity Checks
+#### Integrity Checks
 
 Policy files must use integrity checks with Subresource Integrity strings
 compatible with the browser
@@ -115,7 +124,7 @@ body for the resource which can be useful for local development. It is not
 recommended in production since it would allow unexpected alteration of
 resources to be considered valid.
 
-### Dependency Redirection
+#### Dependency Redirection
 
 An application may need to ship patched versions of modules or to prevent
 modules from allowing all modules access to all other modules. Redirection
@@ -164,7 +173,7 @@ module to load any specifier without redirection. This can be useful for local
 development and may have some valid usage in production, but should be used
 only with care after auditing a module to ensure its behavior is valid.
 
-#### Example: Patched Dependency
+##### Example: Patched Dependency
 
 Redirected dependencies can provide attenuated or modified functionality as fits
 the application. For example, log data about timing of function durations by
@@ -183,5 +192,109 @@ module.exports = function fn(...args) {
   }
 };
 ```
+
+## Permission Policies
+
+Permission policies allow granting or denying permissions for running code to
+perform various system calls.
+
+This feature is experimental and needs to be enabled by passing either or both
+of the `--policy-deny=` or `--policy-grant` CLI flags to Node.js.
+
+Both flags take a comma-separated list of permission identifiers as described
+below. For example, `--policy-deny=fs,net.udp`.
+
+### Permissions
+
+The permission identifiers are:
+
+* `*` - Wildcard for all permissions.
+* `special` - Special categories are denied by default if any other permission
+  is denied.
+  * `special.inspector` - Controls ability to use Inspector APIs (not yet
+    active)
+  * `special.addons` - Controls ability to load native addons / use
+    `process.dlopen()`
+  * `special.child_process` - Controls ability to spawn child processes
+* `workers` - Controls ability to spawn worker threads
+* `fs` - Controls all file system operations
+  * `fs.in` - Controls file system read operations
+  * `fs.out` - Controls file system write operations
+* `user` - Controls access to user data methods (e.g. `os.homedir()`,
+  `os.userInfo()`)
+* `net` - Controls access to networking APIs
+  * `net.udp` - Controls access to connectionless UDP
+  * `net.dns` - Controls access to DNS APIs.
+  * `net.tcp` - Controls access to all TCP APIs
+    * `net.tcp.in` - Controls access to TCP `listen()` operations
+    * `net.tcp.out` - Controls access to TCP `connect()` operations
+  * `net.tls` - Controls access to TLS wrap APIs.
+    * `net.tls.log` - Controls access to TLS keylogging
+* `process` - Controls access to APIs that change process state
+* `timing` - Controls access to timing APIs (e.g. `process.hrtime()`,
+  `performance.now()`, `performance.mark()`, etc. Has no impact on the
+  use of `new Date()`)
+* `signal` - Controls ability to send signals (e.g. `process.kill()`)
+* `experimental` - Controls access to experimental APIs
+  * `experimental.wasi` - Controls access to experimental WASI apis.
+
+Permission identifiers are hierarchical. For instance
+`--policy-deny=net` will deny access to all `net.*` identifiers.
+
+### `--policy-deny` and `--policy-grant`
+
+The `--policy-deny` and `--policy-grant` command-line flags specify the
+policy permissions for the Node.js process at startup. Upon initialization,
+the `--policy-deny` list will be processed first, followed by the
+`--policy-grant` list.
+
+For instance,
+
+```
+--policy-deny=* --policy-grant=fs.in
+```
+
+Will deny all permissions except for `fs.in`, while:
+
+```
+--policy-deny=fs.in --policy-grant=*
+```
+
+Will result in all permissions being granted.
+
+To disable all network capabilities other than DNS, the combination would be:
+
+```
+--policy-deny=net --policy-grant=net.dns
+```
+
+### `process.policy` API
+
+The `process.policy` API allows the current enforced policy to be
+inspected at runtime and permits the ability to further restrict the
+current policy via the `process.policy.deny()` method. It is not
+possible to grant permissions via the JavaScript API.
+
+#### `process.policy.granted(permission)`
+
+* `permission`: {string} A permission identifier
+* Return: {boolean} Returns `true` if the permission is granted.
+
+```js
+if (!process.policy.granted('fs.in'))
+  console.log('File system read is not permitted!')
+```
+
+#### `process.policy.deny(permissions)
+
+* `permissions`: {string} A comma-separated list of permission identifiers.
+
+```js
+process.policy.deny('fs,workers');
+```
+
+Further restricts the current permission policy by denying the specified
+permissions. The input `permissions` parameter uses the same syntax as
+the `--policy-deny=` command-line flag.
 
 [relative url string]: https://url.spec.whatwg.org/#relative-url-with-fragment-string
