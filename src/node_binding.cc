@@ -4,6 +4,7 @@
 #include "env-inl.h"
 #include "node_native_module_env.h"
 #include "util.h"
+#include "policy/policy-inl.h"
 
 #if HAVE_OPENSSL
 #define NODE_BUILTIN_OPENSSL_MODULES(V) V(crypto) V(tls_wrap)
@@ -412,6 +413,11 @@ inline napi_addon_register_func GetNapiInitializerCallback(DLib* dlib) {
 // cache that's a plain C list or hash table that's shared across contexts?
 void DLOpen(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+                                           policy::Permissions::kSpecialAddons);
+  if (policy_scope.threw)
+    return;
+
   auto context = env->context();
 
   CHECK_NULL(thread_local_modpending);
