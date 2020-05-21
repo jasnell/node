@@ -26,6 +26,7 @@
 #include "handle_wrap.h"
 #include "req_wrap-inl.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 namespace node {
 
@@ -209,6 +210,10 @@ void UDPWrap::Initialize(Local<Object> target,
 void UDPWrap::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kNetUdp);
+  if (policy_scope.threw)
+    return;
+
   new UDPWrap(env, args.This());
 }
 
