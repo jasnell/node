@@ -26,6 +26,7 @@
 #include "node_process.h"
 #include "node_stat_watcher.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #include "tracing/trace_event.h"
 
@@ -377,6 +378,10 @@ FileHandleReadWrap::FileHandleReadWrap(FileHandle* handle, Local<Object> obj)
 int FileHandle::ReadStart() {
   if (!IsAlive() || IsClosing())
     return UV_EOF;
+  policy::PolicyEnforcedScope policy_scope(env(),
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return 0;
 
   reading_ = true;
 
@@ -793,6 +798,11 @@ void AfterScanDirWithTypes(uv_fs_t* req) {
 
 void Access(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
   HandleScope scope(isolate);
 
@@ -961,6 +971,10 @@ static void InternalModuleStat(const FunctionCallbackInfo<Value>& args) {
 static void Stat(const FunctionCallbackInfo<Value>& args) {
   BindingData* binding_data = Environment::GetBindingData<BindingData>(args);
   Environment* env = binding_data->env();
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -992,6 +1006,10 @@ static void Stat(const FunctionCallbackInfo<Value>& args) {
 static void LStat(const FunctionCallbackInfo<Value>& args) {
   BindingData* binding_data = Environment::GetBindingData<BindingData>(args);
   Environment* env = binding_data->env();
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -1024,6 +1042,10 @@ static void LStat(const FunctionCallbackInfo<Value>& args) {
 static void FStat(const FunctionCallbackInfo<Value>& args) {
   BindingData* binding_data = Environment::GetBindingData<BindingData>(args);
   Environment* env = binding_data->env();
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -1054,6 +1076,11 @@ static void FStat(const FunctionCallbackInfo<Value>& args) {
 
 static void Symlink(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   int argc = args.Length();
@@ -1083,6 +1110,11 @@ static void Symlink(const FunctionCallbackInfo<Value>& args) {
 
 static void Link(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   int argc = args.Length();
@@ -1110,6 +1142,11 @@ static void Link(const FunctionCallbackInfo<Value>& args) {
 
 static void ReadLink(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   int argc = args.Length();
@@ -1153,6 +1190,11 @@ static void ReadLink(const FunctionCallbackInfo<Value>& args) {
 
 static void Rename(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   int argc = args.Length();
@@ -1180,6 +1222,10 @@ static void Rename(const FunctionCallbackInfo<Value>& args) {
 
 static void FTruncate(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -1206,6 +1252,10 @@ static void FTruncate(const FunctionCallbackInfo<Value>& args) {
 
 static void Fdatasync(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -1228,6 +1278,10 @@ static void Fdatasync(const FunctionCallbackInfo<Value>& args) {
 
 static void Fsync(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -1250,6 +1304,10 @@ static void Fsync(const FunctionCallbackInfo<Value>& args) {
 
 static void Unlink(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -1272,6 +1330,10 @@ static void Unlink(const FunctionCallbackInfo<Value>& args) {
 
 static void RMDir(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -1476,6 +1538,10 @@ int CallMKDirpSync(Environment* env, const FunctionCallbackInfo<Value>& args,
 
 static void MKDir(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 4);
@@ -1525,6 +1591,11 @@ static void MKDir(const FunctionCallbackInfo<Value>& args) {
 
 static void RealPath(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
@@ -1569,6 +1640,11 @@ static void RealPath(const FunctionCallbackInfo<Value>& args) {
 
 static void ReadDir(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
@@ -1656,6 +1732,10 @@ static void ReadDir(const FunctionCallbackInfo<Value>& args) {
 
 static void Open(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -1665,6 +1745,13 @@ static void Open(const FunctionCallbackInfo<Value>& args) {
 
   CHECK(args[1]->IsInt32());
   const int flags = args[1].As<Int32>()->Value();
+
+  if ((flags & (O_WRONLY | O_RDWR | O_APPEND | O_CREAT)) != 0) {
+    policy::PolicyEnforcedScope write_scope(env,
+        policy::Permissions::kFileSystemOut);
+    if (write_scope.threw)
+      return;
+  }
 
   CHECK(args[2]->IsInt32());
   const int mode = args[2].As<Int32>()->Value();
@@ -1687,6 +1774,11 @@ static void Open(const FunctionCallbackInfo<Value>& args) {
 static void OpenFileHandle(const FunctionCallbackInfo<Value>& args) {
   BindingData* binding_data = Environment::GetBindingData<BindingData>(args);
   Environment* env = binding_data->env();
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
@@ -1723,6 +1815,11 @@ static void OpenFileHandle(const FunctionCallbackInfo<Value>& args) {
 
 static void CopyFile(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
@@ -1764,6 +1861,10 @@ static void CopyFile(const FunctionCallbackInfo<Value>& args) {
 //             if null, write from the current position
 static void WriteBuffer(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 4);
@@ -1818,6 +1919,10 @@ static void WriteBuffer(const FunctionCallbackInfo<Value>& args) {
 //             if null, write from the current position
 static void WriteBuffers(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -1864,6 +1969,11 @@ static void WriteBuffers(const FunctionCallbackInfo<Value>& args) {
 // 3 enc       encoding of string
 static void WriteString(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
@@ -1966,6 +2076,10 @@ static void WriteString(const FunctionCallbackInfo<Value>& args) {
  */
 static void Read(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 5);
@@ -2019,6 +2133,10 @@ static void Read(const FunctionCallbackInfo<Value>& args) {
 //             if null, read from the current position
 static void ReadBuffers(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemIn);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2061,6 +2179,10 @@ static void ReadBuffers(const FunctionCallbackInfo<Value>& args) {
  */
 static void Chmod(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -2091,6 +2213,10 @@ static void Chmod(const FunctionCallbackInfo<Value>& args) {
  */
 static void FChmod(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 2);
@@ -2121,6 +2247,10 @@ static void FChmod(const FunctionCallbackInfo<Value>& args) {
  */
 static void Chown(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2154,6 +2284,10 @@ static void Chown(const FunctionCallbackInfo<Value>& args) {
  */
 static void FChown(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2184,6 +2318,10 @@ static void FChown(const FunctionCallbackInfo<Value>& args) {
 
 static void LChown(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2214,6 +2352,10 @@ static void LChown(const FunctionCallbackInfo<Value>& args) {
 
 static void UTimes(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2243,6 +2385,10 @@ static void UTimes(const FunctionCallbackInfo<Value>& args) {
 
 static void FUTimes(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
 
   const int argc = args.Length();
   CHECK_GE(argc, 3);
@@ -2272,6 +2418,11 @@ static void FUTimes(const FunctionCallbackInfo<Value>& args) {
 
 static void Mkdtemp(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env,
+      policy::Permissions::kFileSystemOut);
+  if (policy_scope.threw)
+    return;
+
   Isolate* isolate = env->isolate();
 
   const int argc = args.Length();
