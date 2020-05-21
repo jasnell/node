@@ -5,6 +5,7 @@
 #include "node_process.h"
 #include "node_revert.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #include <climits>  // PATH_MAX
 
@@ -43,6 +44,11 @@ static void ProcessTitleSetter(Local<Name> property,
                                Local<Value> value,
                                const PropertyCallbackInfo<void>& info) {
   node::Utf8Value title(info.GetIsolate(), value);
+  Environment* env = Environment::GetCurrent(info);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   TRACE_EVENT_METADATA1(
       "__metadata", "process_name", "name", TRACE_STR_COPY(*title));
   uv_set_process_title(*title);
@@ -60,6 +66,7 @@ static void DebugPortSetter(Local<Name> property,
                             Local<Value> value,
                             const PropertyCallbackInfo<void>& info) {
   Environment* env = Environment::GetCurrent(info);
+
   int32_t port = value->Int32Value(env->context()).FromMaybe(0);
   ExclusiveAccess<HostPort>::Scoped host_port(env->inspector_host_port());
   host_port->set_port(static_cast<int>(port));

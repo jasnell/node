@@ -1,6 +1,7 @@
 #include "env-inl.h"
 #include "node_internals.h"
 #include "util-inl.h"
+#include "policy/policy-inl.h"
 
 #ifdef NODE_IMPLEMENTS_POSIX_CREDENTIALS
 #include <grp.h>  // getgrnam()
@@ -203,6 +204,10 @@ static void GetEGid(const FunctionCallbackInfo<Value>& args) {
 
 static void SetGid(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   CHECK(env->owns_process_state());
 
   CHECK_EQ(args.Length(), 1);
@@ -224,6 +229,10 @@ static void SetEGid(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(env->owns_process_state());
 
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
@@ -243,6 +252,10 @@ static void SetUid(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(env->owns_process_state());
 
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
@@ -261,6 +274,10 @@ static void SetUid(const FunctionCallbackInfo<Value>& args) {
 static void SetEUid(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(env->owns_process_state());
+
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
 
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
@@ -302,6 +319,10 @@ static void GetGroups(const FunctionCallbackInfo<Value>& args) {
 static void SetGroups(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsArray());
 
@@ -331,6 +352,10 @@ static void SetGroups(const FunctionCallbackInfo<Value>& args) {
 
 static void InitGroups(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
 
   CHECK_EQ(args.Length(), 2);
   CHECK(args[0]->IsUint32() || args[0]->IsString());

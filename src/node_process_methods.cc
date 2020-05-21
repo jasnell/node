@@ -76,6 +76,10 @@ static void Chdir(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(env->owns_process_state());
 
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
+
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsString());
   Utf8Value path(env->isolate(), args[0]);
@@ -253,6 +257,7 @@ static void StopProfilerIdleNotifier(const FunctionCallbackInfo<Value>& args) {
 
 static void Umask(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+
   CHECK(env->has_run_bootstrapping_code());
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUndefined() || args[0]->IsUint32());
@@ -283,6 +288,9 @@ static void Umask(const FunctionCallbackInfo<Value>& args) {
 
 static void Uptime(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
 
   uv_update_time(env->event_loop());
   double uptime =

@@ -21,6 +21,7 @@
 
 #include "env-inl.h"
 #include "string_bytes.h"
+#include "policy/policy-inl.h"
 
 #ifdef __MINGW32__
 # include <io.h>
@@ -143,6 +144,11 @@ static void GetTotalMemory(const FunctionCallbackInfo<Value>& args) {
 
 
 static void GetUptime(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kTiming);
+  if (policy_scope.threw)
+    return;
+
   double uptime;
   int err = uv_uptime(&uptime);
   if (err == 0)
@@ -240,6 +246,10 @@ static void GetInterfaceAddresses(const FunctionCallbackInfo<Value>& args) {
 
 static void GetHomeDirectory(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kUser);
+  if (policy_scope.threw)
+    return;
+
   char buf[PATH_MAX];
 
   size_t len = sizeof(buf);
@@ -261,6 +271,10 @@ static void GetHomeDirectory(const FunctionCallbackInfo<Value>& args) {
 
 static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kUser);
+  if (policy_scope.threw)
+    return;
+
   uv_passwd_t pwd;
   enum encoding encoding;
 
@@ -333,6 +347,9 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
 
 static void SetPriority(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  policy::PolicyEnforcedScope policy_scope(env, policy::Permissions::kProcess);
+  if (policy_scope.threw)
+    return;
 
   CHECK_EQ(args.Length(), 3);
   CHECK(args[0]->IsInt32());

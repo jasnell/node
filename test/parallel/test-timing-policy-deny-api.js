@@ -44,3 +44,11 @@ throws(() => perf_hooks.performance.timerify(() => {}), {
 throws(() => console.time('A'), {
   code: 'ERR_ACCESS_DENIED'
 });
+
+throws(() => os.uptime(), {
+  code: 'ERR_ACCESS_DENIED'
+});
+
+throws(() => process.uptime(), {
+  code: 'ERR_ACCESS_DENIED'
+});
