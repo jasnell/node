@@ -36,6 +36,9 @@ class BindingData : public BaseObject {
   SET_MEMORY_INFO_NAME(BindingData)
 };
 
+// TODO(addaleax): Remove once we're on C++17.
+constexpr FastStringKey BindingData::binding_data_name;
+
 static void Deny(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   Policy* policy = Policy::GetCurrent(env);
@@ -63,7 +66,7 @@ static void GetCurrent(const FunctionCallbackInfo<Value>& args) {
       env->GetBindingData<BindingData>(env->context());
 
 #define V(name, label, __) \
-  binding_data->detail->##name = policy->granted(Permissions::k##name) ? 1 : 0;
+  binding_data->detail->name = policy->granted(Permissions::k##name) ? 1 : 0;
   PERMISSIONS(V)
 #undef V
 }
