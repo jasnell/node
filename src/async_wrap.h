@@ -35,6 +35,7 @@ namespace node {
   V(NONE)                                                                     \
   V(DIRHANDLE)                                                                \
   V(DNSCHANNEL)                                                               \
+  V(DNSCONTEXT)                                                               \
   V(ELDHISTOGRAM)                                                             \
   V(FILEHANDLE)                                                               \
   V(FILEHANDLECLOSEREQ)                                                       \
