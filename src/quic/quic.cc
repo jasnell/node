@@ -35,11 +35,18 @@ constexpr FastStringKey QuicState::binding_data_name;
 
 void QuicState::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("root_buffer", root_buffer);
+#define V(name, _) tracker->TrackField("on_" #name, on_##name());
+  QUIC_JS_CALLBACKS(V)
+#undef V
 }
 
 namespace {
 // Register the JavaScript callbacks the internal binding will use to report
-// status and updates. This is called only once when the quic module is loaded.
+// status and updates. This is called only once per environment when the quic
+// module is loaded. The only argument is an object whose properties must be
+// the expected set of callback functions (see QUIC_JS_CALLBACKS for the list).
+// Persistent references to the given functions are stored in the QuicState
+// object in this modules binding data.
 void QuicSetCallbacks(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   QuicState* state = env->GetBindingData<QuicState>(args);
