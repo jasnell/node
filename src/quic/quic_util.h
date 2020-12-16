@@ -225,6 +225,10 @@ class PreferredAddress final {
   // using uv_getaddrinfo it is ignored.
   inline bool Use(const Address& address) const;
 
+  inline static void CopyToTransportParams(
+      ngtcp2_transport_params* params,
+      const sockaddr* addr);
+
  private:
   inline bool Resolve(const Address& address, uv_getaddrinfo_t* req) const;
 
@@ -236,7 +240,7 @@ class PreferredAddress final {
 // QuicError is a helper class used to encapsulate basic
 // details about a QUIC protocol error. There are three
 // basic types of errors (see QuicErrorFamily)
-struct QuicError {
+struct QuicError final {
   int32_t family;
   uint64_t code;
   inline QuicError(
@@ -260,12 +264,12 @@ inline size_t GetMaxPktLen(const SocketAddress& addr);
 
 // QuicPath is a utility class that wraps ngtcp2_path to adapt
 // it to work with SocketAddress
-struct QuicPath : public ngtcp2_path {
+struct QuicPath final : public ngtcp2_path {
   inline QuicPath(const SocketAddress& local, const SocketAddress& remote);
 };
 
-struct QuicPathStorage : public ngtcp2_path_storage {
-  QuicPathStorage() {
+struct QuicPathStorage final : public ngtcp2_path_storage {
+  inline QuicPathStorage() {
     ngtcp2_path_storage_zero(this);
   }
 };
@@ -273,13 +277,13 @@ struct QuicPathStorage : public ngtcp2_path_storage {
 // Simple wrapper for ngtcp2_cid that handles hex encoding
 // CIDs are used to identify QuicSession instances and may
 // be between 0 and 20 bytes in length.
-class QuicCID : public MemoryRetainer {
+class QuicCID final : public MemoryRetainer {
  public:
   // Empty constructor
   QuicCID() : ptr_(&cid_) {}
 
   // Copy constructor
-  QuicCID(const QuicCID& cid) : QuicCID(cid->data, cid->datalen) {}
+  QuicCID(const QuicCID& cid) noexcept : QuicCID(cid->data, cid->datalen) {}
 
   // Copy constructor
   explicit QuicCID(const ngtcp2_cid& cid) : QuicCID(cid.data, cid.datalen) {}
@@ -297,9 +301,9 @@ class QuicCID : public MemoryRetainer {
     inline size_t operator()(const QuicCID& cid) const;
   };
 
-  inline bool operator==(const QuicCID& other) const;
-  inline bool operator!=(const QuicCID& other) const;
-  inline QuicCID& operator=(const QuicCID& cid);
+  inline bool operator==(const QuicCID& other) const noexcept;
+  inline bool operator!=(const QuicCID& other) const noexcept;
+  inline QuicCID& operator=(const QuicCID& cid) noexcept;
   const ngtcp2_cid& operator*() const { return *ptr_; }
   const ngtcp2_cid* operator->() const { return ptr_; }
 
@@ -343,7 +347,7 @@ class QuicCID : public MemoryRetainer {
 // lost all state associated with a connection. This
 // helper class is used to both store received tokens and
 // provide storage when creating new tokens to send.
-class StatelessResetToken : public MemoryRetainer {
+class StatelessResetToken final : public MemoryRetainer {
  public:
   inline StatelessResetToken(
       uint8_t* token,

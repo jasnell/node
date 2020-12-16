@@ -121,16 +121,6 @@ void Ngtcp2DebugLog(void* user_data, const char* fmt, ...) {
   va_end(ap);
 }
 
-void CopyPreferredAddress(
-    uint8_t* dest,
-    size_t destlen,
-    uint16_t* port,
-    const sockaddr* addr) {
-  const sockaddr_in* src = reinterpret_cast<const sockaddr_in*>(addr);
-  memcpy(dest, &src->sin_addr, destlen);
-  *port = SocketAddress::GetPort(addr);
-}
-
 ngtcp2_close_fn SelectCloseFn(uint32_t family) {
   return family == QUIC_ERROR_APPLICATION ?
       ngtcp2_conn_write_application_close :
@@ -273,29 +263,8 @@ void QuicSessionConfig::Set(
   // to be an optional callback on QuicSocket. That would incur
   // a performance penalty so we'd really have to be sure of the
   // utility.
-  if (preferred_addr != nullptr) {
-    transport_params.preferred_address_present = 1;
-    switch (preferred_addr->sa_family) {
-      case AF_INET: {
-        CopyPreferredAddress(
-            transport_params.preferred_address.ipv4_addr,
-            sizeof(transport_params.preferred_address.ipv4_addr),
-            &transport_params.preferred_address.ipv4_port,
-            preferred_addr);
-        break;
-      }
-      case AF_INET6: {
-        CopyPreferredAddress(
-            transport_params.preferred_address.ipv6_addr,
-            sizeof(transport_params.preferred_address.ipv6_addr),
-            &transport_params.preferred_address.ipv6_port,
-            preferred_addr);
-        break;
-      }
-      default:
-        UNREACHABLE();
-    }
-  }
+  if (preferred_addr != nullptr)
+    PreferredAddress::CopyToTransportParams(&transport_params, preferred_addr);
 }
 
 void QuicSessionListener::OnKeylog(const char* line, size_t len) {

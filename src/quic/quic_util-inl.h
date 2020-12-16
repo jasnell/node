@@ -214,6 +214,36 @@ bool PreferredAddress::Resolve(
       req->addrinfo != nullptr;
 }
 
+void PreferredAddress::CopyToTransportParams(
+    ngtcp2_transport_params* params,
+    const sockaddr* addr) {
+  CHECK_NOT_NULL(addr);
+  CHECK_NOT_NULL(params);
+  params->preferred_address_present = 1;
+  switch (addr->sa_family) {
+    case AF_INET: {
+      const sockaddr_in* src = reinterpret_cast<const sockaddr_in*>(addr);
+      memcpy(
+          params->preferred_address.ipv4_addr,
+          &src->sin_addr,
+          sizeof(params->preferred_address.ipv4_addr));
+      params->preferred_address.ipv4_port = SocketAddress::GetPort(addr);
+      break;
+    }
+    case AF_INET6: {
+      const sockaddr_in6* src = reinterpret_cast<const sockaddr_in6*>(addr);
+      memcpy(
+          params->preferred_address.ipv6_addr,
+          &src->sin6_addr,
+          sizeof(params->preferred_address.ipv6_addr));
+      params->preferred_address.ipv6_port = SocketAddress::GetPort(addr);
+      break;
+    }
+    default:
+      UNREACHABLE();
+  }
+}
+
 StatelessResetToken::StatelessResetToken(
     uint8_t* token,
     const uint8_t* secret,
