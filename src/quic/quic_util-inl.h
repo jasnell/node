@@ -154,35 +154,36 @@ const uint8_t* PreferredAddress::stateless_reset_token() const {
   return paddr_->stateless_reset_token;
 }
 
-std::string PreferredAddress::ipv6_address() const {
+PreferredAddress::Address PreferredAddress::ipv4() const {
+  Address address;
+  address.family = AF_INET;
+  address.port = paddr_->ipv4_port;
+
   char host[NI_MAXHOST];
   // Return an empty string if unable to convert...
-  if (uv_inet_ntop(AF_INET6, paddr_->ipv6_addr, host, sizeof(host)) != 0)
-    return std::string();
+  if (uv_inet_ntop(AF_INET, paddr_->ipv4_addr, host, sizeof(host)) == 0)
+    address.address = std::string(host);
 
-  return std::string(host);
+  return address;
 }
-std::string PreferredAddress::ipv4_address() const {
+
+PreferredAddress::Address PreferredAddress::ipv6() const {
+  Address address;
+  address.family = AF_INET6;
+  address.port = paddr_->ipv6_port;
+
   char host[NI_MAXHOST];
   // Return an empty string if unable to convert...
-  if (uv_inet_ntop(AF_INET, paddr_->ipv4_addr, host, sizeof(host)) != 0)
-    return std::string();
+  if (uv_inet_ntop(AF_INET6, paddr_->ipv6_addr, host, sizeof(host)) == 0)
+    address.address = std::string(host);
 
-  return std::string(host);
+  return address;
 }
 
-uint16_t PreferredAddress::ipv6_port() const {
-  return paddr_->ipv6_port;
-}
-
-uint16_t PreferredAddress::ipv4_port() const {
-  return paddr_->ipv4_port;
-}
-
-bool PreferredAddress::Use(int family) const {
+bool PreferredAddress::Use(const PreferredAddress::Address& address) const {
   uv_getaddrinfo_t req;
 
-  if (!ResolvePreferredAddress(family, &req))
+  if (!Resolve(address, &req))
     return false;
 
   dest_->addrlen = req.addrinfo->ai_addrlen;
@@ -191,40 +192,12 @@ bool PreferredAddress::Use(int family) const {
   return true;
 }
 
-bool PreferredAddress::ResolvePreferredAddress(
-    int local_address_family,
+bool PreferredAddress::Resolve(
+    const PreferredAddress::Address& address,
     uv_getaddrinfo_t* req) const {
-  int af;
-  const uint8_t* binaddr;
-  uint16_t port;
-  switch (local_address_family) {
-    case AF_INET:
-      if (paddr_->ipv4_port > 0) {
-        af = AF_INET;
-        binaddr = paddr_->ipv4_addr;
-        port = paddr_->ipv4_port;
-        break;
-      }
-      return false;
-    case AF_INET6:
-      if (paddr_->ipv6_port > 0) {
-        af = AF_INET6;
-        binaddr = paddr_->ipv6_addr;
-        port = paddr_->ipv6_port;
-        break;
-      }
-      return false;
-    default:
-      UNREACHABLE();
-  }
-
-  char host[NI_MAXHOST];
-  if (uv_inet_ntop(af, binaddr, host, sizeof(host)) != 0)
-    return false;
-
   addrinfo hints{};
   hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-  hints.ai_family = af;
+  hints.ai_family = address.family;
   hints.ai_socktype = SOCK_DGRAM;
 
   // Unfortunately ngtcp2 requires the selection of the
@@ -235,8 +208,8 @@ bool PreferredAddress::ResolvePreferredAddress(
           env_->event_loop(),
           req,
           nullptr,
-          host,
-          std::to_string(port).c_str(),
+          address.address.c_str(),
+          std::to_string(address.port).c_str(),
           &hints) == 0 &&
       req->addrinfo != nullptr;
 }

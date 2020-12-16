@@ -384,10 +384,9 @@ void QuicSessionListener::OnStreamBlocked(int64_t stream_id) {
 }
 
 void QuicSessionListener::OnUsePreferredAddress(
-    int family,
-    const PreferredAddress& preferred_address) {
+    const PreferredAddress::Address& address) {
   if (previous_listener_ != nullptr)
-    previous_listener_->OnUsePreferredAddress(family, preferred_address);
+    previous_listener_->OnUsePreferredAddress(address);
 }
 
 void QuicSessionListener::OnVersionNegotiation(
@@ -816,8 +815,7 @@ void JSQuicSessionListener::OnSessionTicket(int size, SSL_SESSION* sess) {
 }
 
 void JSQuicSessionListener::OnUsePreferredAddress(
-    int family,
-    const PreferredAddress& preferred_address) {
+    const PreferredAddress::Address& address) {
   Environment* env = session()->env();
   QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
@@ -826,18 +824,10 @@ void JSQuicSessionListener::OnUsePreferredAddress(
 
   QuicCallbackScope cb_scope(session());
 
-  std::string hostname = family == AF_INET ?
-      preferred_address.ipv4_address():
-      preferred_address.ipv6_address();
-  uint16_t port =
-      family == AF_INET ?
-          preferred_address.ipv4_port() :
-          preferred_address.ipv6_port();
-
   Local<Value> argv[] = {
-      OneByteString(env->isolate(), hostname.c_str()),
-      Integer::NewFromUnsigned(env->isolate(), port),
-      Integer::New(env->isolate(), family)
+      OneByteString(env->isolate(), address.address.c_str()),
+      Integer::NewFromUnsigned(env->isolate(), address.port),
+      Integer::New(env->isolate(), address.family)
   };
 
   BaseObjectPtr<QuicSession> ptr(session());
@@ -2433,19 +2423,18 @@ void QuicSession::UsePreferredAddressStrategy(
     QuicSession* session,
     const PreferredAddress& preferred_address) {
   int family = session->socket()->local_address().family();
-  if (preferred_address.Use(family)) {
-    Debug(session, "Using server preferred address");
-    // Emit only if the QuicSession has a usePreferredAddress handler
-    // on the JavaScript side.
-    if (UNLIKELY(session->state_->use_preferred_address_enabled == 1)) {
-      session->listener()->OnUsePreferredAddress(family, preferred_address);
-    }
-  } else {
-    // If Use returns false, the advertised preferred address does not
-    // match the current local preferred endpoint IP version.
-    Debug(session,
-          "Not using server preferred address due to IP version mismatch");
+  PreferredAddress::Address address = family == AF_INET
+      ? preferred_address.ipv4()
+      : preferred_address.ipv6();
+
+  if (!preferred_address.Use(address)) {
+    Debug(session, "Not using server preferred address");
+    return;
   }
+
+  Debug(session, "Using server preferred address");
+  if (UNLIKELY(session->state_->use_preferred_address_enabled == 1))
+    session->listener()->OnUsePreferredAddress(address);
 }
 
 // Passes a serialized packet to the associated QuicSocket.
@@ -3345,16 +3334,9 @@ int QuicSession::OnSelectPreferredAddress(
   // The paddr parameter contains the server advertised preferred
   // address. The dest parameter contains the address that is
   // actually being used. If the preferred address is selected,
-  // then the contents of paddr are copied over to dest. It is
-  // important to remember that SelectPreferredAddress should
-  // return true regardless of whether the preferred address was
-  // selected or not. It should only return false if there was
-  // an actual failure processing things. Note, however, that
-  // even in such a failure, we debug log and ignore it.
-  // If the preferred address is not selected, dest remains
-  // unchanged.
-  PreferredAddress preferred_address(session->env(), dest, paddr);
-  session->SelectPreferredAddress(preferred_address);
+  // then the contents of paddr are copied over to dest.
+  session->SelectPreferredAddress(
+      PreferredAddress(session->env(), dest, paddr));
   return 0;
 }
 

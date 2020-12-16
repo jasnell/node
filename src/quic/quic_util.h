@@ -88,7 +88,6 @@ enum QuicErrorFamily : int32_t {
   QUIC_ERROR_APPLICATION
 };
 
-
 template <typename T> class StatsBase;
 
 template <typename T, typename Q>
@@ -181,17 +180,23 @@ class StatsBase {
 
 // PreferredAddress is a helper class used only when a client QuicSession
 // receives an advertised preferred address from a server. The helper provides
-// information about the preferred address. The Use() function is used to let
-// ngtcp2 know to use the preferred address for the given family.
-class PreferredAddress {
+// information about the servers advertised preferred address. Call Use()
+// to let ngtcp2 know which preferred address to use (if any).
+class PreferredAddress final {
  public:
-  PreferredAddress(
+  struct Address {
+    int family;
+    uint16_t port;
+    std::string address;
+  };
+
+  inline PreferredAddress(
       Environment* env,
       ngtcp2_addr* dest,
-      const ngtcp2_preferred_addr* paddr) :
-      env_(env),
-      dest_(dest),
-      paddr_(paddr) {}
+      const ngtcp2_preferred_addr* paddr)
+      : env_(env),
+        dest_(dest),
+        paddr_(paddr) {}
 
   // When a preferred address is advertised by a server, the
   // advertisement also includes a new CID and (optionally)
@@ -209,24 +214,19 @@ class PreferredAddress {
   // A preferred address advertisement may include both an
   // IPv4 and IPv6 address. Only one of which will be used.
 
-  inline std::string ipv4_address() const;
-
-  inline uint16_t ipv4_port() const;
-
-  inline std::string ipv6_address() const;
-
-  inline uint16_t ipv6_port() const;
+  inline Address ipv4() const;
+  inline Address ipv6() const;
 
   // Instructs the QuicSession to use the advertised
   // preferred address matching the given family. If
   // the advertisement does not include a matching
-  // address, the preferred address is ignored.
-  inline bool Use(int family = AF_INET) const;
+  // address, the preferred address is ignored. If
+  // the given address cannot be successfully resolved
+  // using uv_getaddrinfo it is ignored.
+  inline bool Use(const Address& address) const;
 
  private:
-  inline bool ResolvePreferredAddress(
-      int local_address_family,
-      uv_getaddrinfo_t* req) const;
+  inline bool Resolve(const Address& address, uv_getaddrinfo_t* req) const;
 
   Environment* env_;
   mutable ngtcp2_addr* dest_;

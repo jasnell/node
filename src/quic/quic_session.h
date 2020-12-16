@@ -297,9 +297,7 @@ class QuicSessionListener {
       ngtcp2_path_validation_result res,
       const sockaddr* local,
       const sockaddr* remote);
-  virtual void OnUsePreferredAddress(
-      int family,
-      const PreferredAddress& preferred_address);
+  virtual void OnUsePreferredAddress(const PreferredAddress::Address& address);
   virtual void OnSessionTicket(int size, SSL_SESSION* session);
   virtual void OnStreamBlocked(int64_t stream_id);
   virtual void OnVersionNegotiation(
@@ -345,9 +343,7 @@ class JSQuicSessionListener final : public QuicSessionListener {
       const sockaddr* local,
       const sockaddr* remote) override;
   void OnSessionTicket(int size, SSL_SESSION* session) override;
-  void OnUsePreferredAddress(
-      int family,
-      const PreferredAddress& preferred_address) override;
+  void OnUsePreferredAddress(const PreferredAddress::Address& address) override;
   void OnStreamBlocked(int64_t stream_id) override;
   void OnVersionNegotiation(
       uint32_t supported_version,
