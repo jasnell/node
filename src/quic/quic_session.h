@@ -73,7 +73,7 @@ class QuicSessionConfig final : public ngtcp2_settings {
     Set(quic_state);
   }
 
-  QuicSessionConfig(const QuicSessionConfig& config) {
+  QuicSessionConfig(const QuicSessionConfig& config) noexcept {
     initial_ts = uv_hrtime();
     initial_rtt = config.initial_rtt;
     transport_params = config.transport_params;
@@ -116,6 +116,8 @@ class QuicSessionConfig final : public ngtcp2_settings {
 // server QuicSession. These are set on the QuicSocket when
 // the listen() function is called and are passed to the
 // constructor of the server QuicSession.
+// TODO(@jasnell): We ought to be able to migrate the separate
+// options into QuicSessionConfig.
 enum QuicServerSessionOptions : uint32_t {
   // When set, instructs the server QuicSession to reject
   // client authentication certs that cannot be verified.
@@ -129,6 +131,8 @@ enum QuicServerSessionOptions : uint32_t {
 // Options to alter the behavior of various functions on the
 // client QuicSession. These are set on the client QuicSession
 // constructor.
+// TODO(@jasnell): We ought to be able to migrate the separate
+// options into QuicSessionConfig.
 enum QuicClientSessionOptions : uint32_t {
   // When set, instructs the client QuicSession to include an
   // OCSP request in the initial TLS handshake
@@ -145,6 +149,9 @@ enum QuicClientSessionOptions : uint32_t {
   QUICCLIENTSESSION_OPTION_RESUME = 0x4
 };
 
+// Every QuicSession instance maintains an AliasedStruct that is used to quickly
+// toggle certain settings back and forth or to access various stats with low
+// cost.
 #define QUICSESSION_SHARED_STATE(V)                                            \
   V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
   V(CLIENT_HELLO_ENABLED, client_hello_enabled, uint8_t)                       \

@@ -144,19 +144,6 @@ void Initialize(Local<Object> target,
   V(IDX_HTTP3_MAX_HEADER_PAIRS)                                                \
   V(IDX_HTTP3_MAX_HEADER_LENGTH)                                               \
   V(IDX_HTTP3_CONFIG_COUNT)                                                    \
-  V(IDX_QUIC_SESSION_ACTIVE_CONNECTION_ID_LIMIT)                               \
-  V(IDX_QUIC_SESSION_MAX_IDLE_TIMEOUT)                                         \
-  V(IDX_QUIC_SESSION_MAX_DATA)                                                 \
-  V(IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_LOCAL)                               \
-  V(IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_REMOTE)                              \
-  V(IDX_QUIC_SESSION_MAX_STREAM_DATA_UNI)                                      \
-  V(IDX_QUIC_SESSION_MAX_STREAMS_BIDI)                                         \
-  V(IDX_QUIC_SESSION_MAX_STREAMS_UNI)                                          \
-  V(IDX_QUIC_SESSION_MAX_UDP_PAYLOAD_SIZE)                                     \
-  V(IDX_QUIC_SESSION_ACK_DELAY_EXPONENT)                                       \
-  V(IDX_QUIC_SESSION_DISABLE_MIGRATION)                                        \
-  V(IDX_QUIC_SESSION_MAX_ACK_DELAY)                                            \
-  V(IDX_QUIC_SESSION_CC_ALGO)                                                  \
   V(IDX_QUIC_SESSION_CONFIG_COUNT)                                             \
   V(MAX_RETRYTOKEN_EXPIRATION)                                                 \
   V(MIN_RETRYTOKEN_EXPIRATION)                                                 \
@@ -217,6 +204,11 @@ void Initialize(Local<Object> target,
 
 #define V(name) NODE_DEFINE_CONSTANT(constants, name);
   QUIC_CONSTANTS(V)
+#undef V
+
+#define V(name, _, __) NODE_DEFINE_CONSTANT(constants, IDX_QUIC_SESSION_##name);
+  QUIC_SESSION_TRANSPORT_PARAMS(V)
+  QUIC_SESSION_CONFIG_PARAMS(V)
 #undef V
 
   NODE_DEFINE_CONSTANT(constants, NGTCP2_DEFAULT_MAX_PKTLEN);

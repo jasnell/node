@@ -36,20 +36,46 @@ namespace quic {
   V(quicserverstream)                                                          \
   V(quicsocketsendwrap)
 
+// Configuration options that are passed to the peer via transport parameters.
+// The first name is used as part of the index we use internally to reference
+// it in the aliased array. The second name is the property name from ngtcp2's
+// transport param struct.
+#define QUIC_SESSION_TRANSPORT_PARAMS(V)                                       \
+  V(ACTIVE_CONNECTION_ID_LIMIT, active_connection_id_limit, uint64_t)          \
+  V(MAX_STREAM_DATA_BIDI_LOCAL, initial_max_stream_data_bidi_local, uint64_t)  \
+  V(MAX_STREAM_DATA_BIDI_REMOTE, initial_max_stream_data_bidi_remote, uint64_t)\
+  V(MAX_STREAM_DATA_UNI, initial_max_stream_data_uni, uint64_t)                \
+  V(MAX_DATA, initial_max_data, uint64_t)                                      \
+  V(MAX_STREAMS_BIDI, initial_max_streams_bidi, uint64_t)                      \
+  V(MAX_STREAMS_UNI, initial_max_streams_uni, uint64_t)                        \
+  V(MAX_IDLE_TIMEOUT, max_idle_timeout, uint64_t)                              \
+  V(MAX_UDP_PAYLOAD_SIZE, max_udp_payload_size, uint64_t)                      \
+  V(MAX_ACK_DELAY, max_ack_delay, uint64_t)
+
+// Configuration options that set locally for the session.
+// The first name is used as part of the index we use internally to reference
+// it in the aliased array. The second name is the property name from ngtcp2's
+// options struct.
+#define QUIC_SESSION_CONFIG_PARAMS(V)                                          \
+  V(CC_ALGO, cc_algo, ngtcp2_cc_algo)
+
+// The quicsessionconfig_buffer AliasedArray is created when the quic module
+// is loaded, and is set at module scope on the JavaScript side. The array
+// contains IDX_QUIC_SESSION_CONFIG_COUNT double entries (double because the
+// actual configuration options generally need to allow for uint64_t values).
+// The QuicSessionConfigIndex defines the index positions of each field in
+// the array (see the QUIC_SESSION_TRANSPORT_PARAMS and
+// QUIC_SESSION_CONFIG_PARAMS) defines above. When a new QuicSession is created,
+// the values in the AliasedArray are set in JavaScript then read out
+// synchronously in C++ (See QuicSessionConfig::Set in quic_session.cc)
+// To add a new configuration option at the C++ side, simply add it to the
+// relevant define above. There must be a matching field in the
+// ngtcp2_settings struct or the QuicSessionConfig class.
 enum QuicSessionConfigIndex : int {
-  IDX_QUIC_SESSION_ACTIVE_CONNECTION_ID_LIMIT,
-  IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_LOCAL,
-  IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_REMOTE,
-  IDX_QUIC_SESSION_MAX_STREAM_DATA_UNI,
-  IDX_QUIC_SESSION_MAX_DATA,
-  IDX_QUIC_SESSION_MAX_STREAMS_BIDI,
-  IDX_QUIC_SESSION_MAX_STREAMS_UNI,
-  IDX_QUIC_SESSION_MAX_IDLE_TIMEOUT,
-  IDX_QUIC_SESSION_MAX_UDP_PAYLOAD_SIZE,
-  IDX_QUIC_SESSION_ACK_DELAY_EXPONENT,
-  IDX_QUIC_SESSION_DISABLE_MIGRATION,
-  IDX_QUIC_SESSION_MAX_ACK_DELAY,
-  IDX_QUIC_SESSION_CC_ALGO,
+#define V(name, _, __) IDX_QUIC_SESSION_##name,
+  QUIC_SESSION_TRANSPORT_PARAMS(V)
+  QUIC_SESSION_CONFIG_PARAMS(V)
+#undef V
   IDX_QUIC_SESSION_CONFIG_COUNT
 };
 

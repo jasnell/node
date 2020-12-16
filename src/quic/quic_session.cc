@@ -100,13 +100,6 @@ typedef ssize_t(*ngtcp2_close_fn)(
   ngtcp2_tstamp ts);
 
 namespace {
-void SetConfig(QuicState* quic_state, int idx, uint64_t* val) {
-  AliasedFloat64Array& buffer = quic_state->quicsessionconfig_buffer;
-  uint64_t flags = static_cast<uint64_t>(buffer[IDX_QUIC_SESSION_CONFIG_COUNT]);
-  if (flags & (1ULL << idx))
-    *val = static_cast<uint64_t>(buffer[idx]);
-}
-
 // Forwards detailed(verbose) debugging information from ngtcp2. Enabled using
 // the NODE_DEBUG_NATIVE=NGTCP2_DEBUG category.
 void Ngtcp2DebugLog(void* user_data, const char* fmt, ...) {
@@ -219,36 +212,43 @@ void QuicSessionConfig::ResetToDefaults(QuicState* quic_state) {
 }
 
 // Sets the QuicSessionConfig using an AliasedBuffer for efficiency.
+// See the macro definitions of QUIC_SESSION_TRANSPORT_PARAMS and
+// QUIC_SESSION_CONFIG_PARAMS in quic_state.h for more detail.
 void QuicSessionConfig::Set(
     QuicState* quic_state,
     const sockaddr* preferred_addr) {
   ResetToDefaults(quic_state);
-  SetConfig(quic_state, IDX_QUIC_SESSION_ACTIVE_CONNECTION_ID_LIMIT,
-            &transport_params.active_connection_id_limit);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_LOCAL,
-            &transport_params.initial_max_stream_data_bidi_local);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_STREAM_DATA_BIDI_REMOTE,
-            &transport_params.initial_max_stream_data_bidi_remote);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_STREAM_DATA_UNI,
-            &transport_params.initial_max_stream_data_uni);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_DATA,
-            &transport_params.initial_max_data);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_STREAMS_BIDI,
-            &transport_params.initial_max_streams_bidi);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_STREAMS_UNI,
-            &transport_params.initial_max_streams_uni);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_IDLE_TIMEOUT,
-            &transport_params.max_idle_timeout);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_UDP_PAYLOAD_SIZE,
-            &transport_params.max_udp_payload_size);
-  SetConfig(quic_state, IDX_QUIC_SESSION_MAX_ACK_DELAY,
-            &transport_params.max_ack_delay);
-  SetConfig(quic_state,
-            IDX_QUIC_SESSION_CC_ALGO,
-            reinterpret_cast<uint64_t *>(&cc_algo));
+  AliasedFloat64Array& buffer = quic_state->quicsessionconfig_buffer;
+  uint64_t flags = static_cast<uint64_t>(buffer[IDX_QUIC_SESSION_CONFIG_COUNT]);
 
-  transport_params.max_idle_timeout =
-      transport_params.max_idle_timeout * 1000000000;
+#define V(name, key, type)                                                     \
+  do {                                                                         \
+    if (flags & (1ULL << IDX_QUIC_SESSION_##name)) {                           \
+      transport_params.key =                                                   \
+          static_cast<type>(buffer[IDX_QUIC_SESSION_##name]);                  \
+    }                                                                          \
+  } while (false);
+  QUIC_SESSION_TRANSPORT_PARAMS(V)
+#undef V
+
+#define V(name, key, type)                                                     \
+  do {                                                                         \
+    if (flags & (1ULL << IDX_QUIC_SESSION_##name)) {                           \
+      key = static_cast<type>(                                                 \
+        static_cast<uint64_t>(buffer[IDX_QUIC_SESSION_##name]));               \
+    }                                                                          \
+  } while (false);
+  QUIC_SESSION_CONFIG_PARAMS(V)
+#undef V
+
+  // TODO(@jasnell): We currently do not set either the ack_delay_exponent
+  // or disable_active_migration options.
+  // transport_params.ack_delay_exponent;
+  // transport_params.disable_active_migration;
+
+  // In JavaScript, we represent the max_idle_timeout at a smaller resolution.
+  // Adjust for the correct resolution here.
+  transport_params.max_idle_timeout = transport_params.max_idle_timeout * 1e9;
 
   // TODO(@jasnell): QUIC allows both IPv4 and IPv6 addresses to be
   // specified. Here we're specifying one or the other. Need to
