@@ -42,40 +42,21 @@ namespace {
 // status and updates. This is called only once when the quic module is loaded.
 void QuicSetCallbacks(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
+  QuicState* state = env->GetBindingData<QuicState>(args);
   CHECK(args[0]->IsObject());
   Local<Object> obj = args[0].As<Object>();
 
-#define SETFUNCTION(name, callback)                                           \
-  do {                                                                        \
-    Local<Value> fn;                                                          \
-    CHECK(obj->Get(env->context(),                                            \
-                   FIXED_ONE_BYTE_STRING(env->isolate(), name)).ToLocal(&fn));\
-    CHECK(fn->IsFunction());                                                  \
-    env->set_quic_on_##callback##_function(fn.As<Function>());                \
-  } while (0)
-
-  SETFUNCTION("onSocketClose", socket_close);
-  SETFUNCTION("onSessionReady", session_ready);
-  SETFUNCTION("onSessionCert", session_cert);
-  SETFUNCTION("onSessionClientHello", session_client_hello);
-  SETFUNCTION("onSessionClose", session_close);
-  SETFUNCTION("onSessionHandshake", session_handshake);
-  SETFUNCTION("onSessionKeylog", session_keylog);
-  SETFUNCTION("onSessionUsePreferredAddress", session_use_preferred_address);
-  SETFUNCTION("onSessionPathValidation", session_path_validation);
-  SETFUNCTION("onSessionQlog", session_qlog);
-  SETFUNCTION("onSessionStatus", session_status);
-  SETFUNCTION("onSessionTicket", session_ticket);
-  SETFUNCTION("onSessionVersionNegotiation", session_version_negotiation);
-  SETFUNCTION("onStreamReady", stream_ready);
-  SETFUNCTION("onStreamClose", stream_close);
-  SETFUNCTION("onStreamError", stream_error);
-  SETFUNCTION("onStreamReset", stream_reset);
-  SETFUNCTION("onSocketServerBusy", socket_server_busy);
-  SETFUNCTION("onStreamHeaders", stream_headers);
-  SETFUNCTION("onStreamBlocked", stream_blocked);
-
-#undef SETFUNCTION
+#define V(name, key)                                                           \
+  do {                                                                         \
+    Local<Value> fn;                                                           \
+    CHECK(obj->Get(                                                            \
+        env->context(),                                                        \
+        FIXED_ONE_BYTE_STRING(env->isolate(), #key)).ToLocal(&fn));            \
+    CHECK(fn->IsFunction());                                                   \
+    state->set_on_## name(fn.As<Function>());                                  \
+  } while (0);
+  QUIC_JS_CALLBACKS(V)
+#undef V
 }
 
 // Sets QUIC specific configuration options for the SecureContext.
@@ -132,9 +113,7 @@ void Initialize(Local<Object> target,
   QuicSession::Initialize(env, target, context);
   QuicStream::Initialize(env, target, context);
 
-  env->SetMethod(target,
-                 "setCallbacks",
-                 QuicSetCallbacks);
+  env->SetMethod(target, "setCallbacks", QuicSetCallbacks);
   env->SetMethod(target,
                  "initSecureContext",
                  QuicInitSecureContext<NGTCP2_CRYPTO_SIDE_SERVER>);

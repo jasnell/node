@@ -286,8 +286,9 @@ BaseObjectPtr<QuicStream> QuicStream::New(
     int64_t stream_id,
     int64_t push_id) {
   Local<Object> obj;
-  if (!session->env()
-              ->quicserverstream_instance_template()
+  if (!session->quic_state()
+              ->quicserverstream()
+              ->InstanceTemplate()
               ->NewInstance(session->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -525,6 +526,7 @@ void QuicStream::Initialize(
     Environment* env,
     Local<Object> target,
     Local<Context> context) {
+  QuicState* state = env->GetBindingData<QuicState>(context);
   Isolate* isolate = env->isolate();
   Local<String> class_name = FIXED_ONE_BYTE_STRING(isolate, "QuicStream");
   Local<FunctionTemplate> stream = FunctionTemplate::New(env->isolate());
@@ -542,7 +544,7 @@ void QuicStream::Initialize(
   env->SetProtoMethod(stream, "submitHeaders", QuicStreamSubmitHeaders);
   env->SetProtoMethod(stream, "submitTrailers", QuicStreamSubmitTrailers);
   env->SetProtoMethod(stream, "submitPush", QuicStreamSubmitPush);
-  env->set_quicserverstream_instance_template(streamt);
+  state->set_quicserverstream(stream);
   target->Set(env->context(),
               class_name,
               stream->GetFunction(env->context()).ToLocalChecked()).Check();

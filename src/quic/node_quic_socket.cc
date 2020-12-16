@@ -133,25 +133,28 @@ void QuicSocketListener::OnDestroy() {
 
 void JSQuicSocketListener::OnError(ssize_t code) {
   Environment* env = socket()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
   Local<Value> arg = Number::New(env->isolate(), static_cast<double>(code));
-  socket()->MakeCallback(env->quic_on_socket_close_function(), 1, &arg);
+  socket()->MakeCallback(state->on_socket_close(), 1, &arg);
 }
 
 void JSQuicSocketListener::OnSessionReady(BaseObjectPtr<QuicSession> session) {
   Environment* env = socket()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   Local<Value> arg = session->object();
   Context::Scope context_scope(env->context());
-  socket()->MakeCallback(env->quic_on_session_ready_function(), 1, &arg);
+  socket()->MakeCallback(state->on_session_ready(), 1, &arg);
 }
 
 void JSQuicSocketListener::OnServerBusy() {
   Environment* env = socket()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
   socket()->MakeCallback(
-      env->quic_on_socket_server_busy_function(), 0, nullptr);
+      state->on_socket_server_busy(), 0, nullptr);
 }
 
 void JSQuicSocketListener::OnEndpointDone(QuicEndpoint* endpoint) {
@@ -350,8 +353,12 @@ void QuicSocket::OnError(QuicEndpoint* endpoint, ssize_t error) {
 ReqWrap<uv_udp_send_t>* QuicSocket::OnCreateSendWrap(size_t msg_size) {
   HandleScope handle_scope(env()->isolate());
   Local<Object> obj;
-  if (!env()->quicsocketsendwrap_instance_template()
-          ->NewInstance(env()->context()).ToLocal(&obj)) return nullptr;
+  if (!quic_state()
+          ->quicsocketsendwrap()
+          ->InstanceTemplate()
+          ->NewInstance(env()->context()).ToLocal(&obj)) {
+    return nullptr;
+  }
   return last_created_send_wrap_ = new SendWrap(quic_state(), obj, msg_size);
 }
 
@@ -1176,6 +1183,7 @@ void QuicSocket::Initialize(
     Environment* env,
     Local<Object> target,
     Local<Context> context) {
+  QuicState* state = env->GetBindingData<QuicState>(context);
   Isolate* isolate = env->isolate();
   Local<String> class_name = FIXED_ONE_BYTE_STRING(isolate, "QuicSocket");
   Local<FunctionTemplate> socket = env->NewFunctionTemplate(NewQuicSocket);
@@ -1205,7 +1213,7 @@ void QuicSocket::Initialize(
   sendwrap_ctor->SetClassName(FIXED_ONE_BYTE_STRING(isolate, "SendWrap"));
   Local<ObjectTemplate> sendwrap_template = sendwrap_ctor->InstanceTemplate();
   sendwrap_template->SetInternalFieldCount(SendWrap::kInternalFieldCount);
-  env->set_quicsocketsendwrap_instance_template(sendwrap_template);
+  state->set_quicsocketsendwrap(sendwrap_ctor);
 }
 
 }  // namespace quic

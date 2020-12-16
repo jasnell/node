@@ -405,6 +405,7 @@ void QuicSessionListener::OnQLog(QLogStream* qlog_stream) {
 
 void JSQuicSessionListener::OnKeylog(const char* line, size_t len) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
 
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
@@ -421,7 +422,7 @@ void JSQuicSessionListener::OnKeylog(const char* line, size_t len) {
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
-  USE(env->quic_on_session_keylog_function()->Call(
+  USE(state->on_session_keylog()->Call(
       env->context(),
       session()->object(),
       1,
@@ -430,6 +431,7 @@ void JSQuicSessionListener::OnKeylog(const char* line, size_t len) {
 
 void JSQuicSessionListener::OnStreamBlocked(int64_t stream_id) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
 
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
@@ -437,7 +439,7 @@ void JSQuicSessionListener::OnStreamBlocked(int64_t stream_id) {
   QuicCallbackScope cb_scope(session());
 
   BaseObjectPtr<QuicStream> stream = session()->FindStream(stream_id);
-  USE(env->quic_on_stream_blocked_function()->Call(
+  USE(state->on_stream_blocked()->Call(
       env->context(),
       stream->object(),
       0, nullptr));
@@ -448,6 +450,7 @@ void JSQuicSessionListener::OnClientHello(
     const char* server_name) {
 
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -482,7 +485,7 @@ void JSQuicSessionListener::OnClientHello(
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
-  USE(env->quic_on_session_client_hello_function()->Call(
+  USE(state->on_session_client_hello()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -493,6 +496,7 @@ void JSQuicSessionListener::OnCert(const char* server_name) {
   Environment* env = session()->env();
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
 
   QuicCallbackScope cb_scope(session());
 
@@ -508,7 +512,7 @@ void JSQuicSessionListener::OnCert(const char* server_name) {
 
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_session_cert_function()->Call(
+  USE(state->on_session_cert()->Call(
       env->context(),
       session()->object(),
       1, &servername));
@@ -522,6 +526,7 @@ void JSQuicSessionListener::OnStreamHeaders(
   Environment* env = session()->env();
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   MaybeStackBuffer<Local<Value>, 16> head(headers.size());
   size_t n = 0;
 
@@ -551,7 +556,7 @@ void JSQuicSessionListener::OnStreamHeaders(
 
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_stream_headers_function()->Call(
+  USE(state->on_stream_headers()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -560,11 +565,12 @@ void JSQuicSessionListener::OnStreamHeaders(
 
 void JSQuicSessionListener::OnOCSP(Local<Value> ocsp) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
   QuicCallbackScope cb_scope(session());
   BaseObjectPtr<QuicSession> ptr(session());
-  USE(env->quic_on_session_status_function()->Call(
+  USE(state->on_session_status()->Call(
       env->context(),
       session()->object(),
       1, &ocsp));
@@ -574,6 +580,7 @@ void JSQuicSessionListener::OnStreamClose(
     int64_t stream_id,
     uint64_t app_error_code) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -588,7 +595,7 @@ void JSQuicSessionListener::OnStreamClose(
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_stream_close_function()->Call(
+  USE(state->on_stream_close()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -599,6 +606,7 @@ void JSQuicSessionListener::OnStreamReset(
     int64_t stream_id,
     uint64_t app_error_code) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -612,7 +620,7 @@ void JSQuicSessionListener::OnStreamReset(
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_stream_reset_function()->Call(
+  USE(state->on_stream_reset()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -621,6 +629,7 @@ void JSQuicSessionListener::OnStreamReset(
 
 void JSQuicSessionListener::OnSessionClose(QuicError error, int flags) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -640,7 +649,7 @@ void JSQuicSessionListener::OnSessionClose(QuicError error, int flags) {
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
-  USE(env->quic_on_session_close_function()->Call(
+  USE(state->on_session_close()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -649,6 +658,7 @@ void JSQuicSessionListener::OnSessionClose(QuicError error, int flags) {
 
 void JSQuicSessionListener::OnStreamReady(BaseObjectPtr<QuicStream> stream) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -664,7 +674,7 @@ void JSQuicSessionListener::OnStreamReady(BaseObjectPtr<QuicStream> stream) {
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_stream_ready_function()->Call(
+  USE(state->on_stream_ready()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -674,6 +684,7 @@ void JSQuicSessionListener::OnStreamReady(BaseObjectPtr<QuicStream> stream) {
 void JSQuicSessionListener::OnHandshakeCompleted() {
   Environment* env = session()->env();
   HandleScope scope(env->isolate());
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   Context::Scope context_scope(env->context());
 
   QuicCryptoContext* ctx = session()->crypto_context();
@@ -723,7 +734,7 @@ void JSQuicSessionListener::OnHandshakeCompleted() {
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_session_handshake_function()->Call(
+  USE(state->on_session_handshake()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -738,6 +749,7 @@ void JSQuicSessionListener::OnPathValidation(
   // remote addresses have to converted into JavaScript objects. We
   // only do this if a pathValidation handler is registered.
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Local<Context> context = env->context();
   Context::Scope context_scope(context);
@@ -753,7 +765,7 @@ void JSQuicSessionListener::OnPathValidation(
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_session_path_validation_function()->Call(
+  USE(state->on_session_path_validation()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -762,6 +774,7 @@ void JSQuicSessionListener::OnPathValidation(
 
 void JSQuicSessionListener::OnSessionTicket(int size, SSL_SESSION* sess) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
 
@@ -795,7 +808,7 @@ void JSQuicSessionListener::OnSessionTicket(int size, SSL_SESSION* sess) {
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_session_ticket_function()->Call(
+  USE(state->on_session_ticket()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -806,6 +819,7 @@ void JSQuicSessionListener::OnUsePreferredAddress(
     int family,
     const PreferredAddress& preferred_address) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Local<Context> context = env->context();
   Context::Scope context_scope(context);
@@ -828,7 +842,7 @@ void JSQuicSessionListener::OnUsePreferredAddress(
 
   BaseObjectPtr<QuicSession> ptr(session());
 
-  USE(env->quic_on_session_use_preferred_address_function()->Call(
+  USE(state->on_session_use_preferred_address()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -840,6 +854,7 @@ void JSQuicSessionListener::OnVersionNegotiation(
     const uint32_t* vers,
     size_t vcnt) {
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope scope(env->isolate());
   Local<Context> context = env->context();
   Context::Scope context_scope(context);
@@ -865,7 +880,7 @@ void JSQuicSessionListener::OnVersionNegotiation(
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<QuicSession> ptr(session());
-  USE(env->quic_on_session_version_negotiation_function()->Call(
+  USE(state->on_session_version_negotiation()->Call(
       env->context(),
       session()->object(),
       arraysize(argv),
@@ -875,11 +890,12 @@ void JSQuicSessionListener::OnVersionNegotiation(
 void JSQuicSessionListener::OnQLog(QLogStream* qlog_stream) {
   CHECK_NOT_NULL(qlog_stream);
   Environment* env = session()->env();
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   HandleScope handle_scope(env->isolate());
   Context::Scope context_scope(env->context());
   QuicCallbackScope cb_scope(session());
   Local<Value> obj = qlog_stream->object();
-  USE(env->quic_on_session_qlog_function()->Call(
+  USE(state->on_session_qlog()->Call(
       env->context(),
       session()->object(),
       1, &obj));
@@ -2799,8 +2815,10 @@ BaseObjectPtr<QuicSession> QuicSession::CreateServer(
     uint32_t options,
     QlogMode qlog) {
   Local<Object> obj;
-  if (!socket->env()
-             ->quicserversession_instance_template()
+
+  if (!socket->quic_state()
+             ->quicserversession()
+             ->InstanceTemplate()
              ->NewInstance(socket->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -2936,8 +2954,9 @@ BaseObjectPtr<QuicSession> QuicSession::CreateClient(
     uint32_t options,
     QlogMode qlog) {
   Local<Object> obj;
-  if (!socket->env()
-             ->quicclientsession_instance_template()
+  if (!socket->quic_state()
+             ->quicclientsession()
+             ->InstanceTemplate()
              ->NewInstance(socket->env()->context()).ToLocal(&obj)) {
     return {};
   }
@@ -3923,6 +3942,7 @@ void QuicSession::Initialize(
     Environment* env,
     Local<Object> target,
     Local<Context> context) {
+  QuicState* state = env->GetBindingData<QuicState>(context);
   {
     Local<String> class_name =
         FIXED_ONE_BYTE_STRING(env->isolate(), "QuicServerSession");
@@ -3933,7 +3953,7 @@ void QuicSession::Initialize(
     sessiont->SetInternalFieldCount(QuicSession::kInternalFieldCount);
     sessiont->Set(env->owner_symbol(), Null(env->isolate()));
     AddMethods(env, session);
-    env->set_quicserversession_instance_template(sessiont);
+    state->set_quicserversession(session);
   }
 
   {
@@ -3952,7 +3972,7 @@ void QuicSession::Initialize(
     env->SetProtoMethod(session,
                         "setSocket",
                         QuicSessionSetSocket);
-    env->set_quicclientsession_instance_template(sessiont);
+    state->set_quicclientsession(session);
 
     env->SetMethod(target, "createClientSession", NewQuicClientSession);
     env->SetMethod(target, "silentCloseSession", QuicSessionSilentClose);
