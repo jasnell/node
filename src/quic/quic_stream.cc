@@ -1,4 +1,4 @@
-#include "node_quic_stream-inl.h"  // NOLINT(build/include)
+#include "quic_stream-inl.h"  // NOLINT(build/include)
 #include "aliased_struct-inl.h"
 #include "async_wrap-inl.h"
 #include "debug_utils-inl.h"
@@ -9,9 +9,9 @@
 #include "stream_base-inl.h"
 #include "node_sockaddr-inl.h"
 #include "node_http_common-inl.h"
-#include "node_quic_session-inl.h"
-#include "node_quic_socket-inl.h"
-#include "node_quic_util-inl.h"
+#include "quic_session-inl.h"
+#include "quic_socket-inl.h"
+#include "quic_util-inl.h"
 #include "v8.h"
 #include "uv.h"
 

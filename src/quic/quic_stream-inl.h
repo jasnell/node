@@ -1,12 +1,12 @@
-#ifndef SRC_QUIC_NODE_QUIC_STREAM_INL_H_
-#define SRC_QUIC_NODE_QUIC_STREAM_INL_H_
+#ifndef SRC_QUIC_QUIC_STREAM_INL_H_
+#define SRC_QUIC_QUIC_STREAM_INL_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "debug_utils-inl.h"
-#include "node_quic_session.h"
-#include "node_quic_stream.h"
-#include "node_quic_buffer-inl.h"
+#include "quic_session.h"
+#include "quic_stream.h"
+#include "quic_buffer-inl.h"
 
 namespace node {
 namespace quic {
@@ -177,4 +177,4 @@ void QuicStream::Unschedule() {
 
 #endif  // NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_STREAM_INL_H_
+#endif  // SRC_QUIC_QUIC_STREAM_INL_H_

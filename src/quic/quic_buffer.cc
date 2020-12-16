@@ -1,4 +1,4 @@
-#include "node_quic_buffer-inl.h"  // NOLINT(build/include)
+#include "quic_buffer-inl.h"  // NOLINT(build/include)
 #include "node_bob-inl.h"
 #include "util.h"
 #include "uv.h"

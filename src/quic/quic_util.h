@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_UTIL_H_
-#define SRC_QUIC_NODE_QUIC_UTIL_H_
+#ifndef SRC_QUIC_QUIC_UTIL_H_
+#define SRC_QUIC_QUIC_UTIL_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -23,7 +23,7 @@ namespace node {
 namespace quic {
 
 // k-constants are used internally, all-caps constants
-// are exposed to javascript as constants (see node_quic.cc)
+// are exposed to javascript as constants (see quic.cc)
 
 constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 constexpr size_t kMaxValidateAddressLru = 10;
@@ -103,7 +103,7 @@ struct StatsTraits {
 // StatsBase is a utility help for classes (like QuicSession)
 // that record performance statistics. The template takes a
 // single Traits argument (see QuicStreamStatsTraits in
-// node_quic_stream.h as an example). When the StatsBase
+// quic_stream.h as an example). When the StatsBase
 // is deconstructed, collected statistics are output to
 // Debug automatically.
 template <typename T>
@@ -391,4 +391,4 @@ inline size_t get_length(const T*, size_t len);
 
 #endif  // NOE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_UTIL_H_
+#endif  // SRC_QUIC_QUIC_UTIL_H_

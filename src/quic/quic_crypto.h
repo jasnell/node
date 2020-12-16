@@ -1,10 +1,10 @@
-#ifndef SRC_QUIC_NODE_QUIC_CRYPTO_H_
-#define SRC_QUIC_NODE_QUIC_CRYPTO_H_
+#ifndef SRC_QUIC_QUIC_CRYPTO_H_
+#define SRC_QUIC_QUIC_CRYPTO_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "node_crypto.h"
-#include "node_quic_util.h"
+#include "quic_util.h"
 #include "v8.h"
 
 #include <ngtcp2/ngtcp2.h>
@@ -141,4 +141,4 @@ class SessionTicketAppData {
 }  // namespace node
 
 #endif  // NODE_WANT_INTERNALS
-#endif  // SRC_QUIC_NODE_QUIC_CRYPTO_H_
+#endif  // SRC_QUIC_QUIC_CRYPTO_H_

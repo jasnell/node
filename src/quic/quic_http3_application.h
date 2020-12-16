@@ -1,14 +1,14 @@
-#ifndef SRC_QUIC_NODE_QUIC_HTTP3_APPLICATION_H_
-#define SRC_QUIC_NODE_QUIC_HTTP3_APPLICATION_H_
+#ifndef SRC_QUIC_QUIC_HTTP3_APPLICATION_H_
+#define SRC_QUIC_QUIC_HTTP3_APPLICATION_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "node.h"
 #include "node_http_common.h"
 #include "node_mem.h"
-#include "node_quic_session.h"
-#include "node_quic_stream-inl.h"
-#include "node_quic_util.h"
+#include "quic_session.h"
+#include "quic_stream-inl.h"
+#include "quic_util.h"
 #include "v8.h"
 #include <ngtcp2/ngtcp2.h>
 #include <nghttp3/nghttp3.h>
@@ -328,4 +328,4 @@ class Http3Application final :
 }  // namespace node
 
 #endif  // NODE_WANT_INTERNALS
-#endif  // SRC_QUIC_NODE_QUIC_HTTP3_APPLICATION_H_
+#endif  // SRC_QUIC_QUIC_HTTP3_APPLICATION_H_

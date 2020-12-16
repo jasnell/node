@@ -1,10 +1,10 @@
-#ifndef SRC_QUIC_NODE_QUIC_UTIL_INL_H_
-#define SRC_QUIC_NODE_QUIC_UTIL_INL_H_
+#ifndef SRC_QUIC_QUIC_UTIL_INL_H_
+#define SRC_QUIC_QUIC_UTIL_INL_H_
 
 #include "debug_utils-inl.h"
 #include "node_internals.h"
-#include "node_quic_crypto.h"
-#include "node_quic_util.h"
+#include "quic_crypto.h"
+#include "quic_util.h"
 #include "memory_tracker-inl.h"
 #include "env-inl.h"
 #include "histogram-inl.h"
@@ -432,4 +432,4 @@ size_t get_length(const T* vec, size_t count) {
 }  // namespace quic
 }  // namespace node
 
-#endif  // SRC_QUIC_NODE_QUIC_UTIL_INL_H_
+#endif  // SRC_QUIC_QUIC_UTIL_INL_H_

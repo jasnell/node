@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_STREAM_H_
-#define SRC_QUIC_NODE_QUIC_STREAM_H_
+#ifndef SRC_QUIC_QUIC_STREAM_H_
+#define SRC_QUIC_QUIC_STREAM_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -8,8 +8,8 @@
 #include "async_wrap.h"
 #include "env.h"
 #include "node_http_common.h"
-#include "node_quic_state.h"
-#include "node_quic_util.h"
+#include "quic_state.h"
+#include "quic_util.h"
 #include "stream_base-inl.h"
 #include "util-inl.h"
 #include "v8.h"
@@ -406,4 +406,4 @@ class QuicStream : public AsyncWrap,
 
 #endif  // NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_STREAM_H_
+#endif  // SRC_QUIC_QUIC_STREAM_H_

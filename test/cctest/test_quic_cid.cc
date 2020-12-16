@@ -1,4 +1,4 @@
-#include "quic/node_quic_util-inl.h"
+#include "quic/quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include "util-inl.h"
 #include "ngtcp2/ngtcp2.h"

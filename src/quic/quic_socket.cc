@@ -1,4 +1,4 @@
-#include "node_quic_socket-inl.h"  // NOLINT(build/include)
+#include "quic_socket-inl.h"  // NOLINT(build/include)
 #include "aliased_struct-inl.h"
 #include "allocated_buffer-inl.h"
 #include "async_wrap-inl.h"
@@ -12,9 +12,9 @@
 #include "node_crypto.h"
 #include "node_internals.h"
 #include "node_mem-inl.h"
-#include "node_quic_crypto.h"
-#include "node_quic_session-inl.h"
-#include "node_quic_util-inl.h"
+#include "quic_crypto.h"
+#include "quic_session-inl.h"
+#include "quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include "req_wrap-inl.h"
 #include "util.h"

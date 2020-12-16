@@ -1,11 +1,11 @@
-#ifndef SRC_QUIC_NODE_QUIC_DEFAULT_APPLICATION_H_
-#define SRC_QUIC_NODE_QUIC_DEFAULT_APPLICATION_H_
+#ifndef SRC_QUIC_QUIC_DEFAULT_APPLICATION_H_
+#define SRC_QUIC_QUIC_DEFAULT_APPLICATION_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#include "node_quic_stream.h"
-#include "node_quic_session.h"
-#include "node_quic_util.h"
+#include "quic_stream.h"
+#include "quic_session.h"
+#include "quic_util.h"
 #include "util.h"
 #include "v8.h"
 
@@ -57,4 +57,4 @@ class DefaultApplication final : public QuicApplication {
 }  // namespace node
 
 #endif  // NODE_WANT_INTERNALS
-#endif  // SRC_QUIC_NODE_QUIC_DEFAULT_APPLICATION_H_
+#endif  // SRC_QUIC_QUIC_DEFAULT_APPLICATION_H_

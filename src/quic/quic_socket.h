@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_SOCKET_H_
-#define SRC_QUIC_NODE_QUIC_SOCKET_H_
+#ifndef SRC_QUIC_QUIC_SOCKET_H_
+#define SRC_QUIC_QUIC_SOCKET_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -10,9 +10,9 @@
 #include "node_internals.h"
 #include "ngtcp2/ngtcp2.h"
 #include "nghttp3/nghttp3.h"
-#include "node_quic_state.h"
-#include "node_quic_session.h"
-#include "node_quic_util.h"
+#include "quic_state.h"
+#include "quic_session.h"
+#include "quic_util.h"
 #include "node_sockaddr.h"
 #include "env.h"
 #include "udp_wrap.h"
@@ -606,4 +606,4 @@ class QuicSocket : public AsyncWrap,
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_SOCKET_H_
+#endif  // SRC_QUIC_QUIC_SOCKET_H_

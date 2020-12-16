@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_STATE_H_
-#define SRC_QUIC_NODE_QUIC_STATE_H_
+#ifndef SRC_QUIC_QUIC_STATE_H_
+#define SRC_QUIC_QUIC_STATE_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -134,4 +134,4 @@ class QuicState : public BaseObject {
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_STATE_H_
+#endif  // SRC_QUIC_QUIC_STATE_H_

@@ -1,4 +1,4 @@
-#include "quic/node_quic_buffer-inl.h"
+#include "quic/quic_buffer-inl.h"
 #include "node_bob-inl.h"
 #include "util-inl.h"
 #include "uv.h"

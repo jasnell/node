@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_SESSION_H_
-#define SRC_QUIC_NODE_QUIC_SESSION_H_
+#ifndef SRC_QUIC_QUIC_SESSION_H_
+#define SRC_QUIC_QUIC_SESSION_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -12,10 +12,10 @@
 #include "node_crypto.h"
 #include "node_http_common.h"
 #include "node_mem.h"
-#include "node_quic_state.h"
-#include "node_quic_buffer-inl.h"
-#include "node_quic_crypto.h"
-#include "node_quic_util.h"
+#include "quic_state.h"
+#include "quic_buffer-inl.h"
+#include "quic_crypto.h"
+#include "quic_util.h"
 #include "node_sockaddr.h"
 #include "stream_base.h"
 #include "timer_wrap.h"
@@ -63,7 +63,7 @@ typedef void(*PreferredAddressStrategy)(
 // configuration options set by the JavaScript side when either a
 // client or server QuicSession is created. Instances are
 // stack created and use a combination of an AliasedBuffer to pass
-// the numeric settings quickly (see node_quic_state.h) and passed
+// the numeric settings quickly (see quic_state.h) and passed
 // in non-numeric settings (e.g. preferred_addr).
 class QuicSessionConfig final : public ngtcp2_settings {
  public:
@@ -88,7 +88,7 @@ class QuicSessionConfig final : public ngtcp2_settings {
   void ResetToDefaults(QuicState* quic_state);
 
   // QuicSessionConfig::Set() pulls values out of the AliasedBuffer
-  // defined in node_quic_state.h and stores the values in settings_.
+  // defined in quic_state.h and stores the values in settings_.
   // If preferred_addr is not nullptr, it is copied into the
   // settings_.preferred_addr field
   void Set(QuicState* quic_state,
@@ -1528,4 +1528,4 @@ class QuicCallbackScope {
 }  // namespace node
 
 #endif  // NODE_WANT_INTERNALS
-#endif  // SRC_QUIC_NODE_QUIC_SESSION_H_
+#endif  // SRC_QUIC_QUIC_SESSION_H_

@@ -1,5 +1,5 @@
-#ifndef SRC_QUIC_NODE_QUIC_BUFFER_H_
-#define SRC_QUIC_NODE_QUIC_BUFFER_H_
+#ifndef SRC_QUIC_QUIC_BUFFER_H_
+#define SRC_QUIC_QUIC_BUFFER_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
@@ -236,4 +236,4 @@ class QuicBuffer final : public bob::SourceImpl<ngtcp2_vec>,
 
 #endif  // NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_BUFFER_H_
+#endif  // SRC_QUIC_QUIC_BUFFER_H_

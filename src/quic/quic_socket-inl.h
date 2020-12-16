@@ -1,11 +1,11 @@
-#ifndef SRC_QUIC_NODE_QUIC_SOCKET_INL_H_
-#define SRC_QUIC_NODE_QUIC_SOCKET_INL_H_
+#ifndef SRC_QUIC_QUIC_SOCKET_INL_H_
+#define SRC_QUIC_QUIC_SOCKET_INL_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#include "node_quic_socket.h"
+#include "quic_socket.h"
 #include "node_sockaddr-inl.h"
-#include "node_quic_session.h"
+#include "quic_session.h"
 #include "node_crypto.h"
 #include "debug_utils-inl.h"
 
@@ -189,4 +189,4 @@ void QuicSocket::AddEndpoint(
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#endif  // SRC_QUIC_NODE_QUIC_SOCKET_INL_H_
+#endif  // SRC_QUIC_QUIC_SOCKET_INL_H_

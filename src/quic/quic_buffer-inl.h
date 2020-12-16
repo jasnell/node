@@ -1,9 +1,9 @@
-#ifndef SRC_QUIC_NODE_QUIC_BUFFER_INL_H_
-#define SRC_QUIC_NODE_QUIC_BUFFER_INL_H_
+#ifndef SRC_QUIC_QUIC_BUFFER_INL_H_
+#define SRC_QUIC_QUIC_BUFFER_INL_H_
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#include "node_quic_buffer.h"
+#include "quic_buffer.h"
 #include "node_bob-inl.h"
 #include "util-inl.h"
 #include "uv.h"
@@ -95,4 +95,4 @@ void QuicBuffer::Push(uv_buf_t buf, DoneCB done) {
 }  // namespace node
 
 #endif  // NODE_WANT_INTERNALS
-#endif  // SRC_QUIC_NODE_QUIC_BUFFER_INL_H_
+#endif  // SRC_QUIC_QUIC_BUFFER_INL_H_
