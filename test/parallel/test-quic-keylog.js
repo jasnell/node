@@ -44,7 +44,7 @@ const kClientKeylogs = Array.from(kKeylogs);
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
 
   req.on('keylog', common.mustCall((line) => {

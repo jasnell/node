@@ -121,7 +121,6 @@ void Initialize(Local<Object> target,
               state->quicsocketconfig_buffer.GetArrayBuffer()).Check();
 
   QuicSocket::Initialize(env, target, context);
-  QuicEndpoint::Initialize(env, target, context);
   QuicSession::Initialize(env, target, context);
   QuicStream::Initialize(env, target, context);
 

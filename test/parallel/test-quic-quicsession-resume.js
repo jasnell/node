@@ -50,7 +50,7 @@ const countdown = new Countdown(2, () => {
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
   if (qlog) req.qlog.pipe(createWriteStream(`client-${counter}.qlog`));
 
@@ -75,7 +75,7 @@ const countdown = new Countdown(2, () => {
   async function newSession(sessionTicket, remoteTransportParams) {
     const req = await client.connect({
       address: common.localhostIPv4,
-      port: server.endpoints[0].address.port,
+      port: server.address.port,
       sessionTicket,
       remoteTransportParams
     });

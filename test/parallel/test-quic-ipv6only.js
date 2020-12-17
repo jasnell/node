@@ -24,7 +24,7 @@ const options = { key, cert, ca, alpn: 'zzz' };
 // `ipv6Only` is set to `false`.
 async function ipv6() {
   const server = createQuicSocket({
-    endpoint: { type: 'udp6' },
+    type: 'udp6',
     server: options
   });
   const client = createQuicSocket({ client: options });
@@ -37,7 +37,7 @@ async function ipv6() {
 
   const session = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   const stream = await session.openStream({ halfOpen: true });
@@ -58,7 +58,7 @@ async function ipv6() {
 // through "127.0.0.1".
 async function ipv6Only() {
   const server = createQuicSocket({
-    endpoint: { type: 'udp6-only' },
+    type: 'udp6-only',
     server: options
   });
   const client = createQuicSocket({ client: options });
@@ -71,7 +71,7 @@ async function ipv6Only() {
   // but should fail as the connection idle timeout expires.
   const session = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     idleTimeout: common.platformTimeout(1),
   });
 

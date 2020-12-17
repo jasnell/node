@@ -36,7 +36,7 @@ client.on('close', common.mustCall());
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   for (const halfOpen of ['z', 1, {}, [], null, Infinity, 1n]) {

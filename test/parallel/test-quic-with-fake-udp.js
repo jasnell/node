@@ -18,13 +18,13 @@ const options = { key, cert, ca, alpn: 'meow' };
 const { serverSide, clientSide } = makeUDPPair();
 
 const server = createQuicSocket({
-  endpoint: { [kUDPHandleForTesting]: serverSide._handle },
+  [kUDPHandleForTesting]: serverSide._handle,
   server: options
 });
 serverSide.afterBind();
 
 const client = createQuicSocket({
-  endpoint: { [kUDPHandleForTesting]: clientSide._handle },
+  [kUDPHandleForTesting]: clientSide._handle,
   client: options
 });
 clientSide.afterBind();
@@ -44,7 +44,7 @@ clientSide.afterBind();
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   req.on('stream', common.mustCall((stream) => {

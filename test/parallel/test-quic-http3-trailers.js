@@ -63,7 +63,7 @@ const countdown = new Countdown(1, () => {
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     maxStreamsUni: 10,
     h3: { maxPushes: 10 }
   });

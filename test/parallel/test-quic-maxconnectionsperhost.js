@@ -49,7 +49,7 @@ const options = { key, cert, ca, alpn: 'zzz', idleTimeout: 0 };
   for (let i = 0; i < kMaxConnectionsPerHost; i += 1) {
     const req = await client.connect({
       address: common.localhostIPv4,
-      port: server.endpoints[0].address.port,
+      port: server.address.port,
     });
     req.on('error', common.mustNotCall());
     req.on('close', common.mustCall(() => countdown.dec()));
@@ -58,7 +58,7 @@ const options = { key, cert, ca, alpn: 'zzz', idleTimeout: 0 };
 
   const extra = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
   extra.on('error', common.mustNotCall());
   extra.on('close', common.mustCall(() => {

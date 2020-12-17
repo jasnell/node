@@ -27,7 +27,7 @@ const options = { key, cert, ca, alpn: kALPN };
 
   const session = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     idleTimeout,
   });
 
@@ -63,7 +63,7 @@ const options = { key, cert, ca, alpn: kALPN };
 
   const session = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
 
   await once(session, 'close');

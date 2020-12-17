@@ -28,28 +28,28 @@ const { createQuicSocket } = require('net');
 
 // Test invalid QuicSocket port argument option
 [-1, 'test', 1n, {}, [], NaN, false].forEach((port) => {
-  assert.throws(() => createQuicSocket({ endpoint: { port } }), {
+  assert.throws(() => createQuicSocket({ port }), {
     code: 'ERR_SOCKET_BAD_PORT'
   });
 });
 
 // Test invalid QuicSocket addressargument option
 [-1, 10, 1n, {}, [], NaN, false].forEach((address) => {
-  assert.throws(() => createQuicSocket({ endpoint: { address } }), {
+  assert.throws(() => createQuicSocket({ address }), {
     code: 'ERR_INVALID_ARG_TYPE'
   });
 });
 
 // Test invalid QuicSocket type argument option
 [1, false, 1n, {}, null, NaN].forEach((type) => {
-  assert.throws(() => createQuicSocket({ endpoint: { type } }), {
+  assert.throws(() => createQuicSocket({ type }), {
     code: 'ERR_INVALID_ARG_TYPE'
   });
 });
 
 // Test invalid QuicSocket reuseAddr argument option
 [1, NaN, 1n, null, {}, []].forEach((reuseAddr) => {
-  assert.throws(() => createQuicSocket({ endpoint: { reuseAddr } }), {
+  assert.throws(() => createQuicSocket({ reuseAddr }), {
     code: 'ERR_INVALID_ARG_TYPE'
   });
 });
@@ -154,9 +154,6 @@ const { createQuicSocket } = require('net');
 });
 
 [1, 1n, false, 'test'].forEach((options) => {
-  assert.throws(() => createQuicSocket({ endpoint: options }), {
-    code: 'ERR_INVALID_ARG_TYPE'
-  });
   assert.throws(() => createQuicSocket({ client: options }), {
     code: 'ERR_INVALID_ARG_TYPE'
   });

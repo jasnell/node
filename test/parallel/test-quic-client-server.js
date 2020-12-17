@@ -114,7 +114,6 @@ function onSocketClose() {
 server.on('listening', common.mustCall());
 server.on('ready', common.mustCall());
 server.on('close', common.mustCall(onSocketClose.bind(server)));
-client.on('endpointClose', common.mustCall());
 client.on('close', common.mustCall(onSocketClose.bind(client)));
 
 (async function() {
@@ -131,9 +130,8 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
         family,
         port
       } = session.remoteAddress;
-      const endpoint = client.endpoints[0].address;
-      assert.strictEqual(port, endpoint.port);
-      assert.strictEqual(family, endpoint.family);
+      assert.strictEqual(port, client.address.port);
+      assert.strictEqual(family, client.address.family);
       debug(`QuicServerSession Client ${family} address ${address}:${port}`);
     }
 
@@ -243,18 +241,13 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
     clientHelloHandler
   });
 
-  const endpoints = server.endpoints;
-  for (const endpoint of endpoints) {
-    const address = endpoint.address;
-    debug('Server is listening on address %s:%d',
-          address.address,
-          address.port);
-  }
-  const endpoint = endpoints[0];
+  debug('Server is listening on address %s:%d',
+        server.address.address,
+        server.address.port);
 
   const req = await client.connect({
     address: 'localhost',
-    port: endpoint.address.port,
+    port: server.address.port,
     servername: kServerName,
   });
   if (qlog) req.qlog.pipe(createWriteStream('client.qlog'));
@@ -337,9 +330,8 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
       family,
       port
     } = req.remoteAddress;
-    const endpoint = server.endpoints[0].address;
-    assert.strictEqual(port, endpoint.port);
-    assert.strictEqual(family, endpoint.family);
+    assert.strictEqual(port, server.address.port);
+    assert.strictEqual(family, server.address.family);
     debug(`QuicClientSession Server ${family} address ${address}:${port}`);
   }
 

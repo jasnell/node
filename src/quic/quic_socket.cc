@@ -121,9 +121,9 @@ void QuicSocketListener::OnServerBusy() {
     previous_listener_->OnServerBusy();
 }
 
-void QuicSocketListener::OnEndpointDone(QuicEndpoint* endpoint) {
+void QuicSocketListener::OnEndpointDone() {
   if (previous_listener_ != nullptr)
-    previous_listener_->OnEndpointDone(endpoint);
+    previous_listener_->OnEndpointDone();
 }
 
 void QuicSocketListener::OnDestroy() {
@@ -157,60 +157,35 @@ void JSQuicSocketListener::OnServerBusy() {
       state->on_socket_server_busy(), 0, nullptr);
 }
 
-void JSQuicSocketListener::OnEndpointDone(QuicEndpoint* endpoint) {
+void JSQuicSocketListener::OnEndpointDone() {
   Environment* env = socket()->env();
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
-  MakeCallback(
-      env->isolate(),
-      endpoint->object(),
-      env->ondone_string(),
-      0, nullptr);
+  socket()->MakeCallback(env->ondone_string(), 0, nullptr);
 }
 
 void JSQuicSocketListener::OnDestroy() {
   // Do nothing here.
 }
 
-QuicEndpoint::QuicEndpoint(
-    QuicState* quic_state,
-    Local<Object> wrap,
-    QuicSocket* listener,
-    Local<Object> udp_wrap)
-    : BaseObject(quic_state->env(), wrap),
-      listener_(listener),
-      quic_state_(quic_state) {
-  MakeWeak();
-  udp_ = static_cast<UDPWrapBase*>(
-      udp_wrap->GetAlignedPointerFromInternalField(
-          UDPWrapBase::kUDPWrapBaseField));
-  CHECK_NOT_NULL(udp_);
-  udp_->set_listener(this);
-  strong_ptr_.reset(udp_->GetAsyncWrap());
-}
-
-QuicEndpoint::~QuicEndpoint() {
-  udp_->set_listener(nullptr);
-}
-
-uv_buf_t QuicEndpoint::OnAlloc(size_t suggested_size) {
+uv_buf_t QuicSocket::OnAlloc(size_t suggested_size) {
   return AllocatedBuffer::AllocateManaged(env(), suggested_size).release();
 }
 
-void QuicEndpoint::OnRecv(
+void QuicSocket::OnRecv(
     ssize_t nread,
     const uv_buf_t& buf_,
     const sockaddr* addr,
     unsigned int flags) {
   AllocatedBuffer buf(env(), buf_);
 
-  if (nread <= 0) {
-    if (nread < 0)
-      listener_->OnError(this, nread);
+  if (nread == 0)
     return;
-  }
 
-  listener_->OnReceive(
+  if (nread < 0)
+    return OnError(nread);
+
+  OnReceive(
       nread,
       std::move(buf),
       local_address(),
@@ -218,19 +193,21 @@ void QuicEndpoint::OnRecv(
       flags);
 }
 
-ReqWrap<uv_udp_send_t>* QuicEndpoint::CreateSendWrap(size_t msg_size) {
-  return listener_->OnCreateSendWrap(msg_size);
+ReqWrap<uv_udp_send_t>* QuicSocket::CreateSendWrap(size_t msg_size) {
+  HandleScope handle_scope(env()->isolate());
+  Local<Object> obj;
+  if (!quic_state()
+          ->quicsocketsendwrap()
+          ->InstanceTemplate()
+          ->NewInstance(env()->context()).ToLocal(&obj)) {
+    return nullptr;
+  }
+  return last_created_send_wrap_ = new SendWrap(quic_state(), obj, msg_size);
 }
 
-void QuicEndpoint::OnSendDone(ReqWrap<uv_udp_send_t>* wrap, int status) {
-  DecrementPendingCallbacks();
-  listener_->OnSendDone(wrap, status);
-  if (!has_pending_callbacks() && waiting_for_callbacks_)
-    listener_->OnEndpointDone(this);
-}
-
-void QuicEndpoint::OnAfterBind() {
-  listener_->OnBind(this);
+void QuicSocket::OnAfterBind() {
+  Debug(this, "QuicSocket is bound: %s", local_address());
+  RecordTimestamp(&QuicSocketStats::bound_at);
 }
 
 template <typename Fn>
@@ -244,6 +221,7 @@ void QuicSocketStatsTraits::ToString(const QuicSocket& ptr, Fn&& add_field) {
 QuicSocket::QuicSocket(
     QuicState* quic_state,
     Local<Object> wrap,
+    Local<Object> udp_wrap,
     const uint8_t* session_reset_secret)
     : AsyncWrap(quic_state->env(), wrap, AsyncWrap::PROVIDER_QUICSOCKET),
       StatsBase(quic_state->env(), wrap),
@@ -271,6 +249,13 @@ QuicSocket::QuicSocket(
   PushListener(&default_listener_);
 
   Debug(this, "New QuicSocket created");
+
+  udp_ = static_cast<UDPWrapBase*>(
+      udp_wrap->GetAlignedPointerFromInternalField(
+          UDPWrapBase::kUDPWrapBaseField));
+  CHECK_NOT_NULL(udp_);
+  udp_->set_listener(this);
+  strong_ptr_.reset(udp_->GetAsyncWrap());
 
   EntropySource(token_secret_, kTokenSecretLen);
 
@@ -307,6 +292,8 @@ QuicSocket::~QuicSocket() {
   if (listener == listener_)
     RemoveListener(listener_);
 
+  udp_->set_listener(nullptr);
+
   // In a clean shutdown, all QuicSessions associated with the QuicSocket
   // would have been destroyed explicitly. However, if the QuicSocket is
   // garbage collected / freed before Destroy having been called, there
@@ -317,7 +304,7 @@ QuicSocket::~QuicSocket() {
 }
 
 void QuicSocket::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("endpoints", endpoints_);
+  tracker->TrackField("udp", strong_ptr_);
   tracker->TrackField("sessions", sessions_);
   tracker->TrackField("dcid_to_scid", dcid_to_scid_);
   tracker->TrackField("address_counts", addrLRU_);
@@ -345,35 +332,9 @@ void QuicSocket::Listen(
   ReceiveStart();
 }
 
-void QuicSocket::OnError(QuicEndpoint* endpoint, ssize_t error) {
-  // TODO(@jasnell): What should we do with the endpoint?
-  Debug(this, "Reading data from UDP socket failed. Error %" PRId64, error);
-  listener_->OnError(error);
-}
-
-ReqWrap<uv_udp_send_t>* QuicSocket::OnCreateSendWrap(size_t msg_size) {
-  HandleScope handle_scope(env()->isolate());
-  Local<Object> obj;
-  if (!quic_state()
-          ->quicsocketsendwrap()
-          ->InstanceTemplate()
-          ->NewInstance(env()->context()).ToLocal(&obj)) {
-    return nullptr;
-  }
-  return last_created_send_wrap_ = new SendWrap(quic_state(), obj, msg_size);
-}
-
-void QuicSocket::OnEndpointDone(QuicEndpoint* endpoint) {
-  Debug(this, "Endpoint has no pending callbacks");
-  listener_->OnEndpointDone(endpoint);
-}
-
-void QuicSocket::OnBind(QuicEndpoint* endpoint) {
-  SocketAddress local_address = endpoint->local_address();
-  bound_endpoints_[local_address] =
-      BaseObjectWeakPtr<QuicEndpoint>(endpoint);
-  Debug(this, "Endpoint %s bound", local_address);
-  RecordTimestamp(&QuicSocketStats::bound_at);
+void QuicSocket::OnEndpointDone() {
+  Debug(this, "There are no pending callbacks");
+  listener_->OnEndpointDone();
 }
 
 BaseObjectPtr<QuicSession> QuicSocket::FindSession(const QuicCID& cid) {
@@ -739,6 +700,16 @@ void QuicSocket::ImmediateConnectionClose(
   }
 }
 
+int QuicSocket::Send(
+    uv_buf_t* buf,
+    size_t len,
+    const sockaddr* addr) {
+  int ret = static_cast<int>(udp_->Send(buf, len, addr));
+  if (ret == 0)
+    IncrementPendingCallbacks();
+  return ret;
+}
+
 // Inspects the packet and possibly accepts it as a new
 // initial packet creating a new QuicSession instance.
 // If the packet is not acceptable, it is very important
@@ -913,9 +884,7 @@ int QuicSocket::SendPacket(
   last_created_send_wrap_ = nullptr;
   uv_buf_t buf = packet->buf();
 
-  auto endpoint = bound_endpoints_.find(local_addr);
-  CHECK_NE(endpoint, bound_endpoints_.end());
-  int err = endpoint->second->Send(&buf, 1, remote_addr.data());
+  int err = Send(&buf, 1, remote_addr.data());
 
   if (err != 0) {
     if (err > 0) err = 0;
@@ -945,8 +914,12 @@ void QuicSocket::OnSend(int status, QuicPacket* packet) {
 }
 
 void QuicSocket::OnSendDone(ReqWrap<uv_udp_send_t>* wrap, int status) {
+  DecrementPendingCallbacks();
   std::unique_ptr<SendWrap> req_wrap(static_cast<SendWrap*>(wrap));
   OnSend(status, req_wrap->packet());
+
+  if (!has_pending_callbacks() && waiting_for_callbacks_)
+    OnEndpointDone();
 }
 
 void QuicSocket::CheckAllocatedSize(size_t previous_size) const {
@@ -1008,41 +981,24 @@ void QuicSocket::SocketAddressInfoTraits::Touch(
 
 // JavaScript API
 namespace {
-void NewQuicEndpoint(const FunctionCallbackInfo<Value>& args) {
-  QuicState* state = Environment::GetBindingData<QuicState>(args);
-  CHECK(args.IsConstructCall());
-  CHECK(args[0]->IsObject());
-  QuicSocket* socket;
-  ASSIGN_OR_RETURN_UNWRAP(&socket, args[0].As<Object>());
-  CHECK(args[1]->IsObject());
-  CHECK_GE(args[1].As<Object>()->InternalFieldCount(),
-           UDPWrapBase::kUDPWrapBaseField);
-  new QuicEndpoint(state, args.This(), socket, args[1].As<Object>());
-}
-
 void NewQuicSocket(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
 
+  CHECK(args[0]->IsObject());
+
   const uint8_t* session_reset_secret = nullptr;
-  if (args[0]->IsArrayBufferView()) {
-    ArrayBufferViewContents<uint8_t> buf(args[0].As<ArrayBufferView>());
+  if (args[1]->IsArrayBufferView()) {
+    ArrayBufferViewContents<uint8_t> buf(args[1].As<ArrayBufferView>());
     CHECK_EQ(buf.length(), kTokenSecretLen);
     session_reset_secret = buf.data();
   }
 
   QuicState* state = Environment::GetBindingData<QuicState>(args);
-  new QuicSocket(state, args.This(), session_reset_secret);
-}
-
-void QuicSocketAddEndpoint(const FunctionCallbackInfo<Value>& args) {
-  QuicSocket* socket;
-  ASSIGN_OR_RETURN_UNWRAP(&socket, args.Holder());
-  CHECK(args[0]->IsObject());
-  QuicEndpoint* endpoint;
-  ASSIGN_OR_RETURN_UNWRAP(&endpoint, args[0].As<Object>());
-  socket->AddEndpoint(
-      BaseObjectPtr<QuicEndpoint>(endpoint),
-      args[1]->IsTrue());
+  new QuicSocket(
+      state,
+      args.This(),
+      args[0].As<Object>(),
+      session_reset_secret);
 }
 
 // Enabling diagnostic packet loss enables a mode where the QuicSocket
@@ -1065,12 +1021,6 @@ void QuicSocketSetDiagnosticPacketLoss(
   CHECK_LE(rx, 1.0f);
   CHECK_LE(tx, 1.0f);
   socket->set_diagnostic_packet_loss(rx, tx);
-}
-
-void QuicSocketDestroy(const FunctionCallbackInfo<Value>& args) {
-  QuicSocket* socket;
-  ASSIGN_OR_RETURN_UNWRAP(&socket, args.Holder());
-  socket->ReceiveStop();
 }
 
 void QuicSocketListen(const FunctionCallbackInfo<Value>& args) {
@@ -1120,37 +1070,14 @@ void QuicSocketListen(const FunctionCallbackInfo<Value>& args) {
       options);
 }
 
-void QuicEndpointWaitForPendingCallbacks(
+void QuicSocketWaitForPendingCallbacks(
     const FunctionCallbackInfo<Value>& args) {
-  QuicEndpoint* endpoint;
-  ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
-  endpoint->WaitForPendingCallbacks();
+  QuicSocket* socket;
+  ASSIGN_OR_RETURN_UNWRAP(&socket, args.Holder());
+  socket->WaitForPendingCallbacks();
 }
 
 }  // namespace
-
-void QuicEndpoint::Initialize(
-    Environment* env,
-    Local<Object> target,
-    Local<Context> context) {
-  Isolate* isolate = env->isolate();
-  Local<String> class_name = FIXED_ONE_BYTE_STRING(isolate, "QuicEndpoint");
-  Local<FunctionTemplate> endpoint = env->NewFunctionTemplate(NewQuicEndpoint);
-  endpoint->Inherit(BaseObject::GetConstructorTemplate(env));
-  endpoint->SetClassName(class_name);
-  endpoint->InstanceTemplate()->SetInternalFieldCount(
-      QuicEndpoint::kInternalFieldCount);
-  env->SetProtoMethod(endpoint,
-                      "waitForPendingCallbacks",
-                      QuicEndpointWaitForPendingCallbacks);
-  endpoint->InstanceTemplate()->Set(env->owner_symbol(), Null(isolate));
-
-  target->Set(
-      context,
-      class_name,
-      endpoint->GetFunction(context).ToLocalChecked())
-          .FromJust();
-}
 
 void QuicSocket::Initialize(
     Environment* env,
@@ -1166,17 +1093,14 @@ void QuicSocket::Initialize(
       QuicSocket::kInternalFieldCount);
   socket->InstanceTemplate()->Set(env->owner_symbol(), Null(isolate));
   env->SetProtoMethod(socket,
-                      "addEndpoint",
-                      QuicSocketAddEndpoint);
-  env->SetProtoMethod(socket,
-                      "destroy",
-                      QuicSocketDestroy);
-  env->SetProtoMethod(socket,
                       "listen",
                       QuicSocketListen);
   env->SetProtoMethod(socket,
                       "setDiagnosticPacketLoss",
                       QuicSocketSetDiagnosticPacketLoss);
+  env->SetProtoMethod(socket,
+                      "waitForPendingCallbacks",
+                      QuicSocketWaitForPendingCallbacks);
   socket->Inherit(HandleWrap::GetConstructorTemplate(env));
   target->Set(context, class_name,
               socket->GetFunction(env->context()).ToLocalChecked()).FromJust();

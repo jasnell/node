@@ -55,11 +55,11 @@ const countdown = new Countdown(1, () => {
 
   await server.listen();
 
-  debug('Server is listening on port %d', server.endpoints[0].address.port);
+  debug('Server is listening on port %d', server.address.port);
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
 
   const stream = await req.openStream();

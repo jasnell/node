@@ -30,11 +30,11 @@ const kServerName = 'agent2';  // Intentionally the wrong servername
 const options = { key, cert, ca, alpn: kHttp3Alpn };
 
 const client = createQuicSocket({
-  endpoint: { port: kClientPort },
+  port: kClientPort,
   client: options
 });
 const server = createQuicSocket({
-  endpoint: { port: kServerPort },
+  port: kServerPort,
   server: options
 });
 
@@ -100,11 +100,11 @@ const countdown = new Countdown(1, () => {
 
   await server.listen();
 
-  debug('Server is listening on port %d', server.endpoints[0].address.port);
+  debug('Server is listening on port %d', server.address.port);
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     servername: kServerName,
     h3: { maxPushes: 10 }
   });

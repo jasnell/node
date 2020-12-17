@@ -34,7 +34,7 @@ const server = createQuicSocket({ server: options });
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   const stream = await req.openStream();

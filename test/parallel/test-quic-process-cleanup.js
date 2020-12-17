@@ -42,7 +42,7 @@ client.on('close', common.mustNotCall());
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   req.on('stream', common.mustCall(() => {

@@ -39,7 +39,7 @@ server.blockList.addAddress('127.0.0.1');
 
   const session = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     idleTimeout,
   });
 

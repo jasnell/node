@@ -10,9 +10,6 @@
 #include "debug_utils-inl.h"
 
 namespace node {
-
-using crypto::EntropySource;
-
 namespace quic {
 
 std::unique_ptr<QuicPacket> QuicPacket::Create(
@@ -32,27 +29,9 @@ void QuicPacket::set_length(size_t len) {
   len_ = len;
 }
 
-int QuicEndpoint::Send(
-    uv_buf_t* buf,
-    size_t len,
-    const sockaddr* addr) {
-  int ret = static_cast<int>(udp_->Send(buf, len, addr));
-  if (ret == 0)
-    IncrementPendingCallbacks();
-  return ret;
-}
-
-int QuicEndpoint::ReceiveStart() {
-  return udp_->RecvStart();
-}
-
-int QuicEndpoint::ReceiveStop() {
-  return udp_->RecvStop();
-}
-
-void QuicEndpoint::WaitForPendingCallbacks() {
+void QuicSocket::WaitForPendingCallbacks() {
   if (!has_pending_callbacks()) {
-    listener_->OnEndpointDone(this);
+    OnEndpointDone();
     return;
   }
   waiting_for_callbacks_ = true;
@@ -80,8 +59,7 @@ void QuicSocket::AssociateStatelessResetToken(
 }
 
 SocketAddress QuicSocket::local_address() const {
-  DCHECK(preferred_endpoint_);
-  return preferred_endpoint_->local_address();
+  return udp_->GetSockName();
 }
 
 void QuicSocket::DisassociateStatelessResetToken(
@@ -91,13 +69,11 @@ void QuicSocket::DisassociateStatelessResetToken(
 }
 
 void QuicSocket::ReceiveStart() {
-  for (const auto& endpoint : endpoints_)
-    CHECK_EQ(endpoint->ReceiveStart(), 0);
+  udp_->RecvStart();
 }
 
 void QuicSocket::ReceiveStop() {
-  for (const auto& endpoint : endpoints_)
-    CHECK_EQ(endpoint->ReceiveStop(), 0);
+  udp_->RecvStop();
 }
 
 void QuicSocket::RemoveSession(
@@ -107,7 +83,7 @@ void QuicSocket::RemoveSession(
   sessions_.erase(cid);
 }
 
-void QuicSocket::ReportSendError(int error) {
+void QuicSocket::OnError(ssize_t error) {
   listener_->OnError(error);
 }
 
@@ -144,7 +120,7 @@ void QuicSocket::ServerBusy(bool on) {
 bool QuicSocket::is_diagnostic_packet_loss(double prob) const {
   if (LIKELY(prob == 0.0)) return false;
   unsigned char c = 255;
-  EntropySource(&c, 1);
+  crypto::EntropySource(&c, 1);
   return (static_cast<double>(c) / 255) < prob;
 }
 
@@ -171,17 +147,6 @@ void QuicSocket::AddSession(
       session->is_server() ?
           &QuicSocketStats::server_sessions :
           &QuicSocketStats::client_sessions);
-}
-
-void QuicSocket::AddEndpoint(
-    BaseObjectPtr<QuicEndpoint> endpoint_,
-    bool preferred) {
-  Debug(this, "Adding %sendpoint", preferred ? "preferred " : "");
-  if (preferred || endpoints_.empty())
-    preferred_endpoint_ = endpoint_;
-  endpoints_.emplace_back(endpoint_);
-  if (state_->server_listening)
-    endpoint_->ReceiveStart();
 }
 
 }  // namespace quic

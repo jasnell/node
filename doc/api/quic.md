@@ -23,7 +23,7 @@ const cert = getTLSCertSomehow();
 const { createQuicSocket } = require('net');
 
 // Create the QUIC UDP IPv4 socket bound to local IP port 1234
-const socket = createQuicSocket({ endpoint: { port: 1234 } });
+const socket = createQuicSocket({ port: 1234 });
 
 socket.on('session', async (session) => {
   // A new server side session has been created!
@@ -104,7 +104,7 @@ function on a `QuicSocket` as in the example below:
 const { createQuicSocket } = require('net');
 
 // Create a QuicSocket associated with localhost and port 1234
-const socket = createQuicSocket({ endpoint: { port: 1234 } });
+const socket = createQuicSocket({ port: 1234 });
 
 (async function() {
   const client = await socket.connect({
@@ -259,14 +259,13 @@ added: v15.0.0
     using `quicsocket.connect()`.
   * `disableStatelessReset` {boolean} When `true` the `QuicSocket` will not
     send stateless resets. **Default**: `false`.
-  * `endpoint` {Object} An object describing the local address to bind to.
-    * `address` {string} The local address to bind to. This may be an IPv4 or
-      IPv6 address or a host name. If a host name is given, it will be resolved
-      to an IP address.
-    * `port` {number} The local port to bind to.
-    * `type` {string} Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to
-      use IPv4, IPv6, or IPv6 with dual-stack mode disabled.
-      **Default**: `'udp4'`.
+  * `address` {string} The local address to bind to. This may be an IPv4 or
+    IPv6 address or a host name. If a host name is given, it will be resolved
+    to an IP address.
+  * `port` {number} The local port to bind to.
+  * `type` {string} Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to
+    use IPv4, IPv6, or IPv6 with dual-stack mode disabled.
+    **Default**: `'udp4'`.
   * `lookup` {Function} A [custom DNS lookup function][].
     **Default**: undefined.
   * `maxConnections` {number} The maximum number of total active inbound
@@ -291,313 +290,6 @@ added: v15.0.0
 
 The `net.createQuicSocket()` function is used to create new `QuicSocket`
 instances associated with a local UDP address.
-
-### Class: `QuicEndpoint`
-<!-- YAML
-added: v15.0.0
--->
-
-The `QuicEndpoint` wraps a local UDP binding used by a `QuicSocket` to send
-and receive data. A single `QuicSocket` may be bound to multiple
-`QuicEndpoint` instances at any given time.
-
-Users will not create instances of `QuicEndpoint` directly.
-
-#### `quicendpoint.addMembership(address, iface)`
-<!-- YAML
-added: v15.0.0
--->
-
-* `address` {string}
-* `iface` {string}
-
-Tells the kernel to join a multicast group at the given `multicastAddress` and
-`multicastInterface` using the `IP_ADD_MEMBERSHIP` socket option. If the
-`multicastInterface` argument is not specified, the operating system will
-choose one interface and will add membership to it. To add membership to every
-available interface, call `addMembership()` multiple times, once per
-interface.
-
-#### `quicendpoint.address`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: Address
-
-An object containing the address information for a bound `QuicEndpoint`.
-
-The object will contain the properties:
-
-* `address` {string} The local IPv4 or IPv6 address to which the `QuicEndpoint` is
-  bound.
-* `family` {string} Either `'IPv4'` or `'IPv6'`.
-* `port` {number} The local IP port to which the `QuicEndpoint` is bound.
-
-If the `QuicEndpoint` is not bound, `quicendpoint.address` is an empty object.
-
-#### `quicendpoint.bind([options])`
-<!-- YAML
-added: v15.0.0
--->
-
-Binds the `QuicEndpoint` if it has not already been bound. User code will
-not typically be responsible for binding a `QuicEndpoint` as the owning
-`QuicSocket` will do that automatically.
-
-* `options` {Object}
-  * `signal` {AbortSignal} Optionally allows the `bind()` to be canceled
-    using an `AbortController`.
-* Returns: {Promise}
-
-The `quicendpoint.bind()` function returns `Promise` that will be resolved
-with the address once the bind operation is successful.
-
-If the `QuicEndpoint` has been destroyed, or is destroyed while the `Promise`
-is pending, the `Promise` will be rejected with an `ERR_INVALID_STATE` error.
-
-If an `AbortSignal` is specified in the `options` and it is triggered while
-the `Promise` is pending, the `Promise` will be rejected with an `AbortError`.
-
-If `quicendpoint.bind()` is called again while a previously returned `Promise`
-is still pending or has already successfully resolved, the previously returned
-pending `Promise` will be returned. If the additional call to
-`quicendpoint.bind()` contains an `AbortSignal`, the `signal` will be ignored.
-
-#### `quicendpoint.bound`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-Set to `true` if the `QuicEndpoint` is bound to the local UDP port.
-
-#### `quicendpoint.close()`
-<!-- YAML
-added: v15.0.0
--->
-
-Closes and destroys the `QuicEndpoint`. Returns a `Promise` that is resolved
-once the `QuicEndpoint` has been destroyed, or rejects if the `QuicEndpoint`
-is destroyed with an error.
-
-* Returns: {Promise}
-
-The `Promise` cannot be canceled. Once `quicendpoint.close()` is called, the
-`QuicEndpoint` will be destroyed.
-
-#### `quicendpoint.closing`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-Set to `true` if the `QuicEndpoint` is in the process of closing.
-
-#### `quicendpoint.destroy([error])`
-<!-- YAML
-added: v15.0.0
--->
-
-* `error` {Object} An `Error` object.
-
-Closes and destroys the `QuicEndpoint` instance making it unusable.
-
-#### `quicendpoint.destroyed`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-Set to `true` if the `QuicEndpoint` has been destroyed.
-
-#### `quicendpoint.dropMembership(address, iface)`
-<!-- YAML
-added: v15.0.0
--->
-
-* `address` {string}
-* `iface` {string}
-
-Instructs the kernel to leave a multicast group at `multicastAddress` using the
-`IP_DROP_MEMBERSHIP` socket option. This method is automatically called by the
-kernel when the socket is closed or the process terminates, so most apps will
-never have reason to call this.
-
-If `multicastInterface` is not specified, the operating system will attempt to
-drop membership on all valid interfaces.
-
-#### `quicendpoint.fd`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {integer}
-
-The system file descriptor the `QuicEndpoint` is bound to. This property
-is not set on Windows.
-
-#### `quicendpoint.pending`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-Set to `true` if the `QuicEndpoint` is in the process of binding to
-the local UDP port.
-
-#### `quicendpoint.ref()`
-<!-- YAML
-added: v15.0.0
--->
-
-#### `quicendpoint.setBroadcast([on])`
-<!-- YAML
-added: v15.0.0
--->
-
-* `on` {boolean}
-
-Sets or clears the `SO_BROADCAST` socket option. When set to `true`, UDP
-packets may be sent to a local interface's broadcast address.
-
-#### `quicendpoint.setMulticastInterface(iface)`
-<!-- YAML
-added: v15.0.0
--->
-
-* `iface` {string}
-
-All references to scope in this section are referring to IPv6 Zone Indices,
-which are defined by [RFC 4007][]. In string form, an IP with a scope index
-is written as `'IP%scope'` where scope is an interface name or interface
-number.
-
-Sets the default outgoing multicast interface of the socket to a chosen
-interface or back to system interface selection. The multicastInterface must
-be a valid string representation of an IP from the socket's family.
-
-For IPv4 sockets, this should be the IP configured for the desired physical
-interface. All packets sent to multicast on the socket will be sent on the
-interface determined by the most recent successful use of this call.
-
-For IPv6 sockets, multicastInterface should include a scope to indicate the
-interface as in the examples that follow. In IPv6, individual send calls can
-also use explicit scope in addresses, so only packets sent to a multicast
-address without specifying an explicit scope are affected by the most recent
-successful use of this call.
-
-##### Examples: IPv6 outgoing multicast interface
-<!-- YAML
-added: v15.0.0
--->
-On most systems, where scope format uses the interface name:
-
-```js
-const { createQuicSocket } = require('net');
-const socket = createQuicSocket({ endpoint: { type: 'udp6', port: 1234 } });
-
-socket.on('ready', () => {
-  socket.endpoints[0].setMulticastInterface('::%eth1');
-});
-```
-
-On Windows, where scope format uses an interface number:
-
-```js
-const { createQuicSocket } = require('net');
-const socket = createQuicSocket({ endpoint: { type: 'udp6', port: 1234 } });
-
-socket.on('ready', () => {
-  socket.endpoints[0].setMulticastInterface('::%2');
-});
-```
-
-##### Example: IPv4 outgoing multicast interface
-<!-- YAML
-added: v15.0.0
--->
-All systems use an IP of the host on the desired physical interface:
-
-```js
-const { createQuicSocket } = require('net');
-const socket = createQuicSocket({ endpoint: { type: 'udp4', port: 1234 } });
-
-socket.on('ready', () => {
-  socket.endpoints[0].setMulticastInterface('10.0.0.2');
-});
-```
-
-##### Call results
-
-A call on a socket that is not ready to send or no longer open may throw a
-Not running Error.
-
-If multicastInterface can not be parsed into an IP then an `EINVAL` System
-Error is thrown.
-
-On IPv4, if `multicastInterface` is a valid address but does not match any
-interface, or if the address does not match the family then a System Error
-such as `EADDRNOTAVAIL` or `EPROTONOSUP` is thrown.
-
-On IPv6, most errors with specifying or omitting scope will result in the
-socket continuing to use (or returning to) the system's default interface
-selection.
-
-A socket's address family's ANY address (IPv4 `'0.0.0.0'` or IPv6 `'::'`)
-can be used to return control of the sockets default outgoing interface to
-the system for future multicast packets.
-
-#### `quicendpoint.setMulticastLoopback([on])`
-<!-- YAML
-added: v15.0.0
--->
-
-* `on` {boolean}
-
-Sets or clears the `IP_MULTICAST_LOOP` socket option. When set to `true`,
-multicast packets will also be received on the local interface.
-
-#### `quicendpoint.setMulticastTTL(ttl)`
-<!-- YAML
-added: v15.0.0
--->
-
-* `ttl` {number}
-
-Sets the `IP_MULTICAST_TTL` socket option. While TTL generally stands for
-"Time to Live", in this context it specifies the number of IP hops that a
-packet is allowed to travel through, specifically for multicast traffic. Each
-router or gateway that forwards a packet decrements the TTL. If the TTL is
-decremented to `0` by a router, it will not be forwarded.
-
-The argument passed to `setMulticastTTL()` is a number of hops between
-`0` and `255`. The default on most systems is `1` but can vary.
-
-#### `quicendpoint.setTTL(ttl)`
-<!-- YAML
-added: v15.0.0
--->
-
-* `ttl` {number}
-
-Sets the `IP_TTL` socket option. While TTL generally stands for "Time to Live",
-in this context it specifies the number of IP hops that a packet is allowed to
-travel through. Each router or gateway that forwards a packet decrements the
-TTL. If the TTL is decremented to `0` by a router, it will not be forwarded.
-Changing TTL values is typically done for network probes or when multicasting.
-
-The argument to `setTTL()` is a number of hops between `1` and `255`.
-The default on most systems is `64` but can vary.
-
-#### `quicendpoint.unref()`
-<!-- YAML
-added: v15.0.0
--->
 
 ### Class: `QuicSession extends EventEmitter`
 <!-- YAML
@@ -782,7 +474,7 @@ added: v15.0.0
 
 * Type: {number}
 
-The total number of unacknowledged bytes this QUIC endpoint has transmitted
+The total number of unacknowledged bytes this QUIC session has transmitted
 to the connected peer.
 
 #### `quicsession.bytesReceived`
@@ -1318,21 +1010,6 @@ Emitted after the `QuicSocket` has been destroyed and is no longer usable.
 
 The `'close'` event will only ever be emitted once.
 
-#### Event: `'endpointClose'`
-<!-- YAML
-added: v15.0.0
--->
-
-Emitted after a `QuicEndpoint` associated with the `QuicSocket` closes and
-has been destroyed. The handler will be invoked with two arguments:
-
-* `endpoint` {QuicEndpoint} The `QuicEndpoint` that has been destroyed.
-* `error` {Error} An `Error` object if the `QuicEndpoint` was destroyed because
-  of an error.
-
-When all of the `QuicEndpoint` instances associated with a `QuicSocket` have
-closed, the `QuicEndpoint` will also automatically close.
-
 #### Event: `'error'`
 <!-- YAML
 added: v15.0.0
@@ -1423,27 +1100,34 @@ server.on('sessionError', (error, session) => {
 });
 ```
 
-#### `quicsocket.addEndpoint(options)`
+#### `quicsocket.addMembership(address, iface)`
 <!-- YAML
 added: v15.0.0
 -->
 
-* `options`: {Object} An object describing the local address to bind to.
-  * `address` {string} The local address to bind to. This may be an IPv4 or
-    IPv6 address or a host name. If a host name is given, it will be resolved
-    to an IP address.
-  * `port` {number} The local port to bind to.
-  * `type` {string} Can be one of `'udp4'`, `'upd6'`, or `'udp6-only'` to
-    use IPv4, IPv6, or IPv6 with dual-stack mode disabled.
-    **Default**: `'udp4'`.
-  * `lookup` {Function} A [custom DNS lookup function][].
-    **Default**: undefined.
-* Returns: {QuicEndpoint}
+* `address` {string}
+* `iface` {string}
 
-Creates and adds a new `QuicEndpoint` to the `QuicSocket` instance. An
-error will be thrown if `quicsocket.addEndpoint()` is called either after
-the `QuicSocket` has already started binding to the local ports, or after
-the `QuicSocket` has been destroyed.
+Tells the kernel to join a multicast group at the given `multicastAddress` and
+`multicastInterface` using the `IP_ADD_MEMBERSHIP` socket option. If the
+`multicastInterface` argument is not specified, the operating system will
+choose one interface and will add membership to it. To add membership to every
+available interface, call `addMembership()` multiple times, once per
+interface.
+
+#### `quicsocket.address`
+<!-- YAML
+added: v15.0.0
+-->
+
+* Type: {object}
+  * `address` {string} The local IPv4 or IPv6 address.
+  * `family` {string} Either `'IPv4'` or `'IPv6'`.
+  * `port` {number} The local IP port.
+
+An object containing the address information when bound to a local UDP port.
+
+If the `QuicSocket` is not bound, returns an empty object.
 
 #### `quicsocket.blockList`
 <!-- YAML
@@ -1543,8 +1227,7 @@ added: v15.0.0
 -->
 
 * `options` {Object}
-  * `address` {string} The domain name or IP address of the QUIC server
-    endpoint.
+  * `address` {string} The domain name or IP address of the remote QUIC server.
   * `alpn` {string} An ALPN protocol identifier.
   * `ca` {string|string[]|Buffer|Buffer[]} Optionally override the trusted CA
     certificates. Default is to trust the well-known CAs curated by Mozilla.
@@ -1690,6 +1373,22 @@ Will be `true` if the `QuicSocket` has been destroyed.
 
 Read-only.
 
+#### `quicsocket.dropMembership(address, iface)`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `address` {string}
+* `iface` {string}
+
+Instructs the kernel to leave a multicast group at `multicastAddress` using the
+`IP_DROP_MEMBERSHIP` socket option. This method is automatically called by the
+kernel when the socket is closed or the process terminates, so most apps will
+never have reason to call this.
+
+If `multicastInterface` is not specified, the operating system will attempt to
+drop membership on all valid interfaces.
+
 #### `quicsocket.duration`
 <!-- YAML
 added: v15.0.0
@@ -1701,16 +1400,16 @@ The length of time this `QuicSocket` has been active,
 
 Read-only.
 
-#### `quicsocket.endpoints`
+#### `quicsocket.fd`
 <!-- YAML
 added: v15.0.0
 -->
 
-* Type: {QuicEndpoint[]}
+* Type: {integer}
 
-An array of `QuicEndpoint` instances associated with the `QuicSocket`.
+The system file descriptor the `QuicSocket` is bound to.
 
-Read-only.
+This property is `undefined` on Windows.
 
 #### `quicsocket.listen([options])`
 <!-- YAML
@@ -1941,6 +1640,16 @@ this `QuicSocket`.
 
 Read-only.
 
+#### `quicsocket.setBroadcast([on])`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `on` {boolean}
+
+Sets or clears the `SO_BROADCAST` socket option. When set to `true`, UDP
+packets may be sent to a local interface's broadcast address.
+
 #### `quicsocket.setDiagnosticPacketLoss(options)`
 <!-- YAML
 added: v15.0.0
@@ -1957,6 +1666,135 @@ that can be used to *simulate* packet loss conditions for this `QuicSocket`
 by artificially dropping received or transmitted packets.
 
 This method is *not* to be used in production applications.
+
+#### `quicsocket.setMulticastInterface(iface)`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `iface` {string}
+
+All references to scope in this section are referring to IPv6 Zone Indices,
+which are defined by [RFC 4007][]. In string form, an IP with a scope index
+is written as `'IP%scope'` where scope is an interface name or interface
+number.
+
+Sets the default outgoing multicast interface of the socket to a chosen
+interface or back to system interface selection. The multicastInterface must
+be a valid string representation of an IP from the socket's family.
+
+For IPv4 sockets, this should be the IP configured for the desired physical
+interface. All packets sent to multicast on the socket will be sent on the
+interface determined by the most recent successful use of this call.
+
+For IPv6 sockets, multicastInterface should include a scope to indicate the
+interface as in the examples that follow. In IPv6, individual send calls can
+also use explicit scope in addresses, so only packets sent to a multicast
+address without specifying an explicit scope are affected by the most recent
+successful use of this call.
+
+##### Examples: IPv6 outgoing multicast interface
+<!-- YAML
+added: v15.0.0
+-->
+On most systems, where scope format uses the interface name:
+
+```js
+const { createQuicSocket } = require('net');
+const socket = createQuicSocket({ type: 'udp6', port: 1234 });
+
+socket.on('ready', () => {
+  socket.setMulticastInterface('::%eth1');
+});
+```
+
+On Windows, where scope format uses an interface number:
+
+```js
+const { createQuicSocket } = require('net');
+const socket = createQuicSocket({ type: 'udp6', port: 1234 });
+
+socket.on('ready', () => {
+  socket.setMulticastInterface('::%2');
+});
+```
+
+##### Example: IPv4 outgoing multicast interface
+<!-- YAML
+added: v15.0.0
+-->
+All systems use an IP of the host on the desired physical interface:
+
+```js
+const { createQuicSocket } = require('net');
+const socket = createQuicSocket({ type: 'udp4', port: 1234 });
+
+socket.on('ready', () => {
+  socket.setMulticastInterface('10.0.0.2');
+});
+```
+
+#### `quicsocket.setMulticastLoopback([on])`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `on` {boolean}
+
+Sets or clears the `IP_MULTICAST_LOOP` socket option. When set to `true`,
+multicast packets will also be received on the local interface.
+
+#### `quicsocket.setMulticastTTL(ttl)`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `ttl` {number}
+
+Sets the `IP_MULTICAST_TTL` socket option. While TTL generally stands for
+"Time to Live", in this context it specifies the number of IP hops that a
+packet is allowed to travel through, specifically for multicast traffic. Each
+router or gateway that forwards a packet decrements the TTL. If the TTL is
+decremented to `0` by a router, it will not be forwarded.
+
+The argument passed to `setMulticastTTL()` is a number of hops between
+`0` and `255`. The default on most systems is `1` but can vary.
+
+##### Call results
+
+A call on a socket that is not ready to send or no longer open may throw a
+Not running Error.
+
+If multicastInterface can not be parsed into an IP then an `EINVAL` System
+Error is thrown.
+
+On IPv4, if `multicastInterface` is a valid address but does not match any
+interface, or if the address does not match the family then a System Error
+such as `EADDRNOTAVAIL` or `EPROTONOSUP` is thrown.
+
+On IPv6, most errors with specifying or omitting scope will result in the
+socket continuing to use (or returning to) the system's default interface
+selection.
+
+A socket's address family's ANY address (IPv4 `'0.0.0.0'` or IPv6 `'::'`)
+can be used to return control of the sockets default outgoing interface to
+the system for future multicast packets.
+
+#### `quicsocket.setTTL(ttl)`
+<!-- YAML
+added: v15.0.0
+-->
+
+* `ttl` {number}
+
+Sets the `IP_TTL` socket option. While TTL generally stands for "Time to Live",
+in this context it specifies the number of IP hops that a packet is allowed to
+travel through. Each router or gateway that forwards a packet decrements the
+TTL. If the TTL is decremented to `0` by a router, it will not be forwarded.
+Changing TTL values is typically done for network probes or when multicasting.
+
+The argument to `setTTL()` is a number of hops between `1` and `255`.
+The default on most systems is `64` but can vary.
 
 #### `quicsocket.statelessReset`
 <!-- YAML
@@ -2398,7 +2236,6 @@ sufficient. However, it is possible to pass a custom `lookup`
 function as an option in several places throughout the QUIC API:
 
 * `net.createQuicSocket()`
-* `quicsocket.addEndpoint()`
 * `quicsocket.connect()`
 * `quicsocket.listen()`
 

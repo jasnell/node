@@ -24,7 +24,7 @@ const countdown = new Countdown(kCount, () => {
 async function connect(server, client) {
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   req.on('stream', common.mustCall((stream) => {

@@ -92,7 +92,7 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
 
   const req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
 
   const bidi = await req.openStream();

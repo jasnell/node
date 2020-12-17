@@ -32,7 +32,7 @@ const server = createQuicSocket({ server: options });
 
   req = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
   });
 
   req.on('close', () => {
@@ -67,7 +67,7 @@ const server = createQuicSocket({ server: options });
   // QuicSocket and continue sending.
   setTimeout(common.mustCall(async () => {
     const s1 = req.socket;
-    const a1 = req.socket.endpoints[0].address;
+    const a1 = req.socket.address;
 
     await Promise.all([1, {}, 'test', false, null, undefined].map((i) => {
       return assert.rejects(req.setSocket(i), {
@@ -82,9 +82,9 @@ const server = createQuicSocket({ server: options });
 
     await req.setSocket(client2);
 
-    // Verify that it is using a different network endpoint
+    // Verify that it is using a different network
     assert.notStrictEqual(s1, req.socket);
-    assert.notDeepStrictEqual(a1, req.socket.endpoints[0].address);
+    assert.notDeepStrictEqual(a1, req.socket.address);
     client.close();
     stream.end('from the client');
   }), common.platformTimeout(100));

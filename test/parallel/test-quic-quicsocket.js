@@ -17,10 +17,8 @@ assert(socket);
 // Before listen is called, serverSecureContext is always undefined.
 assert.strictEqual(socket.serverSecureContext, undefined);
 
-assert.deepStrictEqual(socket.endpoints.length, 1);
-
 // Socket is not bound, so address should be empty
-assert.deepStrictEqual(socket.endpoints[0].address, {});
+assert.deepStrictEqual(socket.address, {});
 
 // Socket is not bound
 assert(!socket.bound);
@@ -42,21 +40,18 @@ assert.strictEqual(socket.packetsSent, 0);
 assert.strictEqual(socket.serverSessions, 0);
 assert.strictEqual(socket.clientSessions, 0);
 
-const endpoint = socket.endpoints[0];
-assert(endpoint);
-
 // Will throw because the QuicSocket is not bound
 {
   const err = { code: 'EBADF' };
-  assert.throws(() => endpoint.setTTL(1), err);
-  assert.throws(() => endpoint.setMulticastTTL(1), err);
-  assert.throws(() => endpoint.setBroadcast(), err);
-  assert.throws(() => endpoint.setMulticastLoopback(), err);
-  assert.throws(() => endpoint.setMulticastInterface('0.0.0.0'), err);
+  assert.throws(() => socket.setTTL(1), err);
+  assert.throws(() => socket.setMulticastTTL(1), err);
+  assert.throws(() => socket.setBroadcast(), err);
+  assert.throws(() => socket.setMulticastLoopback(), err);
+  assert.throws(() => socket.setMulticastInterface('0.0.0.0'), err);
   // TODO(@jasnell): Verify behavior of add/drop membership then test
-  // assert.throws(() => endpoint.addMembership(
+  // assert.throws(() => socket.addMembership(
   //     '127.0.0.1', '127.0.0.1'), err);
-  // assert.throws(() => endpoint.dropMembership(
+  // assert.throws(() => socket.dropMembership(
   //     '127.0.0.1', '127.0.0.1'), err);
 }
 
@@ -95,31 +90,31 @@ assert(endpoint);
 
   await p;
 
-  assert(endpoint.bound);
+  assert(socket.bound);
 
   // QuicSocket is already listening.
   await assert.rejects(socket.listen(), {
     code: 'ERR_INVALID_STATE'
   });
 
-  assert.strictEqual(typeof endpoint.address.address, 'string');
-  assert.strictEqual(typeof endpoint.address.port, 'number');
-  assert.strictEqual(typeof endpoint.address.family, 'string');
+  assert.strictEqual(typeof socket.address.address, 'string');
+  assert.strictEqual(typeof socket.address.port, 'number');
+  assert.strictEqual(typeof socket.address.family, 'string');
 
   if (!common.isWindows)
-    assert.strictEqual(typeof endpoint.fd, 'number');
+    assert.strictEqual(typeof socket.fd, 'number');
 
-  endpoint.setTTL(1);
-  endpoint.setMulticastTTL(1);
-  endpoint.setBroadcast();
-  endpoint.setBroadcast(true);
-  endpoint.setBroadcast(false);
+  socket.setTTL(1);
+  socket.setMulticastTTL(1);
+  socket.setBroadcast();
+  socket.setBroadcast(true);
+  socket.setBroadcast(false);
 
-  endpoint.setMulticastLoopback();
-  endpoint.setMulticastLoopback(true);
-  endpoint.setMulticastLoopback(false);
+  socket.setMulticastLoopback();
+  socket.setMulticastLoopback(true);
+  socket.setMulticastLoopback(false);
 
-  endpoint.setMulticastInterface('0.0.0.0');
+  socket.setMulticastInterface('0.0.0.0');
 
   socket.setDiagnosticPacketLoss({ rx: 0.5, tx: 0.5 });
 
@@ -139,7 +134,7 @@ socket.on('close', common.mustCall(() => {
     'addMembership',
     'dropMembership'
   ].forEach((op) => {
-    assert.throws(() => endpoint[op](), {
+    assert.throws(() => socket[op](), {
       code: 'ERR_INVALID_STATE'
     });
   });

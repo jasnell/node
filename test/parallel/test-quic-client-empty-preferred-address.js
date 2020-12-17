@@ -38,7 +38,7 @@ const options = { key, cert, ca, alpn: 'zzz' };
 
   const clientSession = await client.connect({
     address: common.localhostIPv4,
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     preferredAddressPolicy: 'accept',
   });
 

@@ -16,14 +16,14 @@ const options = { key, cert, ca, alpn: 'meow' };
 
 const server = createQuicSocket({
   validateAddress: true,
-  endpoint: { [kUDPHandleForTesting]: serverSide._handle },
+  [kUDPHandleForTesting]: serverSide._handle,
   server: options,
   qlog: true
 });
 serverSide.afterBind();
 
 const client = createQuicSocket({
-  endpoint: { [kUDPHandleForTesting]: clientSide._handle },
+  [kUDPHandleForTesting]: clientSide._handle,
   client: options,
   qlog: true
 });
@@ -39,7 +39,7 @@ clientSide.afterBind();
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port,
+    port: server.address.port,
     qlog: true
   });
 

@@ -35,7 +35,7 @@ const server = createQuicSocket({ qlog, server: options });
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
   if (qlog) req.qlog.pipe(createWriteStream('client.qlog'));
 

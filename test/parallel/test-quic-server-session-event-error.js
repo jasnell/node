@@ -48,7 +48,7 @@ const server = createQuicSocket({ server: options });
 
   const req = await client.connect({
     address: 'localhost',
-    port: server.endpoints[0].address.port
+    port: server.address.port
   });
 
   req.on('close', common.mustCall(() => {
