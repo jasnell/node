@@ -244,25 +244,26 @@ void QuicSocketStatsTraits::ToString(const QuicSocket& ptr, Fn&& add_field) {
 QuicSocket::QuicSocket(
     QuicState* quic_state,
     Local<Object> wrap,
-    uint64_t retry_token_expiration,
-    size_t max_connections,
-    size_t max_connections_per_host,
-    size_t max_stateless_resets_per_host,
-    uint32_t options,
-    QlogMode qlog,
-    const uint8_t* session_reset_secret,
-    bool disable_stateless_reset)
+    const uint8_t* session_reset_secret)
     : AsyncWrap(quic_state->env(), wrap, AsyncWrap::PROVIDER_QUICSOCKET),
       StatsBase(quic_state->env(), wrap),
       alloc_info_(MakeAllocator()),
       block_list_(SocketAddressBlockListWrap::New(quic_state->env())),
-      options_(options),
+      options_(
+          quic_state->quicsocketconfig_buffer->options),
       state_(quic_state->env()->isolate()),
-      max_connections_(max_connections),
-      max_connections_per_host_(max_connections_per_host),
-      max_stateless_resets_per_host_(max_stateless_resets_per_host),
-      retry_token_expiration_(retry_token_expiration),
-      qlog_(qlog),
+      max_connections_(
+          quic_state->quicsocketconfig_buffer->max_connections),
+      max_connections_per_host_(
+          quic_state->quicsocketconfig_buffer->max_connections_per_host),
+      max_stateless_resets_per_host_(
+          quic_state->quicsocketconfig_buffer->max_stateless_resets_per_host),
+      retry_token_expiration_(
+          quic_state->quicsocketconfig_buffer->retry_token_expiration),
+      qlog_(
+          quic_state->quicsocketconfig_buffer->qlog
+              ? QlogMode::kEnabled
+              : QlogMode::kDisabled),
       server_alpn_(NGHTTP3_ALPN_H3),
       addrLRU_(DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE),
       quic_state_(quic_state) {
@@ -285,7 +286,7 @@ QuicSocket::QuicSocket(
       state_.GetArrayBuffer(),
       PropertyAttribute::ReadOnly).Check();
 
-  if (disable_stateless_reset)
+  if (quic_state->quicsocketconfig_buffer->disable_stateless_reset)
     state_->stateless_reset_disabled = 1;
 
   // Set the session reset secret to the one provided or random.
@@ -1020,45 +1021,17 @@ void NewQuicEndpoint(const FunctionCallbackInfo<Value>& args) {
 }
 
 void NewQuicSocket(const FunctionCallbackInfo<Value>& args) {
-  QuicState* state = Environment::GetBindingData<QuicState>(args);
-  Environment* env = state->env();
   CHECK(args.IsConstructCall());
 
-  uint32_t options;
-  uint32_t retry_token_expiration;
-  uint32_t max_connections;
-  uint32_t max_connections_per_host;
-  uint32_t max_stateless_resets_per_host;
-
-  if (!args[0]->Uint32Value(env->context()).To(&options) ||
-      !args[1]->Uint32Value(env->context()).To(&retry_token_expiration) ||
-      !args[2]->Uint32Value(env->context()).To(&max_connections) ||
-      !args[3]->Uint32Value(env->context()).To(&max_connections_per_host) ||
-      !args[4]->Uint32Value(env->context())
-          .To(&max_stateless_resets_per_host)) {
-    return;
-  }
-  CHECK_GE(retry_token_expiration, MIN_RETRYTOKEN_EXPIRATION);
-  CHECK_LE(retry_token_expiration, MAX_RETRYTOKEN_EXPIRATION);
-
   const uint8_t* session_reset_secret = nullptr;
-  if (args[6]->IsArrayBufferView()) {
-    ArrayBufferViewContents<uint8_t> buf(args[6].As<ArrayBufferView>());
+  if (args[0]->IsArrayBufferView()) {
+    ArrayBufferViewContents<uint8_t> buf(args[0].As<ArrayBufferView>());
     CHECK_EQ(buf.length(), kTokenSecretLen);
     session_reset_secret = buf.data();
   }
 
-  new QuicSocket(
-      state,
-      args.This(),
-      retry_token_expiration,
-      max_connections,
-      max_connections_per_host,
-      max_stateless_resets_per_host,
-      options,
-      args[5]->IsTrue() ? QlogMode::kEnabled : QlogMode::kDisabled,
-      session_reset_secret,
-      args[7]->IsTrue());
+  QuicState* state = Environment::GetBindingData<QuicState>(args);
+  new QuicSocket(state, args.This(), session_reset_secret);
 }
 
 void QuicSocketAddEndpoint(const FunctionCallbackInfo<Value>& args) {

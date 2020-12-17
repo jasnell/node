@@ -93,9 +93,12 @@ enum Http3ConfigIndex : int {
 // Configuration settings for the QuicSocket.
 #define QUIC_SOCKET_CONFIG_PARAMS(V)                                           \
   V(RETRY_TOKEN_EXPIRATION, retry_token_expiration, uint64_t)                  \
-  V(MAX_CONNECTIONS_PER_HOST, max_connections_per_host, size_t)                \
-  V(MAX_STATELESS_RESETS_PER_HOST, max_stateless_resets_per_host, size_t)      \
-  V(DISABLE_STATELESS_RESET, disable_stateless_reset, bool)
+  V(MAX_CONNECTIONS, max_connections, uint64_t)                                \
+  V(MAX_CONNECTIONS_PER_HOST, max_connections_per_host, uint64_t)              \
+  V(MAX_STATELESS_RESETS_PER_HOST, max_stateless_resets_per_host, uint64_t)    \
+  V(OPTIONS, options, uint32_t)                                                \
+  V(DISABLE_STATELESS_RESET, disable_stateless_reset, bool)                    \
+  V(ENABLE_QLOG, qlog, bool)
 
 struct QuicSocketConfig {
 #define V(_, key, type) type key;

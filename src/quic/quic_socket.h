@@ -311,20 +311,7 @@ class QuicSocket : public AsyncWrap,
       QuicState* quic_state,
       // The QuicSocket's own JavsScript wrapper object.
       Local<Object> wrap,
-      // A retry token should only be valid for a small window of time.
-      // The retry_token_expiration specifies the number of seconds a
-      // retry token is permitted to be valid.
-      uint64_t retry_token_expiration,
-      // To prevent malicious clients from opening too many concurrent
-      // connections, we limit the maximum number per remote sockaddr.
-      size_t max_connections,
-      size_t max_connections_per_host,
-      size_t max_stateless_resets_per_host
-          = DEFAULT_MAX_STATELESS_RESETS_PER_HOST,
-      uint32_t options = 0,
-      QlogMode qlog = QlogMode::kDisabled,
-      const uint8_t* session_reset_secret = nullptr,
-      bool disable_session_reset = false);
+      const uint8_t* session_reset_secret = nullptr);
 
   ~QuicSocket() override;
 
