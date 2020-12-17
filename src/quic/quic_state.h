@@ -4,6 +4,7 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "aliased_buffer.h"
+#include "aliased_struct.h"
 
 namespace node {
 namespace quic {
@@ -89,6 +90,27 @@ enum Http3ConfigIndex : int {
   IDX_HTTP3_CONFIG_COUNT
 };
 
+// Configuration settings for the QuicSocket.
+#define QUIC_SOCKET_CONFIG_PARAMS(V)                                           \
+  V(RETRY_TOKEN_EXPIRATION, retry_token_expiration, uint64_t)                  \
+  V(MAX_CONNECTIONS_PER_HOST, max_connections_per_host, size_t)                \
+  V(MAX_STATELESS_RESETS_PER_HOST, max_stateless_resets_per_host, size_t)      \
+  V(DISABLE_STATELESS_RESET, disable_stateless_reset, bool)
+
+struct QuicSocketConfig {
+#define V(_, key, type) type key;
+  QUIC_SOCKET_CONFIG_PARAMS(V)
+#undef V
+};
+
+#define V(id, name, _)                                                         \
+  IDX_QUICSOCKET_CONFIG_##id = offsetof(QuicSocketConfig, name),
+enum QuicSocketConfigFields {
+  QUIC_SOCKET_CONFIG_PARAMS(V)
+  IDX_QUICSOCKET_CONFIG_END
+};
+#undef V
+
 class QuicState : public BaseObject {
  public:
   explicit QuicState(Environment* env, v8::Local<v8::Object> obj)
@@ -105,12 +127,14 @@ class QuicState : public BaseObject {
         env->isolate(),
         offsetof(quic_state_internal, http3config_buffer),
         IDX_HTTP3_CONFIG_COUNT + 1,
-        root_buffer) {
+        root_buffer),
+      quicsocketconfig_buffer(env->isolate()) {
   }
 
   AliasedUint8Array root_buffer;
   AliasedFloat64Array quicsessionconfig_buffer;
   AliasedFloat64Array http3config_buffer;
+  AliasedStruct<QuicSocketConfig> quicsocketconfig_buffer;
 
   bool warn_trace_tls = true;
 
@@ -145,6 +169,7 @@ class QuicState : public BaseObject {
     // doubles first so that they are always sizeof(double)-aligned
     double quicsessionconfig_buffer[IDX_QUIC_SESSION_CONFIG_COUNT + 1];
     double http3config_buffer[IDX_HTTP3_CONFIG_COUNT + 1];
+    QuicSocketConfig quicsocketconfig;
   };
 
 #define V(name, _) v8::Global<v8::Function> on_ ## name ## _;

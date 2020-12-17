@@ -145,7 +145,7 @@ constexpr size_t MAX_PKTLEN =
 // filled with the contents of a serialized packet, and passed
 // off immediately to the QuicSocket to be sent. As soon as
 // the packet is sent, it is freed.
-class QuicPacket : public MemoryRetainer {
+class QuicPacket final : public MemoryRetainer {
  public:
   // Creates a new QuicPacket. By default the packet will be
   // stack allocated with a max size of NGTCP2_MAX_PKTLEN_IPV4.
@@ -224,9 +224,12 @@ class QuicEndpointListener {
   virtual void OnEndpointDone(QuicEndpoint* endpoint) = 0;
 };
 
-// A QuicEndpoint wraps a UDPBaseWrap. A single QuicSocket may
-// have multiple QuicEndpoints, the lifecycles of which are
-// attached to the QuicSocket.
+// A QuicEndpoint wraps a UDPBaseWrap and manages the actual
+// sending and receiving of data from the UDP layer. A single
+// QuicSocket always has exactly one QuicEndpoint whose lifetime
+// is bound to the QuicSocket. The QuicSocket determines when
+// the QuicEndpoint will be bound to the UDP port and when it
+// will disconnect.
 class QuicEndpoint final : public BaseObject,
                            public UDPListener {
  public:
@@ -306,6 +309,7 @@ class QuicSocket : public AsyncWrap,
 
   QuicSocket(
       QuicState* quic_state,
+      // The QuicSocket's own JavsScript wrapper object.
       Local<Object> wrap,
       // A retry token should only be valid for a small window of time.
       // The retry_token_expiration specifies the number of seconds a

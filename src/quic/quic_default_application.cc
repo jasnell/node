@@ -1,4 +1,5 @@
 #include "debug_utils-inl.h"
+#include "aliased_struct-inl.h"
 #include "quic_buffer-inl.h"
 #include "quic_default_application.h"
 #include "quic_session-inl.h"

@@ -1,3 +1,4 @@
+#include "aliased_struct-inl.h"
 #include "debug_utils-inl.h"
 #include "node.h"
 #include "env-inl.h"
@@ -115,6 +116,10 @@ void Initialize(Local<Object> target,
   SET_STATE_TYPEDARRAY("http3Config", state->http3config_buffer);
 #undef SET_STATE_TYPEDARRAY
 
+  target->Set(context,
+              FIXED_ONE_BYTE_STRING(isolate, "socketConfig"),
+              state->quicsocketconfig_buffer.GetArrayBuffer()).Check();
+
   QuicSocket::Initialize(env, target, context);
   QuicEndpoint::Initialize(env, target, context);
   QuicSession::Initialize(env, target, context);
@@ -209,6 +214,11 @@ void Initialize(Local<Object> target,
 #define V(name, _, __) NODE_DEFINE_CONSTANT(constants, IDX_QUIC_SESSION_##name);
   QUIC_SESSION_TRANSPORT_PARAMS(V)
   QUIC_SESSION_CONFIG_PARAMS(V)
+#undef V
+
+#define V(name, _, __)                                                         \
+    NODE_DEFINE_CONSTANT(constants, IDX_QUICSOCKET_CONFIG_##name);
+  QUIC_SOCKET_CONFIG_PARAMS(V)
 #undef V
 
   NODE_DEFINE_CONSTANT(constants, NGTCP2_DEFAULT_MAX_PKTLEN);

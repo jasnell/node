@@ -1,5 +1,6 @@
 #include "node.h"
 #include "debug_utils-inl.h"
+#include "aliased_struct-inl.h"
 #include "node_mem-inl.h"
 #include "quic_buffer-inl.h"
 #include "quic_http3_application.h"

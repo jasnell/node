@@ -1,4 +1,5 @@
 #include "quic_crypto.h"
+#include "aliased_struct-inl.h"
 #include "env-inl.h"
 #include "node_crypto.h"
 #include "crypto/crypto_util.h"
