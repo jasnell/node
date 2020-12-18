@@ -39,7 +39,7 @@ socket.on('session', async (session) => {
     stream.on('end', () => console.log('stream ended'));
   });
 
-  const uni = await session.openStream({ halfOpen: true });
+  const uni = await session.openStream({ unidirectional: true });
   uni.write('hi ');
   uni.end('from the server!');
 });
@@ -187,7 +187,7 @@ async function createStreams(session) {
   const stream1 = await session.openStream();
 
   // Create a new unidirectional stream
-  const stream2 = await session.openStream({ halfOpen: true });
+  const stream2 = await session.openStream({ unidirectional: true });
 }
 ```
 
@@ -724,8 +724,8 @@ The minimum RTT recorded so far for this `QuicSession`.
 added: v15.0.0
 -->
 * `options` {Object}
-  * `halfOpen` {boolean} Set to `true` to open a unidirectional stream, `false`
-    to open a bidirectional stream. **Default**: `true`.
+  * `unidirectional` {boolean} Set to `true` to open a unidirectional stream,
+    `false` to open a bidirectional stream. **Default**: `false`.
   * `highWaterMark` {number} Total number of bytes that the `QuicStream` may
     buffer internally before the `quicstream.write()` function starts returning
     `false`. Default: `16384`.

@@ -40,7 +40,7 @@ async function ipv6() {
     port: server.address.port
   });
 
-  const stream = await session.openStream({ halfOpen: true });
+  const stream = await session.openStream({ unidirectional: true });
   stream.end('hello');
 
   await once(stream, 'close');

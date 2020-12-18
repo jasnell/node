@@ -32,7 +32,7 @@ clientSide.afterBind();
 (async function() {
   server.on('session', common.mustCall(async (session) => {
     gatherQlog(session, 'server');
-    (await session.openStream({ halfOpen: true })).end('Hi!');
+    (await session.openStream({ unidirectional: true })).end('Hi!');
   }));
 
   await server.listen();

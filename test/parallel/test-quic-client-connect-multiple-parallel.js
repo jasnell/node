@@ -45,7 +45,7 @@ async function connect(server, client) {
     const server = createQuicSocket({ server: options });
 
     server.on('session', common.mustCall(async (session) => {
-      const stream = await session.openStream({ halfOpen: true });
+      const stream = await session.openStream({ unidirectional: true });
       stream.end('Hi!');
     }));
 

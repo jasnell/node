@@ -24,7 +24,7 @@ client.on('close', common.mustCall());
 (async function() {
   server.on('session', common.mustCall(async (session) => {
     if (qlog) session.qlog.pipe(createWriteStream('server.qlog'));
-    const stream = await session.openStream({ halfOpen: true });
+    const stream = await session.openStream({ unidirectional: true });
     stream.write('from the ');
     setTimeout(() => stream.end('server'), common.platformTimeout(10));
     stream.on('close', common.mustCall());

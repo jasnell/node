@@ -32,7 +32,7 @@ clientSide.afterBind();
 (async function() {
   server.on('session', common.mustCall(async (session) => {
     session.on('close', common.mustNotCall());
-    const stream = await session.openStream({ halfOpen: false });
+    const stream = await session.openStream({ unidirectional: false });
     stream.end('Hi!');
     stream.on('data', common.mustNotCall());
     stream.on('finish', common.mustCall());

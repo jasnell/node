@@ -28,7 +28,7 @@ client.on('close', common.mustNotCall());
 
 (async function() {
   server.on('session', common.mustCall(async (session) => {
-    const stream = await session.openStream({ halfOpen: false });
+    const stream = await session.openStream({ unidirectional: false });
     stream.write('Hi!');
     stream.on('data', common.mustNotCall());
     stream.on('finish', common.mustNotCall());

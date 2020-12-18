@@ -27,7 +27,7 @@ const countdown = new Countdown(2, () => {
 (async function() {
   server.on('session', common.mustCall(async (session) => {
     if (qlog) session.qlog.pipe(createWriteStream('server.qlog'));
-    const uni = await session.openStream({ halfOpen: true });
+    const uni = await session.openStream({ unidirectional: true });
     uni.write('hi', common.mustSucceed());
     uni.on('error', common.mustNotCall());
     uni.on('data', common.mustNotCall());

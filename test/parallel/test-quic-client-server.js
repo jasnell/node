@@ -148,7 +148,7 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
       assert.strictEqual(session.authenticationError, undefined);
     }));
 
-    const uni = await session.openStream({ halfOpen: true });
+    const uni = await session.openStream({ unidirectional: true });
     debug('Unidirectional, Server-initiated stream %d opened', uni.id);
     assert(uni.writable);
     assert(!uni.readable);

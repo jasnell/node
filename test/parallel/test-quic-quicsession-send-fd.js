@@ -37,7 +37,7 @@ async function test({ variant, offset, length }) {
         fs.createWriteStream(`server-${variant}-${offset}-${length}.qlog`));
     }
 
-    const stream = await session.openStream({ halfOpen: true });
+    const stream = await session.openStream({ unidirectional: true });
 
     // The data and end events won't emit because
     // the stream is never readable.

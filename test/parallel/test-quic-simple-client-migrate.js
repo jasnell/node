@@ -23,7 +23,7 @@ const server = createQuicSocket({ server: options });
   server.on('session', common.mustCall((session) => {
     session.on('stream', common.mustCall(async (stream) => {
       pipeline(stream, stream, common.mustSucceed());
-      (await session.openStream({ halfOpen: true }))
+      (await session.openStream({ unidirectional: true }))
         .end('Hello from the server');
     }));
   }));

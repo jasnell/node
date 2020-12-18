@@ -16,7 +16,7 @@ const client = createQuicSocket({ client: options });
 
 (async function() {
   server.on('session', common.mustCall(async (session) => {
-    const stream = await session.openStream({ halfOpen: false });
+    const stream = await session.openStream({ unidirectional: false });
 
     fs.open = common.mustCall(fs.open);
     fs.close = common.mustCall(fs.close);

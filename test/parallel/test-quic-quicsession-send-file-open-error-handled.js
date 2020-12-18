@@ -16,7 +16,7 @@ const client = createQuicSocket({ client: options });
 
 (async function() {
   server.on('session', common.mustCall(async (session) => {
-    const stream = await session.openStream({ halfOpen: true });
+    const stream = await session.openStream({ unidirectional: true });
     const nonexistentPath = path.resolve(__dirname, 'nonexistent.file');
     stream.sendFile(nonexistentPath, {
       onError: common.expectsError({

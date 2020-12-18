@@ -42,14 +42,14 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
 
 (async function() {
   server.on('session', common.mustCall(async (session) => {
-    ([3, 1n, [], {}, null, 'meow']).forEach((halfOpen) => {
+    ([3, 1n, [], {}, null, 'meow']).forEach((unidirectional) => {
       assert.rejects(
-        session.openStream({ halfOpen }), {
+        session.openStream({ unidirectional }), {
           code: 'ERR_INVALID_ARG_TYPE'
         });
     });
 
-    const uni = await session.openStream({ halfOpen: true });
+    const uni = await session.openStream({ unidirectional: true });
     uni.end('test');
 
     const bidi = await session.openStream();
@@ -106,7 +106,7 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
   assert(!bidi.serverInitiated);
   assert(!bidi.unidirectional);
 
-  const uni = await req.openStream({ halfOpen: true });
+  const uni = await req.openStream({ unidirectional: true });
   uni.end('test');
   uni.on('close', closeHandler);
   assert.strictEqual(uni.id, 2);

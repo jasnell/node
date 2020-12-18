@@ -39,8 +39,8 @@ client.on('close', common.mustCall());
     port: server.address.port
   });
 
-  for (const halfOpen of ['z', 1, {}, [], null, Infinity, 1n]) {
-    await assert.rejects(req.openStream({ halfOpen }), {
+  for (const unidirectional of ['z', 1, {}, [], null, Infinity, 1n]) {
+    await assert.rejects(req.openStream({ unidirectional }), {
       code: 'ERR_INVALID_ARG_TYPE'
     });
   }
@@ -68,7 +68,7 @@ client.on('close', common.mustCall());
   // QuicStream C++ handle will not be created.
   await assert.rejects(
     req.openStream({
-      halfOpen: true,
+      unidirectional: true,
       highWaterMark: 10,
       defaultEncoding: 'utf16le'
     }), {

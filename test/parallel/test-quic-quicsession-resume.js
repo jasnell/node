@@ -63,7 +63,7 @@ const countdown = new Countdown(2, () => {
     storedParams = params;
   }, 1));
 
-  const stream = await req.openStream({ halfOpen: true });
+  const stream = await req.openStream({ unidirectional: true });
   stream.end('hello');
   stream.on('close', () => {
     countdown.dec();
@@ -83,7 +83,7 @@ const countdown = new Countdown(2, () => {
 
     assert(req.allowEarlyData);
 
-    const stream = await req.openStream({ halfOpen: true });
+    const stream = await req.openStream({ unidirectional: true });
     stream.end('hello');
     stream.on('error', common.mustNotCall());
     stream.on('close', common.mustCall(() => countdown.dec()));
