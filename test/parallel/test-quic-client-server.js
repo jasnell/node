@@ -229,7 +229,6 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
         code: 'ERR_INVALID_STATE',
         name: 'Error'
       };
-      assert.throws(() => session.ping(), err);
       assert.throws(() => session.updateKey(), err);
       assert.rejects(() => session.openStream(), err);
     }));

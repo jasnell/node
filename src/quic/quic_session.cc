@@ -1983,29 +1983,6 @@ void QuicSession::PathValidation(
   }
 }
 
-// Calling Ping will trigger the ngtcp2_conn to serialize any
-// packets it currently has pending along with a probe frame
-// that should keep the connection alive. This is a fire and
-// forget and any errors that may occur will be ignored. The
-// idle_timeout and retransmit timers will be updated. If Ping
-// is called while processing an ngtcp2 callback, or if the
-// closing or draining period has started, this is a non-op.
-void QuicSession::Ping() {
-  if (NgCallbackScope::InNgCallbackScope(this) ||
-      is_destroyed() ||
-      is_closing() ||
-      is_in_closing_period() ||
-      is_in_draining_period()) {
-    return;
-  }
-  // TODO(@jasnell): We might want to revisit whether to handle
-  // errors right here. For now, we're ignoring them with the
-  // intent of capturing them elsewhere.
-  WritePackets("ping");
-  UpdateIdleTimer();
-  ScheduleRetransmit();
-}
-
 // When the QuicSocket receives a QUIC packet, it is forwarded on to here
 // for processing.
 bool QuicSession::Receive(
@@ -3881,7 +3858,6 @@ void AddMethods(Environment* env, Local<FunctionTemplate> session) {
                       QuicSessionGetPeerCertificate);
   env->SetProtoMethod(session, "gracefulClose", QuicSessionGracefulClose);
   env->SetProtoMethod(session, "updateKey", QuicSessionUpdateKey);
-  env->SetProtoMethod(session, "ping", QuicSessionPing);
   env->SetProtoMethod(session, "removeFromSocket", QuicSessionRemoveFromSocket);
   env->SetProtoMethod(session, "onClientHelloDone",
                       QuicSessionOnClientHelloDone);
