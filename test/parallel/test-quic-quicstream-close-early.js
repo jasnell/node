@@ -35,7 +35,6 @@ const countdown = new Countdown(2, () => {
     uni.close();
 
     session.on('stream', common.mustCall((stream) => {
-      assert(stream.bidirectional);
       assert(stream.readable);
       assert(stream.writable);
       stream.on('close', common.mustCall());

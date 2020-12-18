@@ -201,7 +201,7 @@ has been initiated by the connected peer:
 
 ```js
 session.on('stream', (stream) => {
-  if (stream.bidirectional) {
+  if (!stream.unidirectional) {
     stream.write('Hello World');
     stream.end();
   }
@@ -1921,18 +1921,6 @@ stream('trailingHeaders', (headers) => {
 added: v15.0.0
 -->
 
-#### `quicstream.bidirectional`
-<!--YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-When `true`, the `QuicStream` is bidirectional. Both the readable and
-writable sides of the `QuicStream` `Duplex` are open.
-
-Read-only.
-
 #### `quicstream.bytesReceived`
 <!-- YAML
 added: v15.0.0
@@ -1952,18 +1940,6 @@ added: v15.0.0
 * Type: {number}
 
 The total number of bytes sent by this `QuicStream`.
-
-Read-only.
-
-#### `quicstream.clientInitiated`
-<!-- YAML
-added: v15.0.0
--->
-
-* Type: {boolean}
-
-Will be `true` if the `QuicStream` was initiated by a `QuicClientSession`
-instance.
 
 Read-only.
 
@@ -2203,13 +2179,6 @@ was initiated locally or remotely.
 |  `QuicServerSession` |            `true`            |     N    |     Y    |
 |  `QuicClientSession` |            `false`           |     N    |     Y    |
 |  `QuicServerSession` |            `false`           |     Y    |     N    |
-
-| `quicstream.session` | `quicstream.clientInitiated` | Readable | Writable |
-| -------------------- | ---------------------------- | -------- | -------- |
-|  `QuicClientSession` |            `true`            |     N    |     Y    |
-|  `QuicServerSession` |            `true`            |     Y    |     N    |
-|  `QuicClientSession` |            `false`           |     Y    |     N    |
-|  `QuicServerSession` |            `false`           |     N    |     Y    |
 
 Read-only.
 

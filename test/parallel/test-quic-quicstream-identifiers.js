@@ -60,27 +60,20 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
     assert.strictEqual(uni.id, 3);
     assert(uni.unidirectional);
     assert(uni.serverInitiated);
-    assert(!uni.bidirectional);
-    assert(!uni.clientInitiated);
 
     assert.strictEqual(bidi.id, 1);
-    assert(bidi.bidirectional);
     assert(bidi.serverInitiated);
     assert(!bidi.unidirectional);
-    assert(!bidi.clientInitiated);
 
     session.on('stream', common.mustCall((stream) => {
-      assert(stream.clientInitiated);
       assert(!stream.serverInitiated);
       switch (stream.id) {
         case 0:
-          assert(stream.bidirectional);
           assert(!stream.unidirectional);
           stream.end('test');
           break;
         case 2:
           assert(stream.unidirectional);
-          assert(!stream.bidirectional);
           break;
       }
       stream.resume();
@@ -101,8 +94,6 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
   bidi.on('close', closeHandler);
   assert.strictEqual(bidi.id, 0);
 
-  assert(bidi.clientInitiated);
-  assert(bidi.bidirectional);
   assert(!bidi.serverInitiated);
   assert(!bidi.unidirectional);
 
@@ -111,23 +102,18 @@ const closeHandler = common.mustCall(() => countdown.dec(), 4);
   uni.on('close', closeHandler);
   assert.strictEqual(uni.id, 2);
 
-  assert(uni.clientInitiated);
-  assert(!uni.bidirectional);
   assert(!uni.serverInitiated);
   assert(uni.unidirectional);
 
   req.on('stream', common.mustCall((stream) => {
     assert(stream.serverInitiated);
-    assert(!stream.clientInitiated);
     switch (stream.id) {
       case 1:
         assert(!stream.unidirectional);
-        assert(stream.bidirectional);
         stream.end();
         break;
       case 3:
         assert(stream.unidirectional);
-        assert(!stream.bidirectional);
     }
     stream.resume();
     stream.on('end', common.mustCall());
