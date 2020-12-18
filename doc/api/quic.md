@@ -900,12 +900,11 @@ added: v15.0.0
 
 The `'usePreferredAddress'` event is emitted when the client `QuicSession`
 is updated to use the server-advertised preferred address. The callback is
-invoked with a single `address` argument:
+invoked with a three arguments:
 
-* `address` {Object}
-  * `address` {string} The preferred host name
-  * `port` {number} The preferred IP port
-  * `type` {string} Either `'udp4'` or `'udp6'`.
+* `address` {string} The preferred host name
+* `port` {number} The preferred IP port
+* `type` {string} Either `'udp4'` or `'udp6'`.
 
 This event is purely informational and will be emitted only when
 `preferredAddressPolicy` is set to `'accept'`.
