@@ -511,10 +511,12 @@ Information about the cipher algorithm selected for the session.
 added: v15.0.0
 -->
 
+* Return: {Promise}
+
 Begins a graceful close of the `QuicSession`. Existing `QuicStream` instances
 will be permitted to close naturally. New `QuicStream` instances will not be
 permitted. Once all `QuicStream` instances have closed, the `QuicSession`
-instance will be destroyed. Returns a `Promise` that is resolved once the
+instance will be destroyed. Returns a promise that is resolved once the
 `QuicSession` instance is destroyed.
 
 #### `quicsession.closeCode`
@@ -732,9 +734,9 @@ added: v15.0.0
     `'utf8'`.
 * Returns: {Promise} containing {QuicStream}
 
-Returns a `Promise` that resolves a new `QuicStream`.
+Returns a promise that resolves a new `QuicStream`.
 
-The `Promise` will be rejected if the `QuicSession` has been destroyed, is in
+The promise will be rejected if the `QuicSession` has been destroyed, is in
 the process of a graceful shutdown, or the `QuicSession` is otherwise blocked
 from opening a new stream.
 
@@ -1066,7 +1068,7 @@ The `'session'` event will be emitted multiple times.
 
 The `'session'` event handler can be an async function.
 
-If the `'session'` event handler throws an error, or if it returns a `Promise`
+If the `'session'` event handler throws an error, or if it returns a promise
 that is rejected, the error will be handled by destroying the `QuicServerSession`
 automatically and emitting a `'sessionError'` event on the `QuicSocket`.
 
@@ -1218,7 +1220,7 @@ added: v15.0.0
 
 Gracefully closes the `QuicSocket`. Existing `QuicSession` instances will be
 permitted to close naturally. New `QuicClientSession` and `QuicServerSession`
-instances will not be allowed. The returns `Promise` will be resolved once
+instances will not be allowed. The returns promise will be resolved once
 the `QuicSocket` is destroyed.
 
 #### `quicsocket.connect([options])`
@@ -1350,7 +1352,7 @@ added: v15.0.0
     IPv6. **Default**: `'udp4'`.
 * Returns: {Promise}
 
-Returns a `Promise` that resolves a new `QuicClientSession`.
+Returns a promise that resolves a new `QuicClientSession`.
 
 #### `quicsocket.destroy([error])`
 <!-- YAML
@@ -1531,7 +1533,7 @@ added: v15.0.0
     session state is not shared between applications. Unused by clients.
 * Returns: {Promise}
 
-Listen for new peer-initiated sessions. Returns a `Promise` that is resolved
+Listen for new peer-initiated sessions. Returns a promise that is resolved
 once the `QuicSocket` is actively listening.
 
 #### `quicsocket.listenDuration`
@@ -1987,7 +1989,7 @@ added: v15.0.0
 * Returns: {Promise}
 
 Closes the `QuicStream` by ending both sides of the `QuicStream` `Duplex`.
-Returns a `Promise` that is resolved once the `QuicStream` has been destroyed.
+Returns a promise that is resolved once the `QuicStream` has been destroyed.
 
 #### `quicstream.dataAckHistogram`
 <!-- YAML
@@ -2239,7 +2241,7 @@ function as an option in several places throughout the QUIC API:
 * `quicsocket.connect()`
 * `quicsocket.listen()`
 
-The custom `lookup` function must return a `Promise` that is
+The custom `lookup` function must return a promise that is
 resolved once the lookup is complete. It will be invoked with
 two arguments:
 
