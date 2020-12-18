@@ -42,8 +42,7 @@ enum QuicStreamHeadersKind : int {
   QUICSTREAM_HEADERS_KIND_NONE = 0,
   QUICSTREAM_HEADERS_KIND_INFORMATIONAL,
   QUICSTREAM_HEADERS_KIND_INITIAL,
-  QUICSTREAM_HEADERS_KIND_TRAILING,
-  QUICSTREAM_HEADERS_KIND_PUSH
+  QUICSTREAM_HEADERS_KIND_TRAILING
 };
 
 #define STREAM_STATS(V)                                                        \
@@ -195,16 +194,12 @@ class QuicStream : public AsyncWrap,
       v8::Local<v8::Object> target,
       v8::Local<v8::Context> context);
 
-  static BaseObjectPtr<QuicStream> New(
-      QuicSession* session,
-      int64_t stream_id,
-      int64_t push_id = 0);
+  static BaseObjectPtr<QuicStream> New(QuicSession* session, int64_t stream_id);
 
   QuicStream(
       QuicSession* session,
       v8::Local<v8::Object> target,
-      int64_t stream_id,
-      int64_t push_id = 0);
+      int64_t stream_id);
 
   ~QuicStream() override;
 
@@ -212,11 +207,6 @@ class QuicStream : public AsyncWrap,
 
   // The numeric identifier of the QuicStream.
   int64_t id() const { return stream_id_; }
-
-  // If the QuicStream is associated with a push promise,
-  // the numeric identifier of the promise. Currently only
-  // used by HTTP/3.
-  int64_t push_id() const { return push_id_; }
 
   QuicSession* session() const { return session_.get(); }
 
@@ -298,7 +288,7 @@ class QuicStream : public AsyncWrap,
   // submitted to the QUIC connection.
   inline void Commit(size_t amount);
 
-  inline void EndHeaders(int64_t push_id = 0);
+  inline void EndHeaders();
 
   // Passes a chunk of data on to the QuicStream listener.
   void ReceiveData(
@@ -324,8 +314,6 @@ class QuicStream : public AsyncWrap,
   // Submits trailing headers. Returns false if headers are not
   // supported on the underlying QuicApplication.
   inline bool SubmitTrailers(v8::Local<v8::Array> headers);
-
-  inline BaseObjectPtr<QuicStream> SubmitPush(v8::Local<v8::Array> headers);
 
   // Required for StreamBase
   bool IsAlive() override;
@@ -377,7 +365,6 @@ class QuicStream : public AsyncWrap,
   QuicBuffer streambuf_;
 
   int64_t stream_id_ = 0;
-  int64_t push_id_ = 0;
   bool destroyed_ = false;
   AliasedStruct<QuicStreamState> state_;
   DoneCB shutdown_done_ = nullptr;

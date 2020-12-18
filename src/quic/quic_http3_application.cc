@@ -62,8 +62,6 @@ Http3Application::Http3Application(
             &Http3ApplicationConfig::qpack_blocked_streams);
   SetConfig(IDX_HTTP3_MAX_HEADER_LIST_SIZE,
             &Http3ApplicationConfig::max_field_section_size);
-  SetConfig(IDX_HTTP3_MAX_PUSHES,
-            &Http3ApplicationConfig::max_pushes);
   SetConfig(IDX_HTTP3_MAX_HEADER_PAIRS,
             &Http3ApplicationConfig::max_header_pairs);
   SetConfig(IDX_HTTP3_MAX_HEADER_LENGTH,
@@ -74,91 +72,10 @@ Http3Application::Http3Application(
           : GetClientMaxHeaderPairs(config_.max_header_pairs));
   set_max_header_length(config_.max_header_length);
 
+  // Disable push entirely.
+  config_.max_pushes = 0;
+
   session->quic_state()->http3config_buffer[IDX_HTTP3_CONFIG_COUNT] = 0;
-}
-
-// Push streams in HTTP/3 are a bit complicated.
-// First, it's important to know that only an HTTP/3 server can
-// create a push stream.
-// Second, a push stream is essentially an *assumed* request. For
-// instance, if a client requests a webpage that has links to css
-// and js files, and the server expects the client to send subsequent
-// requests for those css and js files, the server can shortcut the
-// process by opening a push stream for each additional resource
-// it assumes the client to make.
-// Third, a push stream can only be opened within the context
-// of an HTTP/3 request/response. Essentially, a server receives
-// a request and while processing the response, the server can
-// open one or more push streams.
-//
-// Now... a push stream consists of two components: a push promise
-// and a push fulfillment. The push promise is sent *as part of
-// the response on the original stream* and is assigned a push id
-// and a block of headers containing the *assumed request headers*.
-// The push promise is sent on the request/response bidirectional
-// stream.
-// The push fulfillment is a unidirectional stream opened by the
-// server that contains the push id, the response header block, and
-// the response payload.
-// Here's where it can get a bit complicated: the server sends the
-// push promise and the push fulfillment on two different, and
-// independent QUIC streams. The push id is used to correlate
-// those on the client side, but, it's entirely possible for the
-// client to receive the push fulfillment before it actually receives
-// the push promise. It's *unlikely*, but it's possible. Fortunately,
-// nghttp3 handles the complexity of that for us internally but
-// makes for some weird timing and could lead to some amount of
-// buffering to occur.
-//
-// The *logical* order of events from the client side *should*
-// be: (a) receive the push promise containing assumed request
-// headers, (b) receive the push fulfillment containing the
-// response headers followed immediately by the response payload.
-//
-// On the server side, the steps are: (a) first create the push
-// promise creating the push_id then (b) open the unidirectional
-// stream that will be used to fullfil the push promise. Once that
-// unidirectional stream is created, the push id and unidirectional
-// stream ID must be bound. The CreateAndBindPushStream handles (b)
-int64_t Http3Application::CreateAndBindPushStream(int64_t push_id) {
-  CHECK(session()->is_server());
-  int64_t stream_id;
-  if (!session()->OpenUnidirectionalStream(&stream_id))
-    return 0;
-  return nghttp3_conn_bind_push_stream(
-      connection(),
-      push_id,
-      stream_id) == 0 ? stream_id : 0;
-}
-
-bool Http3Application::SubmitPushPromise(
-    int64_t id,
-    int64_t* push_id,
-    int64_t* stream_id,
-    const Http3Headers& headers) {
-  // Successfully creating the push promise and opening the
-  // fulfillment stream will queue nghttp3 up to send data.
-  // Creating the SendSessionScope here ensures that when
-  // SubmitPush exits, SendPendingData will be called if
-  // we are not within the context of an ngtcp2 callback.
-  QuicSession::SendSessionScope send_scope(session());
-
-  Debug(
-    session(),
-    "Submitting %d push promise headers",
-    headers.length());
-  if (nghttp3_conn_submit_push_promise(
-          connection(),
-          push_id,
-          id,
-          headers.data(),
-          headers.length()) != 0) {
-    return false;
-  }
-  // Once we've successfully submitting the push promise and have
-  // a push id assigned, we create the push fulfillment stream.
-  *stream_id = CreateAndBindPushStream(*push_id);
-  return *stream_id != 0;  // push stream can never use stream id 0
 }
 
 bool Http3Application::SubmitInformation(
@@ -223,34 +140,6 @@ bool Http3Application::SubmitHeaders(
     default:
       UNREACHABLE();
   }
-}
-
-// SubmitPush initiates a push stream by first creating a push promise
-// with an associated push id, then opening the unidirectional stream
-// that is used to fullfill it. Assuming both operations are successful,
-// the QuicStream instance is created and added to the server QuicSession.
-//
-// The headers block passed to the submit push contains the assumed
-// *request* headers. The response headers are provided using the
-// SubmitHeaders() function on the created QuicStream.
-BaseObjectPtr<QuicStream> Http3Application::SubmitPush(
-    int64_t id,
-    Local<Array> headers) {
-  // If the QuicSession is not a server session, return false
-  // immediately. Push streams cannot be sent by an HTTP/3 client.
-  if (!session()->is_server())
-    return {};
-
-  Http3Headers nva(env(), headers);
-  int64_t push_id;
-  int64_t stream_id;
-
-  // There are several reasons why push may fail. We currently handle
-  // them all the same. Later we might want to differentiate when the
-  // return value is NGHTTP3_ERR_PUSH_ID_BLOCKED.
-  return SubmitPushPromise(id, &push_id, &stream_id, nva) ?
-      QuicStream::New(session(), stream_id, push_id) :
-      BaseObjectPtr<QuicStream>();
 }
 
 // Submit informational headers (response headers that use a 1xx
@@ -373,8 +262,6 @@ bool Http3Application::Initialize() {
         config_.qpack_blocked_streams);
   Debug(session(), "Max Header List Size: %" PRIu64,
         config_.max_field_section_size);
-  Debug(session(), "Max Pushes: %" PRIu64,
-        config_.max_pushes);
 
   CreateConnection();
   Debug(session(), "HTTP/3 connection created");
@@ -678,24 +565,11 @@ bool Http3Application::ReceiveHeader(
 }
 
 // Marks the completion of a headers block.
-void Http3Application::EndHeaders(int64_t stream_id, int64_t push_id) {
+void Http3Application::EndHeaders(int64_t stream_id) {
   Debug(session(), "Ending header block for stream %" PRId64, stream_id);
   BaseObjectPtr<QuicStream> stream = session()->FindStream(stream_id);
   CHECK(stream);
   stream->EndHeaders();
-}
-
-void Http3Application::CancelPush(
-    int64_t push_id,
-    int64_t stream_id) {
-  Debug(session(), "push stream canceled");
-}
-
-void Http3Application::PushStream(
-    int64_t push_id,
-    int64_t stream_id) {
-  Debug(session(), "Received push stream %" PRIu64 " (%" PRIu64 ")",
-        stream_id, push_id);
 }
 
 void Http3Application::SendStopSending(
@@ -853,9 +727,9 @@ int Http3Application::OnBeginPushPromise(
     int64_t push_id,
     void* conn_user_data,
     void* stream_user_data) {
-  Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->BeginHeaders(stream_id, QUICSTREAM_HEADERS_KIND_PUSH);
-  return 0;
+  // We shouldn't receive any push promises because
+  // we've explicitly asked not to..
+  return NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
 int Http3Application::OnReceivePushPromise(
@@ -868,10 +742,9 @@ int Http3Application::OnReceivePushPromise(
     uint8_t flags,
     void* conn_user_data,
     void* stream_user_data) {
-  Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  if (!app->ReceiveHeader(stream_id, token, name, value, flags))
-    return NGHTTP3_ERR_CALLBACK_FAILURE;
-  return 0;
+  // We shouldn't receive any push promises because
+  // we've explicitly asked not to..
+  return NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
 int Http3Application::OnEndPushPromise(
@@ -880,9 +753,9 @@ int Http3Application::OnEndPushPromise(
     int64_t push_id,
     void* conn_user_data,
     void* stream_user_data) {
-  Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->EndHeaders(stream_id, push_id);
-  return 0;
+  // We shouldn't receive any push promises because
+  // we've explicitly asked not to..
+  return NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
 int Http3Application::OnCancelPush(
@@ -891,9 +764,9 @@ int Http3Application::OnCancelPush(
     int64_t stream_id,
     void* conn_user_data,
     void* stream_user_data) {
-  Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->CancelPush(push_id, stream_id);
-  return 0;
+  // We shouldn't receive any push promises because
+  // we've explicitly asked not to..
+  return NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
 int Http3Application::OnSendStopSending(
@@ -912,9 +785,9 @@ int Http3Application::OnPushStream(
     int64_t push_id,
     int64_t stream_id,
     void* conn_user_data) {
-  Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  app->PushStream(push_id, stream_id);
-  return 0;
+  // We shouldn't receive any push promises because
+  // we've explicitly asked not to..
+  return NGHTTP3_ERR_CALLBACK_FAILURE;
 }
 
 int Http3Application::OnEndStream(

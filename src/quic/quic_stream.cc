@@ -39,17 +39,15 @@ namespace quic {
 QuicStream::QuicStream(
     QuicSession* sess,
     Local<Object> wrap,
-    int64_t stream_id,
-    int64_t push_id)
-  : AsyncWrap(sess->env(), wrap, AsyncWrap::PROVIDER_QUICSTREAM),
-    StreamBase(sess->env()),
-    StatsBase(sess->env(), wrap,
-              HistogramOptions::ACK |
-              HistogramOptions::RATE |
-              HistogramOptions::SIZE),
+    int64_t stream_id)
+    : AsyncWrap(sess->env(), wrap, AsyncWrap::PROVIDER_QUICSTREAM),
+      StreamBase(sess->env()),
+      StatsBase(sess->env(), wrap,
+                HistogramOptions::ACK |
+                HistogramOptions::RATE |
+                HistogramOptions::SIZE),
     session_(sess),
     stream_id_(stream_id),
-    push_id_(push_id),
     state_(sess->env()->isolate()),
     quic_state_(sess->quic_state()) {
   CHECK_NOT_NULL(sess);
@@ -283,8 +281,7 @@ void QuicStream::MemoryInfo(MemoryTracker* tracker) const {
 
 BaseObjectPtr<QuicStream> QuicStream::New(
     QuicSession* session,
-    int64_t stream_id,
-    int64_t push_id) {
+    int64_t stream_id) {
   Local<Object> obj;
   if (!session->quic_state()
               ->quicserverstream()
@@ -293,11 +290,7 @@ BaseObjectPtr<QuicStream> QuicStream::New(
     return {};
   }
   BaseObjectPtr<QuicStream> stream =
-      MakeDetachedBaseObject<QuicStream>(
-          session,
-          obj,
-          stream_id,
-          push_id);
+      MakeDetachedBaseObject<QuicStream>(session, obj, stream_id);
   CHECK(stream);
   session->AddStream(stream);
   return stream;
@@ -505,21 +498,6 @@ void QuicStreamSubmitTrailers(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsArray());
   args.GetReturnValue().Set(stream->SubmitTrailers(args[0].As<Array>()));
 }
-
-// Requests creation of a push stream. Not all QUIC Applications will
-// support push streams. If pushes are not supported, the return value
-// will be undefined, otherwise the return value will be the created
-// QuicStream representing the push.
-void QuicStreamSubmitPush(const FunctionCallbackInfo<Value>& args) {
-  QuicStream* stream;
-  ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
-  CHECK(args[0]->IsArray());
-  BaseObjectPtr<QuicStream> push_stream =
-      stream->SubmitPush(args[0].As<Array>());
-  if (push_stream)
-    args.GetReturnValue().Set(push_stream->object());
-}
-
 }  // namespace
 
 void QuicStream::Initialize(
@@ -543,7 +521,6 @@ void QuicStream::Initialize(
   env->SetProtoMethod(stream, "submitInformation", QuicStreamSubmitInformation);
   env->SetProtoMethod(stream, "submitHeaders", QuicStreamSubmitHeaders);
   env->SetProtoMethod(stream, "submitTrailers", QuicStreamSubmitTrailers);
-  env->SetProtoMethod(stream, "submitPush", QuicStreamSubmitPush);
   state->set_quicserverstream(stream);
   target->Set(env->context(),
               class_name,

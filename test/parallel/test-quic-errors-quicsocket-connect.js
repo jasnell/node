@@ -158,7 +158,6 @@ const client = createQuicSocket();
     'qpackMaxTableCapacity',
     'qpackBlockedStreams',
     'maxHeaderListSize',
-    'maxPushes',
   ].map(async (prop) => {
     await assert.rejects(client.connect({ h3: { [prop]: -1 } }), {
       code: 'ERR_OUT_OF_RANGE'
@@ -214,7 +213,6 @@ const client = createQuicSocket();
 //  [x] h3.qpackMaxTableCapacity - must be a number greater than zero
 //  [x] h3.qpackBlockedStreams - must be a number greater than zero
 //  [x] h3.maxHeaderListSize - must be a number greater than zero
-//  [x] h3.maxPushes - must be a number greater than zero
 //
 // Secure Context Related:
 //

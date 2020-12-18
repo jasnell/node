@@ -231,8 +231,6 @@ concepts:
 * Initial Headers: HTTP request or response headers
 * Trailing Headers: A block of headers that follow the body of a
   request or response.
-* Push Promise Headers: A block of headers included in a promised
-  push stream.
 
 If headers are supported by the application protocol in use for
 a given `QuicSession`, the `'initialHeaders'`, `'informationalHeaders'`,
@@ -2038,32 +2036,6 @@ added: v15.0.0
 The maximum received offset for this `QuicStream`.
 
 Read-only.
-
-#### `quicstream.pushStream(headers[, options])`
-<!-- YAML
-added: v15.0.0
--->
-
-* `headers` {Object} An object representing a block of headers to be
-  transmitted with the push promise.
-* `options` {Object}
-  * `highWaterMark` {number} Total number of bytes that the `QuicStream` may
-    buffer internally before the `quicstream.write()` function starts returning
-    `false`. Default: `16384`.
-  * `defaultEncoding` {string} The default encoding that is used when no
-    encoding is specified as an argument to `quicstream.write()`. Default:
-    `'utf8'`.
-
-* Returns: {QuicStream}
-
-If the selected QUIC application protocol supports push streams, then the
-`pushStream()` method will initiate a new push promise and create a new
-unidirectional `QuicStream` object used to fulfill that push.
-
-Currently only HTTP/3 supports the use of `pushStream()`.
-
-If the selected QUIC application protocol does not support push streams, an
-error will be thrown.
 
 #### `quicstream.serverInitiated`
 <!-- YAML

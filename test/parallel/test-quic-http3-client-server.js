@@ -106,7 +106,6 @@ const countdown = new Countdown(1, () => {
     address: 'localhost',
     port: server.address.port,
     servername: kServerName,
-    h3: { maxPushes: 10 }
   });
   debug('QuicClientSession Created');
 

@@ -144,7 +144,6 @@ void Initialize(Local<Object> target,
   V(IDX_HTTP3_QPACK_MAX_TABLE_CAPACITY)                                        \
   V(IDX_HTTP3_QPACK_BLOCKED_STREAMS)                                           \
   V(IDX_HTTP3_MAX_HEADER_LIST_SIZE)                                            \
-  V(IDX_HTTP3_MAX_PUSHES)                                                      \
   V(IDX_HTTP3_MAX_HEADER_PAIRS)                                                \
   V(IDX_HTTP3_MAX_HEADER_LENGTH)                                               \
   V(IDX_HTTP3_CONFIG_COUNT)                                                    \
@@ -170,7 +169,6 @@ void Initialize(Local<Object> target,
   V(QUICSTREAM_HEADER_FLAGS_TERMINAL)                                          \
   V(QUICSTREAM_HEADERS_KIND_NONE)                                              \
   V(QUICSTREAM_HEADERS_KIND_INFORMATIONAL)                                     \
-  V(QUICSTREAM_HEADERS_KIND_PUSH)                                              \
   V(QUICSTREAM_HEADERS_KIND_INITIAL)                                           \
   V(QUICSTREAM_HEADERS_KIND_TRAILING)                                          \
   V(ERR_FAILED_TO_CREATE_SESSION)                                              \

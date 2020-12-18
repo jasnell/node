@@ -20,7 +20,7 @@ namespace quic {
 constexpr uint64_t DEFAULT_QPACK_MAX_TABLE_CAPACITY = 4096;
 constexpr uint64_t DEFAULT_QPACK_BLOCKED_STREAMS = 100;
 constexpr size_t DEFAULT_MAX_HEADER_LIST_SIZE = 65535;
-constexpr size_t DEFAULT_MAX_PUSHES = 65535;
+constexpr size_t DEFAULT_MAX_PUSHES = 0;
 
 struct Http3RcBufferPointerTraits {
   typedef nghttp3_rcbuf rcbuf_t;
@@ -123,10 +123,6 @@ class Http3Application final :
       int64_t stream_id,
       v8::Local<v8::Array> headers) override;
 
-  BaseObjectPtr<QuicStream> SubmitPush(
-      int64_t id,
-      v8::Local<v8::Array> headers) override;
-
   // Implementation for mem::NgLibMemoryManager
   void CheckAllocatedSize(size_t previous_size) const;
   void IncreaseAllocatedSize(size_t size);
@@ -145,18 +141,12 @@ class Http3Application final :
 
   bool CreateAndBindControlStream();
   bool CreateAndBindQPackStreams();
-  int64_t CreateAndBindPushStream(int64_t push_id);
 
   int GetStreamData(StreamData* stream_data) override;
 
   bool BlockStream(int64_t stream_id) override;
   bool StreamCommit(StreamData* stream_data, size_t datalen) override;
   bool ShouldSetFin(const StreamData& data) override;
-  bool SubmitPushPromise(
-      int64_t id,
-      int64_t* push_id,
-      int64_t* stream_id,
-      const Http3Headers& headers);
   bool SubmitInformation(int64_t id, const Http3Headers& headers);
   bool SubmitTrailers(int64_t id, const Http3Headers& headers);
   bool SubmitHeaders(int64_t id, const Http3Headers& headers, int32_t flags);
@@ -180,10 +170,8 @@ class Http3Application final :
       nghttp3_rcbuf* name,
       nghttp3_rcbuf* value,
       uint8_t flags);
-  void EndHeaders(int64_t stream_id, int64_t push_id = 0);
-  void CancelPush(int64_t push_id, int64_t stream_id);
+  void EndHeaders(int64_t stream_id);
   void SendStopSending(int64_t stream_id, uint64_t app_error_code);
-  void PushStream(int64_t push_id, int64_t stream_id);
   void EndStream(int64_t stream_id);
 
   bool is_control_stream(int64_t stream_id) const {

@@ -65,7 +65,6 @@ const countdown = new Countdown(1, () => {
     address: 'localhost',
     port: server.address.port,
     maxStreamsUni: 10,
-    h3: { maxPushes: 10 }
   });
 
   req.on('close', common.mustCall());

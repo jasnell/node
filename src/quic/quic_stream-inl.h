@@ -88,21 +88,12 @@ bool QuicStream::SubmitTrailers(v8::Local<v8::Array> headers) {
   return session_->SubmitTrailers(stream_id_, headers);
 }
 
-BaseObjectPtr<QuicStream> QuicStream::SubmitPush(
-    v8::Local<v8::Array> headers) {
-  return session_->SubmitPush(stream_id_, headers);
-}
-
-void QuicStream::EndHeaders(int64_t push_id) {
+void QuicStream::EndHeaders() {
   Debug(this, "End Headers");
   // Upon completion of a block of headers, convert the
   // vector of Header objects into an array of name+value
   // pairs, then call the on_stream_headers function.
-  session()->application()->StreamHeaders(
-      stream_id_,
-      headers_kind_,
-      headers_,
-      push_id);
+  session()->application()->StreamHeaders(stream_id_, headers_kind_, headers_);
   headers_.clear();
 }
 
