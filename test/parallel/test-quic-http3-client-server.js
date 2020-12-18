@@ -58,7 +58,7 @@ const countdown = new Countdown(1, () => {
 
     session.on('secure', common.mustCall((_, alpn) => {
       debug('QuicServerSession handshake completed');
-      assert.strictEqual(session.alpnProtocol, alpn);
+      assert.strictEqual(session.alpn, alpn);
     }));
 
     session.on('stream', common.mustCall((stream) => {

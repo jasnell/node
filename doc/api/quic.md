@@ -378,13 +378,13 @@ Emitted after the TLS handshake has been completed.
 The callback will be invoked with two arguments:
 
 * `servername` {string} The SNI servername requested by the client.
-* `alpnProtocol` {string} The negotiated ALPN protocol.
+* `alpn` {string} The negotiated ALPN protocol.
 * `cipher` {Object} Information about the selected cipher algorithm.
   * `name` {string} The cipher algorithm name.
   * `version` {string} The TLS version (currently always `'TLSv1.3'`).
 
 These will also be available using the `quicsession.servername`,
-`quicsession.alpnProtocol`, and `quicsession.cipher` properties.
+`quicsession.alpn`, and `quicsession.cipher` properties.
 
 The `'secure'` event will not be emitted more than once.
 
@@ -420,7 +420,7 @@ added: v15.0.0
 An object containing the local address information for the `QuicSocket` to which
 the `QuicSession` is currently associated.
 
-#### `quicsession.alpnProtocol`
+#### `quicsession.alpn`
 <!-- YAML
 added: v15.0.0
 -->

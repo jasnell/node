@@ -142,7 +142,7 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
       debug('  Cipher: %s, %s', cipher.name, cipher.version);
       assert.strictEqual(session.servername, servername);
       assert.strictEqual(servername, kServerName);
-      assert.strictEqual(session.alpnProtocol, alpn);
+      assert.strictEqual(session.alpn, alpn);
       assert.strictEqual(session.getPeerCertificate().subject.CN, 'agent1');
       assert(session.authenticated);
       assert.strictEqual(session.authenticationError, undefined);
@@ -272,7 +272,7 @@ client.on('close', common.mustCall(onSocketClose.bind(client)));
     assert.strictEqual(servername, kServerName);
     assert.strictEqual(req.servername, kServerName);
     assert.strictEqual(alpn, kALPN);
-    assert.strictEqual(req.alpnProtocol, kALPN);
+    assert.strictEqual(req.alpn, kALPN);
     assert(req.ephemeralKeyInfo);
     assert.strictEqual(req.getPeerCertificate().subject.CN, 'agent1');
 
