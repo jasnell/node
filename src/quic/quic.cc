@@ -1,4 +1,6 @@
 #include "aliased_struct-inl.h"
+#include "async_wrap-inl.h"
+#include "base_object-inl.h"
 #include "debug_utils-inl.h"
 #include "node.h"
 #include "env-inl.h"
@@ -7,9 +9,9 @@
 #include "node_errors.h"
 #include "node_process.h"
 #include "quic_crypto.h"
-#include "quic_session-inl.h"
-#include "quic_socket-inl.h"
-#include "quic_stream-inl.h"
+#include "quic_session.h"
+#include "quic_socket.h"
+#include "quic_stream.h"
 #include "quic_state.h"
 #include "quic_util-inl.h"
 #include "node_sockaddr-inl.h"
@@ -120,9 +122,13 @@ void Initialize(Local<Object> target,
               FIXED_ONE_BYTE_STRING(isolate, "socketConfig"),
               state->quicsocketconfig_buffer.GetArrayBuffer()).Check();
 
+  JSQuicBufferConsumer::Initialize(env, target);
+  ArrayBufferViewSource::Initialize(env, target);
+  StreamSource::Initialize(env, target);
+  StreamBaseSource::Initialize(env, target);
   QuicSocket::Initialize(env, target, context);
   QuicSession::Initialize(env, target, context);
-  QuicStream::Initialize(env, target, context);
+  QuicStream::Initialize(env, target);
 
   env->SetMethod(target, "setCallbacks", QuicSetCallbacks);
   env->SetMethod(target,

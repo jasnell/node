@@ -7,7 +7,7 @@
 #include "node_http_common.h"
 #include "node_mem.h"
 #include "quic_session.h"
-#include "quic_stream-inl.h"
+#include "quic_stream.h"
 #include "quic_util.h"
 #include "v8.h"
 #include <ngtcp2/ngtcp2.h>

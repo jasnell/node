@@ -1,4 +1,4 @@
-#include "quic_socket-inl.h"  // NOLINT(build/include)
+#include "quic_socket.h"  // NOLINT(build/include)
 #include "aliased_struct-inl.h"
 #include "allocated_buffer-inl.h"
 #include "async_wrap-inl.h"
@@ -13,7 +13,8 @@
 #include "node_internals.h"
 #include "node_mem-inl.h"
 #include "quic_crypto.h"
-#include "quic_session-inl.h"
+#include "quic_session.h"
+#include "quic_stream.h"
 #include "quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include "req_wrap-inl.h"
@@ -99,6 +100,18 @@ QuicPacket::QuicPacket(const QuicPacket& other) :
 const char* QuicPacket::diagnostic_label() const {
   return diagnostic_label_ != nullptr ?
       diagnostic_label_ : "unspecified";
+}
+
+std::unique_ptr<QuicPacket> QuicPacket::Create(
+    const char* diagnostic_label,
+    size_t len) {
+  CHECK_LE(len, MAX_PKTLEN);
+  return std::make_unique<QuicPacket>(diagnostic_label, len);
+}
+
+std::unique_ptr<QuicPacket> QuicPacket::Copy(
+    const std::unique_ptr<QuicPacket>& other) {
+  return std::make_unique<QuicPacket>(*other.get());
 }
 
 QuicSocketListener::~QuicSocketListener() {
@@ -313,6 +326,125 @@ void QuicSocket::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackFieldWithSize(
       "current_ngtcp2_memory",
       current_ngtcp2_memory_);
+}
+
+void QuicSocket::WaitForPendingCallbacks() {
+  if (!has_pending_callbacks()) {
+    OnEndpointDone();
+    return;
+  }
+  waiting_for_callbacks_ = true;
+}
+
+void QuicSocket::AssociateCID(
+    const QuicCID& cid,
+    const QuicCID& scid) {
+  if (cid && scid)
+    dcid_to_scid_[cid] = scid;
+
+  for (const auto& p : dcid_to_scid_) {
+    printf(":: %s <=> %s\n", p.first.ToString().c_str(), p.second.ToString().c_str());
+  }
+}
+
+void QuicSocket::DisassociateCID(const QuicCID& cid) {
+  if (cid) {
+    Debug(this, "Removing association for cid %s", cid);
+    dcid_to_scid_.erase(cid);
+  }
+}
+
+void QuicSocket::AssociateStatelessResetToken(
+    const StatelessResetToken& token,
+    BaseObjectPtr<QuicSession> session) {
+  Debug(this, "Associating stateless reset token %s", token);
+  token_map_[token] = session;
+}
+
+SocketAddress QuicSocket::local_address() const {
+  return udp_->GetSockName();
+}
+
+void QuicSocket::DisassociateStatelessResetToken(
+    const StatelessResetToken& token) {
+  Debug(this, "Removing stateless reset token %s", token);
+  token_map_.erase(token);
+}
+
+void QuicSocket::ReceiveStart() {
+  udp_->RecvStart();
+}
+
+void QuicSocket::ReceiveStop() {
+  udp_->RecvStop();
+}
+
+void QuicSocket::RemoveSession(
+    const QuicCID& cid,
+    const SocketAddress& addr) {
+  DecrementSocketAddressCounter(addr);
+  sessions_.erase(cid);
+}
+
+void QuicSocket::OnError(ssize_t error) {
+  listener_->OnError(error);
+}
+
+void QuicSocket::IncrementStatelessResetCounter(const SocketAddress& addr) {
+  addrLRU_.Upsert(addr)->reset_count++;
+}
+
+void QuicSocket::IncrementSocketAddressCounter(const SocketAddress& addr) {
+  addrLRU_.Upsert(addr)->active_connections++;
+}
+
+void QuicSocket::DecrementSocketAddressCounter(const SocketAddress& addr) {
+  SocketAddressInfo* counts = addrLRU_.Peek(addr);
+  if (counts != nullptr && counts->active_connections > 0)
+    counts->active_connections--;
+}
+
+size_t QuicSocket::GetCurrentSocketAddressCounter(const SocketAddress& addr) {
+  SocketAddressInfo* counts = addrLRU_.Peek(addr);
+  return counts != nullptr ? counts->active_connections : 0;
+}
+
+size_t QuicSocket::GetCurrentStatelessResetCounter(const SocketAddress& addr) {
+  SocketAddressInfo* counts = addrLRU_.Peek(addr);
+  return counts != nullptr ? counts->reset_count : 0;
+}
+
+void QuicSocket::ServerBusy(bool on) {
+  Debug(this, "Turning Server Busy Response %s", on ? "on" : "off");
+  state_->server_busy = on ? 1 : 0;
+  listener_->OnServerBusy();
+}
+
+bool QuicSocket::is_diagnostic_packet_loss(double prob) const {
+  if (LIKELY(prob == 0.0)) return false;
+  unsigned char c = 255;
+  crypto::EntropySource(&c, 1);
+  return (static_cast<double>(c) / 255) < prob;
+}
+
+void QuicSocket::set_validated_address(const SocketAddress& addr) {
+  addrLRU_.Upsert(addr)->validated = true;
+}
+
+bool QuicSocket::is_validated_address(const SocketAddress& addr) const {
+  auto info = addrLRU_.Peek(addr);
+  return info != nullptr ? info->validated : false;
+}
+
+void QuicSocket::AddSession(
+    const QuicCID& cid,
+    BaseObjectPtr<QuicSession> session) {
+  sessions_[cid] = session;
+  IncrementSocketAddressCounter(session->remote_address());
+  IncrementStat(
+      session->is_server() ?
+          &QuicSocketStats::server_sessions :
+          &QuicSocketStats::client_sessions);
 }
 
 void QuicSocket::Listen(
@@ -546,6 +678,8 @@ void QuicSocket::OnReceive(
     IncrementStat(&QuicSocketStats::packets_ignored);
     return;
   }
+
+printf(">> %s\n", sessions_.begin()->first.ToString().c_str());
 
   IncrementStat(&QuicSocketStats::packets_received);
 }
@@ -822,7 +956,6 @@ BaseObjectPtr<QuicSession> QuicSocket::AcceptInitialPacket(
           server_options_,
           qlog_);
   CHECK(session);
-
   listener_->OnSessionReady(session);
 
   // It's possible that the session was destroyed while processing

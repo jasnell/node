@@ -1,7 +1,10 @@
-#include "quic/quic_buffer-inl.h"
+#include "quic/quic_buffer.h"
+#include "base_object-inl.h"
+#include "async_wrap-inl.h"
 #include "node_bob-inl.h"
 #include "util-inl.h"
 #include "uv.h"
+#include "v8.h"
 
 #include "gtest/gtest.h"
 #include <memory>
@@ -15,192 +18,145 @@ using node::bob::Done;
 using ::testing::AssertionSuccess;
 using ::testing::AssertionFailure;
 
-::testing::AssertionResult IsEqual(size_t actual, int expected) {
-  return (static_cast<size_t>(expected) == actual) ? AssertionSuccess() :
-      AssertionFailure() << actual << " is not equal to " << expected;
-}
-
 TEST(QuicBuffer, Simple) {
   char data[100];
   memset(&data, 0, node::arraysize(data));
-  uv_buf_t buf = uv_buf_init(data, node::arraysize(data));
-
-  bool done = false;
+  bool deleter_called = false;
+  std::shared_ptr<v8::BackingStore> store =
+      v8::ArrayBuffer::NewBackingStore(
+          data,
+          sizeof(data),
+          [](void* data, size_t len, void* deleter_data) {
+            bool* deleter_called = static_cast<bool*>(deleter_data);
+            *deleter_called = true;
+          },
+          &deleter_called);
 
   QuicBuffer buffer;
-  buffer.Push(&buf, 1, [&](int status) {
-    EXPECT_EQ(0, status);
-    done = true;
-  });
+  buffer.Push(std::move(store), sizeof(data));
+  ASSERT_EQ(buffer.length(), 100U);
 
-  buffer.Consume(100);
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
+  buffer.Acknowledge(100);
 
-  // We have to move the read head forward in order to consume
-  buffer.Seek(1);
-  buffer.Consume(100);
-  ASSERT_TRUE(done);
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
+  ASSERT_EQ(buffer.length(), 0U);
+  ASSERT_TRUE(deleter_called);
 }
 
 TEST(QuicBuffer, ConsumeMore) {
   char data[100];
   memset(&data, 0, node::arraysize(data));
-  uv_buf_t buf = uv_buf_init(data, node::arraysize(data));
-
-  bool done = false;
+  bool deleter_called = false;
+  std::shared_ptr<v8::BackingStore> store =
+      v8::ArrayBuffer::NewBackingStore(
+          data,
+          sizeof(data),
+          [](void* data, size_t len, void* deleter_data) {
+            bool* deleter_called = static_cast<bool*>(deleter_data);
+            *deleter_called = true;
+          },
+          &deleter_called);
 
   QuicBuffer buffer;
-  buffer.Push(&buf, 1, [&](int status) {
-    EXPECT_EQ(0, status);
-    done = true;
-  });
+  buffer.Push(std::move(store), sizeof(data));
+  ASSERT_EQ(buffer.length(), 100U);
 
-  buffer.Seek(1);
-  buffer.Consume(150);  // Consume more than what was buffered
-  ASSERT_TRUE(done);
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
+  // Consume more than what was buffered
+  ASSERT_EQ(buffer.Acknowledge(150), 100U);
+
+  ASSERT_EQ(buffer.length(), 0U);
+  ASSERT_TRUE(deleter_called);
 }
 
-TEST(QuicBuffer, Multiple) {
-  uv_buf_t bufs[] {
-    uv_buf_init(const_cast<char*>("abcdefghijklmnopqrstuvwxyz"), 26),
-    uv_buf_init(const_cast<char*>("zyxwvutsrqponmlkjihgfedcba"), 26)
+TEST(QuicBuffer, MultipleBuffers) {
+  char one[] = "abcdefghijklmnopqrstuvwxyz";
+  char two[] = "zyxwvutsrqponmlkjihgfedcba";
+  bool one_deleted = false;
+  bool two_deleted = false;
+
+  auto deleter_fn = [](void* data, size_t len, void* deleter_data) {
+    bool* deleted = static_cast<bool*>(deleter_data);
+    *deleted = true;
   };
+
+  std::shared_ptr<v8::BackingStore> store_one =
+      v8::ArrayBuffer::NewBackingStore(
+          one,
+          26,
+          deleter_fn,
+          &one_deleted);
+
+  std::shared_ptr<v8::BackingStore> store_two =
+      v8::ArrayBuffer::NewBackingStore(
+          two,
+          26,
+          deleter_fn,
+          &two_deleted);
 
   QuicBuffer buf;
-  bool done = false;
-  buf.Push(bufs, 2, [&](int status) { done = true; });
+  buf.Push(std::move(store_one), store_two->ByteLength());
+  buf.Push(std::move(store_two), store_two->ByteLength());
+
+  ASSERT_EQ(buf.remaining(), 52U);
+  ASSERT_EQ(buf.length(), 52U);
 
   buf.Seek(2);
-  ASSERT_TRUE(IsEqual(buf.remaining(), 50));
-  ASSERT_TRUE(IsEqual(buf.length(), 52));
+  ASSERT_EQ(buf.remaining(), 50U);
+  ASSERT_EQ(buf.length(), 52U);
 
-  buf.Consume(25);
-  ASSERT_TRUE(IsEqual(buf.length(), 27));
+  buf.Acknowledge(25);
+  ASSERT_EQ(buf.length(), 27U);
 
-  buf.Consume(25);
-  ASSERT_TRUE(IsEqual(buf.length(), 2));
+  buf.Acknowledge(25);
+  ASSERT_EQ(buf.length(), 2U);
 
-  buf.Consume(2);
-  ASSERT_TRUE(IsEqual(buf.length(), 0));
-}
+  ASSERT_TRUE(one_deleted);
+  ASSERT_FALSE(two_deleted);
 
-TEST(QuicBuffer, Multiple2) {
-  char* ptr = new char[100];
-  memset(ptr, 0, 50);
-  memset(ptr + 50, 1, 50);
+  buf.Acknowledge(2);
+  ASSERT_EQ(buf.length(), 0U);
 
-  uv_buf_t bufs[] = {
-    uv_buf_init(ptr, 50),
-    uv_buf_init(ptr + 50, 50)
-  };
-
-  int count = 0;
-
-  QuicBuffer buffer;
-  buffer.Push(
-      bufs, node::arraysize(bufs),
-      [&](int status) {
-    count++;
-    ASSERT_EQ(0, status);
-    delete[] ptr;
-  });
-  buffer.Seek(node::arraysize(bufs));
-
-  buffer.Consume(25);
-  ASSERT_TRUE(IsEqual(buffer.length(), 75));
-  buffer.Consume(25);
-  ASSERT_TRUE(IsEqual(buffer.length(), 50));
-  buffer.Consume(25);
-  ASSERT_TRUE(IsEqual(buffer.length(), 25));
-  buffer.Consume(25);
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
-
-  // The callback was only called once tho
-  ASSERT_EQ(1, count);
+  ASSERT_TRUE(two_deleted);
 }
 
 TEST(QuicBuffer, Cancel) {
-  char* ptr = new char[100];
-  memset(ptr, 0, 50);
-  memset(ptr + 50, 1, 50);
+  char one[] = "abcdefghijklmnopqrstuvwxyz";
+  char two[] = "zyxwvutsrqponmlkjihgfedcba";
+  bool one_deleted = false;
+  bool two_deleted = false;
 
-  uv_buf_t bufs[] = {
-    uv_buf_init(ptr, 50),
-    uv_buf_init(ptr + 50, 50)
+  auto deleter_fn = [](void* data, size_t len, void* deleter_data) {
+    bool* deleted = static_cast<bool*>(deleter_data);
+    *deleted = true;
   };
 
-  int count = 0;
+  std::shared_ptr<v8::BackingStore> store_one =
+      v8::ArrayBuffer::NewBackingStore(
+          one,
+          26,
+          deleter_fn,
+          &one_deleted);
 
-  QuicBuffer buffer;
-  buffer.Push(
-      bufs, node::arraysize(bufs),
-      [&](int status) {
-    count++;
-    ASSERT_EQ(UV_ECANCELED, status);
-    delete[] ptr;
-  });
+  std::shared_ptr<v8::BackingStore> store_two =
+      v8::ArrayBuffer::NewBackingStore(
+          two,
+          26,
+          deleter_fn,
+          &two_deleted);
 
-  buffer.Seek(1);
-  buffer.Consume(25);
-  ASSERT_TRUE(IsEqual(buffer.length(), 75));
-  buffer.Cancel();
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
+  QuicBuffer buf;
+  buf.Push(std::move(store_one), store_two->ByteLength());
+  buf.Push(std::move(store_two), store_two->ByteLength());
 
-  // The callback was only called once tho
-  ASSERT_EQ(1, count);
-}
+  ASSERT_FALSE(one_deleted);
+  ASSERT_FALSE(two_deleted);
 
-TEST(QuicBuffer, Move) {
-  QuicBuffer buffer1;
-  QuicBuffer buffer2;
+  ASSERT_EQ(buf.length(), 52U);
+  ASSERT_EQ(buf.remaining(), 52U);
 
-  char data[100];
-  memset(&data, 0, node::arraysize(data));
-  uv_buf_t buf = uv_buf_init(data, node::arraysize(data));
+  buf.Clear();
 
-  buffer1.Push(&buf, 1);
-
-  ASSERT_TRUE(IsEqual(buffer1.length(), 100));
-
-  buffer2 = std::move(buffer1);
-  ASSERT_TRUE(IsEqual(buffer1.length(), 0));
-  ASSERT_TRUE(IsEqual(buffer2.length(), 100));
-}
-
-TEST(QuicBuffer, QuicBufferChunk) {
-  std::unique_ptr<QuicBufferChunk> chunk =
-      std::make_unique<QuicBufferChunk>(100);
-  memset(chunk->out(), 1, 100);
-
-  QuicBuffer buffer;
-  buffer.Push(std::move(chunk));
-  buffer.End();
-  ASSERT_TRUE(IsEqual(buffer.length(), 100));
-
-  auto next = [&](
-      int status,
-      const ngtcp2_vec* data,
-      size_t count,
-      Done done) {
-    ASSERT_EQ(status, Status::STATUS_END);
-    ASSERT_TRUE(IsEqual(count, 1));
-    ASSERT_NE(data, nullptr);
-    done(100);
-  };
-
-  ASSERT_TRUE(IsEqual(buffer.remaining(), 100));
-
-  ngtcp2_vec data[2];
-  size_t len = sizeof(data) / sizeof(ngtcp2_vec);
-  buffer.Pull(next, Options::OPTIONS_SYNC | Options::OPTIONS_END, data, len);
-
-  ASSERT_TRUE(IsEqual(buffer.remaining(), 0));
-
-  buffer.Consume(50);
-  ASSERT_TRUE(IsEqual(buffer.length(), 50));
-
-  buffer.Consume(50);
-  ASSERT_TRUE(IsEqual(buffer.length(), 0));
+  ASSERT_TRUE(one_deleted);
+  ASSERT_TRUE(two_deleted);
+  ASSERT_EQ(buf.length(), 0U);
+  ASSERT_EQ(buf.remaining(), 0U);
 }

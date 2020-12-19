@@ -13,7 +13,7 @@
 #include "node_http_common.h"
 #include "node_mem.h"
 #include "quic_state.h"
-#include "quic_buffer-inl.h"
+#include "quic_buffer.h"
 #include "quic_crypto.h"
 #include "quic_util.h"
 #include "node_sockaddr.h"
@@ -94,22 +94,22 @@ class QuicSessionConfig final : public ngtcp2_settings {
   void Set(QuicState* quic_state,
            const struct sockaddr* preferred_addr = nullptr);
 
-  inline void set_original_connection_id(
+  void set_original_connection_id(
       const QuicCID& ocid,
       const QuicCID& scid);
 
   // Generates the stateless reset token for the settings_
-  inline void GenerateStatelessResetToken(
+  void GenerateStatelessResetToken(
       QuicSession* session,
       const QuicCID& cid);
 
   // If the preferred address is set, generates the associated tokens
-  inline void GeneratePreferredAddressToken(
+  void GeneratePreferredAddressToken(
       ConnectionIDStrategy connection_id_strategy,
       QuicSession* session,
       QuicCID* pscid);
 
-  inline void set_qlog(const ngtcp2_qlog_settings& qlog);
+  void set_qlog(const ngtcp2_qlog_settings& qlog);
 };
 
 // Options to alter the behavior of various functions on the
@@ -371,7 +371,7 @@ class JSQuicSessionListener final : public QuicSessionListener {
 // handshake details on behalf of a QuicSession.
 class QuicCryptoContext final : public MemoryRetainer {
  public:
-  inline QuicCryptoContext(
+  QuicCryptoContext(
       QuicSession* session,
       BaseObjectPtr<crypto::SecureContext> secure_context,
       ngtcp2_crypto_side side,
@@ -379,7 +379,7 @@ class QuicCryptoContext final : public MemoryRetainer {
 
   ~QuicCryptoContext() override;
 
-  inline uint64_t Cancel();
+  uint64_t Cancel();
 
   // Outgoing crypto data must be retained in memory until it is
   // explicitly acknowledged. AcknowledgeCryptoData will be invoked
@@ -388,27 +388,27 @@ class QuicCryptoContext final : public MemoryRetainer {
   // that the data for that level can be released.
   void AcknowledgeCryptoData(ngtcp2_crypto_level level, uint64_t datalen);
 
-  inline void Initialize();
+  void Initialize();
 
   // Enables openssl's TLS tracing mechanism for this session only.
   void EnableTrace();
 
   // Returns the server's prepared OCSP response for transmission. This
   // is not used by client QuicSession instances.
-  inline v8::MaybeLocal<v8::Value> ocsp_response() const;
+  v8::MaybeLocal<v8::Value> ocsp_response() const;
 
   // Returns ngtcp2's understanding of the current inbound crypto level
-  inline ngtcp2_crypto_level read_crypto_level() const;
+  ngtcp2_crypto_level read_crypto_level() const;
 
   // Returns ngtcp2's understanding of the current outbound crypto level
-  inline ngtcp2_crypto_level write_crypto_level() const;
+  ngtcp2_crypto_level write_crypto_level() const;
 
-  inline bool early_data() const;
+  bool early_data() const;
 
   bool is_option_set(uint32_t option) const { return options_ & option; }
 
   // Emits a single keylog line to the JavaScript layer
-  inline void Keylog(const char* line);
+  void Keylog(const char* line);
 
   int OnClientHello();
 
@@ -435,20 +435,20 @@ class QuicCryptoContext final : public MemoryRetainer {
 
   // Resumes the TLS handshake following a client hello or
   // OCSP callback
-  inline void ResumeHandshake();
+  void ResumeHandshake();
 
-  inline v8::MaybeLocal<v8::Value> cert() const;
-  inline v8::MaybeLocal<v8::Value> cipher_name() const;
-  inline v8::MaybeLocal<v8::Value> cipher_version() const;
-  inline v8::MaybeLocal<v8::Object> ephemeral_key() const;
-  inline const char* hello_alpn() const;
-  inline v8::MaybeLocal<v8::Array> hello_ciphers() const;
-  inline const char* hello_servername() const;
-  inline v8::MaybeLocal<v8::Value> peer_cert(bool abbreviated) const;
-  inline std::string selected_alpn() const;
-  inline const char* servername() const;
+  v8::MaybeLocal<v8::Value> cert() const;
+  v8::MaybeLocal<v8::Value> cipher_name() const;
+  v8::MaybeLocal<v8::Value> cipher_version() const;
+  v8::MaybeLocal<v8::Object> ephemeral_key() const;
+  const char* hello_alpn() const;
+  v8::MaybeLocal<v8::Array> hello_ciphers() const;
+  const char* hello_servername() const;
+  v8::MaybeLocal<v8::Value> peer_cert(bool abbreviated) const;
+  std::string selected_alpn() const;
+  const char* servername() const;
 
-  void set_option(uint32_t option, bool on = true) {
+  inline void set_option(uint32_t option, bool on = true) {
     if (on)
       options_ |= option;
     else
@@ -467,11 +467,11 @@ class QuicCryptoContext final : public MemoryRetainer {
   QUICCRYPTOCONTEXT_FLAGS(V)
 #undef V
 
-  inline bool set_session(crypto::SSLSessionPointer session);
+  bool set_session(crypto::SSLSessionPointer session);
 
-  inline void set_tls_alert(int err);
+  void set_tls_alert(int err);
 
-  ngtcp2_crypto_side side() const { return side_; }
+  inline ngtcp2_crypto_side side() const { return side_; }
 
   void WriteHandshake(
       ngtcp2_crypto_level level,
@@ -482,10 +482,9 @@ class QuicCryptoContext final : public MemoryRetainer {
 
   int VerifyPeerIdentity();
 
-  QuicSession* session() const { return session_.get(); }
+  inline QuicSession* session() const { return session_.get(); }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
-
   SET_MEMORY_INFO_NAME(QuicCryptoContext)
   SET_SELF_SIZE(QuicCryptoContext)
 
@@ -516,16 +515,16 @@ class QuicCryptoContext final : public MemoryRetainer {
 
   class TLSCallbackScope {
    public:
-    explicit TLSCallbackScope(QuicCryptoContext* context) :
+    inline explicit TLSCallbackScope(QuicCryptoContext* context) :
         context_(context) {
       context_->set_in_tls_callback();
     }
 
-    ~TLSCallbackScope() {
+    inline ~TLSCallbackScope() {
       context_->set_in_tls_callback(false);
     }
 
-    static bool is_in_callback(QuicCryptoContext* context) {
+    static inline bool is_in_callback(QuicCryptoContext* context) {
       return context->is_in_tls_callback();
     }
 
@@ -536,13 +535,13 @@ class QuicCryptoContext final : public MemoryRetainer {
   class TLSHandshakeScope {
    public:
     using DoneCB = std::function<void()>;
-    TLSHandshakeScope(
+    inline TLSHandshakeScope(
         QuicCryptoContext* context,
         DoneCB done) :
         context_(context),
         done_(done) {}
 
-    ~TLSHandshakeScope() {
+    inline ~TLSHandshakeScope() {
       if (!is_handshake_suspended())
         return;
 
@@ -557,7 +556,7 @@ class QuicCryptoContext final : public MemoryRetainer {
     }
 
    private:
-    bool is_handshake_suspended() const {
+    inline bool is_handshake_suspended() const {
       return context_->is_in_ocsp_request() || context_->is_in_client_hello();
     }
 
@@ -574,7 +573,7 @@ class QuicCryptoContext final : public MemoryRetainer {
 class QuicApplication : public MemoryRetainer,
                         public mem::NgLibMemoryManagerBase {
  public:
-  inline explicit QuicApplication(QuicSession* session);
+  explicit QuicApplication(QuicSession* session);
   virtual ~QuicApplication() = default;
 
   // The QuicSession will call Initialize as soon as the TLS
@@ -663,20 +662,20 @@ class QuicApplication : public MemoryRetainer,
       int64_t stream_id,
       v8::Local<v8::Array> headers) { return false; }
 
-  inline Environment* env() const;
+  Environment* env() const;
 
   bool SendPendingData();
   size_t max_header_pairs() const { return max_header_pairs_; }
   size_t max_header_length() const { return max_header_length_; }
 
  protected:
-  QuicSession* session() const { return session_.get(); }
-  bool needs_init() const { return needs_init_; }
-  void set_init_done() { needs_init_ = false; }
-  inline void set_stream_fin(int64_t stream_id);
-  void set_max_header_pairs(size_t max) { max_header_pairs_ = max; }
-  void set_max_header_length(size_t max) { max_header_length_ = max; }
-  inline std::unique_ptr<QuicPacket> CreateStreamDataPacket();
+  inline QuicSession* session() const { return session_.get(); }
+  inline bool needs_init() const { return needs_init_; }
+  inline void set_init_done() { needs_init_ = false; }
+  inline void set_max_header_pairs(size_t max) { max_header_pairs_ = max; }
+  inline void set_max_header_length(size_t max) { max_header_length_ = max; }
+  void set_stream_fin(int64_t stream_id);
+  std::unique_ptr<QuicPacket> CreateStreamDataPacket();
 
   struct StreamData {
     size_t count = 0;
@@ -844,7 +843,7 @@ class QuicSession final : public AsyncWrap,
 
   std::string diagnostic_name() const override;
 
-  inline QuicCID dcid() const;
+  QuicCID dcid() const;
 
   QuicApplication* application() const { return application_.get(); }
 
@@ -856,9 +855,9 @@ class QuicSession final : public AsyncWrap,
 
   BaseObjectPtr<QuicStream> FindStream(int64_t id) const;
 
-  inline bool HasStream(int64_t id) const;
+  bool HasStream(int64_t id) const;
 
-  inline bool allow_early_data() const;
+  bool allow_early_data() const;
 
 #define V(id, name)                                                            \
   bool is_##name() const { return flags_ & (1 << QUICSESSION_FLAG_##id); }     \
@@ -877,7 +876,7 @@ class QuicSession final : public AsyncWrap,
   // transmit CONNECTION_CLOSE frames until either the
   // idle timeout period elapses or until the QuicSession
   // is explicitly destroyed.
-  inline bool is_in_closing_period() const;
+  bool is_in_closing_period() const;
 
   // Returns true if the QuicSession has received a
   // CONNECTION_CLOSE frame from the peer. Once in
@@ -886,9 +885,9 @@ class QuicSession final : public AsyncWrap,
   // QuicSession will be silently closed after either
   // the idle timeout period elapses or until the
   // QuicSession is explicitly destroyed.
-  inline bool is_in_draining_period() const;
+  bool is_in_draining_period() const;
 
-  inline bool is_server() const;
+  bool is_server() const;
 
   // Starting a GracefulClose disables the ability to open or accept
   // new streams for this session. Existing streams are allowed to
@@ -897,7 +896,7 @@ class QuicSession final : public AsyncWrap,
   // that no notification is given to the connecting peer that we're
   // in a graceful closing state. A CONNECTION_CLOSE will be sent only
   // once Close() is called.
-  inline void StartGracefulClose();
+  void StartGracefulClose();
 
   QuicError last_error() const { return last_error_; }
 
@@ -920,7 +919,7 @@ class QuicSession final : public AsyncWrap,
   // a single address is one of the benefits of QUIC.
   const SocketAddress& remote_address() const { return remote_address_; }
 
-  inline QuicSocket* socket() const;
+  QuicSocket* socket() const;
 
   ngtcp2_conn* connection() const { return connection_.get(); }
 
@@ -936,27 +935,27 @@ class QuicSession final : public AsyncWrap,
   // Extends the QUIC stream flow control window. This is
   // called after received data has been consumed and we
   // want to allow the peer to send more data.
-  inline void ExtendStreamOffset(int64_t stream_id, size_t amount);
+  void ExtendStreamOffset(int64_t stream_id, size_t amount);
 
   // Extends the QUIC session flow control window
-  inline void ExtendOffset(size_t amount);
+  void ExtendOffset(size_t amount);
 
   // Retrieve the local transport parameters established for
   // this ngtcp2_conn
-  inline void GetLocalTransportParams(ngtcp2_transport_params* params);
+  void GetLocalTransportParams(ngtcp2_transport_params* params);
 
   // The QUIC version that has been negotiated for this session
-  inline uint32_t negotiated_version() const;
+  uint32_t negotiated_version() const;
 
   // True only if ngtcp2 considers the TLS handshake to be completed
-  inline bool is_handshake_completed() const;
+  bool is_handshake_completed() const;
 
   // Checks to see if data needs to be retransmitted
   void OnRetransmitTimeout();
 
   // Called when the session has been determined to have been
   // idle for too long and needs to be torn down.
-  inline void OnIdleTimeout();
+  void OnIdleTimeout();
 
   bool OpenBidirectionalStream(int64_t* stream_id);
 
@@ -993,27 +992,27 @@ class QuicSession final : public AsyncWrap,
   // Causes pending ngtcp2 frames to be serialized and sent
   void SendPendingData();
 
-  inline void ShutdownStream(int64_t stream_id, uint64_t code);
+  void ShutdownStream(int64_t stream_id, uint64_t code);
 
-  inline bool SendPacket(
+  bool SendPacket(
       std::unique_ptr<QuicPacket> packet,
       const ngtcp2_path_storage& path);
 
-  inline uint64_t max_data_left() const;
+  uint64_t max_data_left() const;
 
-  inline uint64_t max_local_streams_uni() const;
+  uint64_t max_local_streams_uni() const;
 
-  inline void set_last_error(
+  void set_last_error(
       QuicError error = {
           uint32_t{QUIC_ERROR_SESSION},
           uint64_t{NGTCP2_NO_ERROR}
       });
 
-  inline void set_last_error(int32_t family, uint64_t error_code);
+  void set_last_error(int32_t family, uint64_t error_code);
 
-  inline void set_last_error(int32_t family, int error_code);
+  void set_last_error(int32_t family, int error_code);
 
-  inline void set_remote_transport_params();
+  void set_remote_transport_params();
 
   bool set_socket(QuicSocket* socket, bool nat_rebinding = false);
 
@@ -1026,14 +1025,14 @@ class QuicSession final : public AsyncWrap,
   // Submits informational headers to the QUIC Application
   // implementation. If headers are not supported, false
   // will be returned. Otherwise, returns true
-  inline bool SubmitInformation(
+  bool SubmitInformation(
       int64_t stream_id,
       v8::Local<v8::Array> headers);
 
   // Submits initial headers to the QUIC Application
   // implementation. If headers are not supported, false
   // will be returned. Otherwise, returns true
-  inline bool SubmitHeaders(
+  bool SubmitHeaders(
       int64_t stream_id,
       v8::Local<v8::Array> headers,
       uint32_t flags);
@@ -1041,7 +1040,7 @@ class QuicSession final : public AsyncWrap,
   // Submits trailing headers to the QUIC Application
   // implementation. If headers are not supported, false
   // will be returned. Otherwise, returns true
-  inline bool SubmitTrailers(
+  bool SubmitTrailers(
       int64_t stream_id,
       v8::Local<v8::Array> headers);
 
@@ -1059,11 +1058,11 @@ class QuicSession final : public AsyncWrap,
       size_t datalen);
 
   // Implementation for mem::NgLibMemoryManager
-  inline void CheckAllocatedSize(size_t previous_size) const;
+  void CheckAllocatedSize(size_t previous_size) const;
 
-  inline void IncreaseAllocatedSize(size_t size);
+  void IncreaseAllocatedSize(size_t size);
 
-  inline void DecreaseAllocatedSize(size_t size);
+  void DecreaseAllocatedSize(size_t size);
 
   // Initiate closing of the QuicSession. This will round trip
   // through JavaScript, causing all currently opened streams
@@ -1080,26 +1079,26 @@ class QuicSession final : public AsyncWrap,
 
   void RemoveListener(QuicSessionListener* listener);
 
-  inline bool is_unable_to_send_packets();
+  bool is_unable_to_send_packets();
 
-  inline void set_connection_id_strategy(
+  void set_connection_id_strategy(
       ConnectionIDStrategy strategy);
 
-  inline void set_preferred_address_strategy(
+  void set_preferred_address_strategy(
       PreferredAddressStrategy strategy);
 
-  inline void SetSessionTicketAppData(
+  void SetSessionTicketAppData(
       const SessionTicketAppData& app_data);
 
-  inline SessionTicketAppData::Status GetSessionTicketAppData(
+  SessionTicketAppData::Status GetSessionTicketAppData(
       const SessionTicketAppData& app_data,
       SessionTicketAppData::Flag flag);
 
-  inline void SelectPreferredAddress(
+  void SelectPreferredAddress(
       const PreferredAddress& preferred_address);
 
   // Report that the stream data is flow control blocked
-  inline void StreamDataBlocked(int64_t stream_id);
+  void StreamDataBlocked(int64_t stream_id);
 
   // SendSessionScope triggers SendPendingData() when not executing
   // within the context of an ngtcp2 callback. When within an ngtcp2
@@ -1107,14 +1106,14 @@ class QuicSession final : public AsyncWrap,
   // complete.
   class SendSessionScope final {
    public:
-    explicit SendSessionScope(QuicSession* session)
+    inline explicit SendSessionScope(QuicSession* session)
         : session_(session) {
       CHECK(session_);
     }
 
     SendSessionScope(const SendSessionScope& other) = delete;
 
-    ~SendSessionScope() {
+    inline ~SendSessionScope() {
       if (NgCallbackScope::InNgCallbackScope(session_.get()) ||
           session_->is_in_closing_period() ||
           session_->is_in_draining_period()) {
@@ -1132,7 +1131,7 @@ class QuicSession final : public AsyncWrap,
   // and the session is in the correct state.
   class ConnectionCloseScope final {
    public:
-    ConnectionCloseScope(QuicSession* session, bool silent = false)
+    inline ConnectionCloseScope(QuicSession* session, bool silent = false)
         : session_(session),
           silent_(silent) {
       CHECK(session_);
@@ -1145,7 +1144,7 @@ class QuicSession final : public AsyncWrap,
 
     ConnectionCloseScope(const ConnectionCloseScope& other) = delete;
 
-    ~ConnectionCloseScope() {
+    inline ~ConnectionCloseScope() {
       if (silent_ ||
           NgCallbackScope::InNgCallbackScope(session_.get()) ||
           session_->is_in_closing_period() ||
@@ -1166,7 +1165,7 @@ class QuicSession final : public AsyncWrap,
   // within a callback. We use this as a gate to check.
   class NgCallbackScope final {
    public:
-    explicit NgCallbackScope(QuicSession* session) : session_(session) {
+    inline explicit NgCallbackScope(QuicSession* session) : session_(session) {
       CHECK(session_);
       CHECK(!InNgCallbackScope(session));
       session_->set_in_ngtcp2_callback();
@@ -1174,11 +1173,11 @@ class QuicSession final : public AsyncWrap,
 
     NgCallbackScope(const NgCallbackScope& other) = delete;
 
-    ~NgCallbackScope() {
+    inline ~NgCallbackScope() {
       session_->set_in_ngtcp2_callback(false);
     }
 
-    static bool InNgCallbackScope(QuicSession* session) {
+    static inline bool InNgCallbackScope(QuicSession* session) {
       return session->is_in_ngtcp2_callback();
     }
 

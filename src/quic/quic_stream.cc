@@ -1,16 +1,16 @@
-#include "quic_stream-inl.h"  // NOLINT(build/include)
+#include "quic_stream.h"  // NOLINT(build/include)
 #include "aliased_struct-inl.h"
 #include "async_wrap-inl.h"
 #include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "node.h"
+#include "node_bob-inl.h"
 #include "node_buffer.h"
 #include "node_internals.h"
-#include "stream_base-inl.h"
 #include "node_sockaddr-inl.h"
 #include "node_http_common-inl.h"
-#include "quic_session-inl.h"
-#include "quic_socket-inl.h"
+#include "quic_session.h"
+#include "quic_socket.h"
 #include "quic_util-inl.h"
 #include "v8.h"
 #include "uv.h"
@@ -23,11 +23,13 @@
 namespace node {
 
 using v8::Array;
+using v8::ArrayBufferView;
 using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::Isolate;
 using v8::Local;
+using v8::Maybe;
 using v8::Object;
 using v8::ObjectTemplate;
 using v8::PropertyAttribute;
@@ -36,12 +38,17 @@ using v8::Value;
 
 namespace quic {
 
+bool QuicStream::HasInstance(Environment* env, v8::Local<v8::Object> obj) {
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
+  return state->quicserverstream()->HasInstance(obj);
+}
+
 QuicStream::QuicStream(
     QuicSession* sess,
     Local<Object> wrap,
-    int64_t stream_id)
+    int64_t stream_id,
+    QuicBufferSource* source)
     : AsyncWrap(sess->env(), wrap, AsyncWrap::PROVIDER_QUICSTREAM),
-      StreamBase(sess->env()),
       StatsBase(sess->env(), wrap,
                 HistogramOptions::ACK |
                 HistogramOptions::RATE |
@@ -51,8 +58,11 @@ QuicStream::QuicStream(
     state_(sess->env()->isolate()),
     quic_state_(sess->quic_state()) {
   CHECK_NOT_NULL(sess);
+  MakeWeak();
   Debug(this, "Created");
-  StreamBase::AttachToObject(GetObject());
+
+  if (source != nullptr)
+    AttachOutboundSource(source);
 
   wrap->DefineOwnProperty(
       env()->context(),
@@ -69,6 +79,147 @@ QuicStream::~QuicStream() {
   DebugStats();
 }
 
+void QuicStream::Resume() {
+  session()->ResumeStream(id());
+}
+
+void QuicStream::set_final_size(uint64_t final_size) {
+  CHECK_IMPLIES(
+      state_->fin_received == 1,
+      final_size <= GetStat(&QuicStreamStats::final_size));
+  state_->fin_received = 1;
+  SetStat(&QuicStreamStats::final_size, final_size);
+  Debug(this, "Set final size to %" PRIu64, final_size);
+}
+
+void QuicStream::set_fin_sent() {
+  Debug(this, "Final stream frame sent");
+  state_->fin_sent = 1;
+  if (shutdown_done_ != nullptr) {
+    shutdown_done_(0);
+  }
+}
+
+void QuicStream::EndHeaders() {
+  Debug(this, "End Headers");
+  // Upon completion of a block of headers, convert the
+  // vector of Header objects into an array of name+value
+  // pairs, then call the on_stream_headers function.
+  session()->application()->StreamHeaders(stream_id_, headers_kind_, headers_);
+  headers_.clear();
+}
+
+void QuicStream::BeginHeaders(QuicStreamHeadersKind kind) {
+  Debug(this, "Beginning Headers");
+  // Upon start of a new block of headers, ensure that any
+  // previously collected ones are cleaned up.
+  headers_.clear();
+  set_headers_kind(kind);
+}
+
+void QuicStream::Commit(size_t amount) {
+  CHECK(!is_destroyed());
+  if (outbound_source_ == nullptr)
+    return;
+  size_t actual = outbound_source_->Seek(amount);
+  CHECK_LE(actual, amount);
+}
+
+void QuicStream::Schedule(Queue* queue) {
+  if (!stream_queue_.IsEmpty())  // Already scheduled?
+    return;
+  queue->PushBack(this);
+}
+
+void QuicStream::AttachInboundConsumer(
+    QuicBufferConsumer* consumer,
+    BaseObjectPtr<AsyncWrap> strong_ptr) {
+  CHECK_NULL(inbound_consumer_);
+  CHECK_IMPLIES(strong_ptr, consumer != nullptr);
+  Debug(this, "%s data consumer",
+        consumer != nullptr ? "Attaching" : "Clearing");
+  inbound_consumer_ = consumer;
+  inbound_consumer_strong_ptr_ = std::move(strong_ptr);
+  ProcessInbound();
+}
+
+void QuicStream::AttachOutboundSource(QuicBufferSource* source) {
+  CHECK_NULL(outbound_source_);
+  Debug(this, "%s data source",
+        source != nullptr ? "Attaching" : "Clearing");
+  source->set_owner(this);
+  outbound_source_ = source;
+  outbound_source_strong_ptr_ = source->GetStrongPtr();
+  Resume();
+}
+
+void QuicStream::ReceiveData(
+    uint32_t flags,
+    const uint8_t* data,
+    size_t datalen,
+    uint64_t offset) {
+  CHECK(!is_destroyed());
+  Debug(this, "Receiving %d bytes. Final? %s",
+        datalen,
+        flags & NGTCP2_STREAM_DATA_FLAG_FIN ? "yes" : "no");
+
+  // ngtcp2 guarantees that datalen will only be 0 if fin is set.
+  DCHECK_IMPLIES(datalen == 0, flags & NGTCP2_STREAM_DATA_FLAG_FIN);
+
+  // ngtcp2 guarantees that offset is greater than the previously received.
+  DCHECK_GE(offset, GetStat(&QuicStreamStats::max_offset_received));
+  SetStat(&QuicStreamStats::max_offset_received, offset);
+
+  if (datalen > 0) {
+    // IncrementStats will update the data_rx_rate_ and data_rx_size_
+    // histograms. These will provide data necessary to detect and
+    // prevent Slow Send DOS attacks specifically by allowing us to
+    // see if a connection is sending very small chunks of data at very
+    // slow speeds. It is important to emphasize, however, that slow send
+    // rates may be perfectly legitimate so we cannot simply take blanket
+    // action when slow rates are detected. Nor can we reliably define what
+    // a slow rate even is! Will will need to determine some reasonable
+    // default and allow user code to change the default as well as determine
+    // what action to take. The current strategy will be to trigger an event
+    // on the stream when data transfer rates are likely to be considered too
+    // slow.
+    IncrementStats(datalen);
+    inbound_.Push(env(), data, datalen);
+  }
+
+  if (flags & NGTCP2_STREAM_DATA_FLAG_FIN) {
+    set_final_size(offset + datalen);
+    inbound_.End();
+  }
+
+  ProcessInbound();
+}
+
+void QuicStream::ProcessInbound() {
+  // If there is no inbound consumer, do nothing.
+  if (inbound_consumer_ == nullptr)
+    return;
+
+  Debug(this, "Releasing the inbound queue to the consumer");
+
+  Maybe<size_t> amt = inbound_.Release(inbound_consumer_);
+  if (amt.IsNothing()) {
+    Debug(this, "Failed to process the inbound queue");
+    return Destroy();
+  }
+  size_t len = amt.FromJust();
+
+  Debug(this, "Released %" PRIu64 " bytes to consumer", len);
+  IncrementStat(&QuicStreamStats::max_offset, len);
+  session_->ExtendStreamOffset(id(), len);
+}
+
+std::string QuicStream::diagnostic_name() const {
+  return std::string("QuicStream ") + std::to_string(stream_id_) +
+         " (" + std::to_string(static_cast<int64_t>(get_async_id())) +
+         ", " + session_->diagnostic_name() + ")";
+}
+
 template <typename Fn>
 void QuicStreamStatsTraits::ToString(const QuicStream& ptr, Fn&& add_field) {
 #define V(_n, name, label)                                                     \
@@ -82,23 +233,19 @@ void QuicStreamStatsTraits::ToString(const QuicStream& ptr, Fn&& add_field) {
 // data stored in the streambuf_ outbound queue to be consumed and may
 // result in the JavaScript callback for the write to be invoked.
 void QuicStream::Acknowledge(uint64_t offset, size_t datalen) {
-  if (is_destroyed())
+  if (is_destroyed() || outbound_source_ == nullptr)
     return;
 
   // ngtcp2 guarantees that offset must always be greater
-  // than the previously received offset, but let's just
-  // make sure that holds.
-  CHECK_GE(offset, GetStat(&QuicStreamStats::max_offset_ack));
+  // than the previously received offset.
+  DCHECK_GE(offset, GetStat(&QuicStreamStats::max_offset_ack));
   SetStat(&QuicStreamStats::max_offset_ack, offset);
+  RecordAck(&QuicStreamStats::acked_at);
 
   Debug(this, "Acknowledging %d bytes", datalen);
 
-  // Consumes the given number of bytes in the buffer. This may
-  // have the side-effect of causing the onwrite callback to be
-  // invoked if a complete chunk of buffered data has been acknowledged.
-  streambuf_.Consume(datalen);
-
-  RecordAck(&QuicStreamStats::acked_at);
+  // Consumes the given number of bytes in the buffer.
+  CHECK_LE(outbound_source_->Acknowledge(offset, datalen), datalen);
 }
 
 // While not all QUIC applications will support headers, QuicStream
@@ -120,150 +267,14 @@ bool QuicStream::AddHeader(std::unique_ptr<QuicHeader> header) {
   return true;
 }
 
-std::string QuicStream::diagnostic_name() const {
-  return std::string("QuicStream ") + std::to_string(stream_id_) +
-         " (" + std::to_string(static_cast<int64_t>(get_async_id())) +
-         ", " + session_->diagnostic_name() + ")";
-}
-
+// Destroy is used to explicitly terminate the QuicStream early, possibly
+// with an error code.
 void QuicStream::Destroy(QuicError* error) {
   if (destroyed_)
     return;
   destroyed_ = true;
-
-  if (is_writable() || is_readable())
-    session()->ShutdownStream(id(), 0);
-
-  CancelPendingWrites();
-
+  session()->ShutdownStream(id(), error != nullptr ? error->code : 0);
   session_->RemoveStream(stream_id_);
-}
-
-// Do shutdown is called when the JS stream writable side is closed.
-// If we're not within an ngtcp2 callback, this will trigger the
-// QuicSession to send any pending data. If a final stream frame
-// has not already been sent, it will be after this.
-int QuicStream::DoShutdown(ShutdownWrap* req_wrap) {
-  if (is_destroyed())
-    return UV_EPIPE;
-
-  // If the fin bit has already been sent, we can return
-  // immediately because there's nothing else to do. The
-  // _final callback will be invoked immediately.
-  if (state_->fin_sent || !is_writable()) {
-    Debug(this, "Shutdown write immediately");
-    return 1;
-  }
-  Debug(this, "Deferred shutdown. Waiting for fin sent");
-
-  CHECK_NULL(shutdown_done_);
-  CHECK_NOT_NULL(req_wrap);
-  shutdown_done_ = [=](int status) {
-    CHECK_NOT_NULL(req_wrap);
-    shutdown_done_ = nullptr;
-    req_wrap->Done(status);
-  };
-
-  QuicSession::SendSessionScope send_scope(session());
-
-  Debug(this, "Shutdown writable side");
-  RecordTimestamp(&QuicStreamStats::closing_at);
-  state_->write_ended = 1;
-  streambuf_.End();
-  session()->ResumeStream(stream_id_);
-
-  return 0;
-}
-
-int QuicStream::DoWrite(
-    WriteWrap* req_wrap,
-    uv_buf_t* bufs,
-    size_t nbufs,
-    uv_stream_t* send_handle) {
-  CHECK_NULL(send_handle);
-  CHECK(!streambuf_.is_ended());
-
-  // A write should not have happened if we've been destroyed or
-  // the QuicStream is no longer (or was never) writable.
-  if (is_destroyed() || !is_writable()) {
-    req_wrap->Done(UV_EPIPE);
-    return 0;
-  }
-
-  // Nothing to write.
-  size_t length = get_length(bufs, nbufs);
-  if (length == 0) {
-    req_wrap->Done(0);
-    return 0;
-  }
-
-  QuicSession::SendSessionScope send_scope(session());
-
-  Debug(this, "Queuing %" PRIu64 " bytes of data from %d buffers",
-        length, nbufs);
-  IncrementStat(&QuicStreamStats::bytes_sent, static_cast<uint64_t>(length));
-
-  BaseObjectPtr<AsyncWrap> strong_ref{req_wrap->GetAsyncWrap()};
-  // The list of buffers will be appended onto streambuf_ without
-  // copying. Those will remain in the buffer until the serialized
-  // stream frames are acknowledged.
-  // This callback function will be invoked once this
-  // complete batch of buffers has been acknowledged
-  // by the peer. This will have the side effect of
-  // blocking additional pending writes from the
-  // javascript side, so writing data to the stream
-  // will be throttled by how quickly the peer is
-  // able to acknowledge stream packets. This is good
-  // in the sense of providing back-pressure, but
-  // also means that writes will be significantly
-  // less performant unless written in batches.
-  streambuf_.Push(
-      bufs,
-      nbufs,
-      [req_wrap, strong_ref](int status) {
-        req_wrap->Done(status);
-      });
-
-  // If end() was called on the JS side, the write_ended flag
-  // will have been set. This allows us to know early if this
-  // is the final chunk. But this is only only to be triggered
-  // if end() was called with a final chunk of data to write.
-  // Otherwise, we have to wait for DoShutdown to be called.
-  if (state_->write_ended == 1) {
-    RecordTimestamp(&QuicStreamStats::closing_at);
-    streambuf_.End();
-  }
-
-  session()->ResumeStream(stream_id_);
-
-  return 0;
-}
-
-bool QuicStream::IsAlive() {
-  return !is_destroyed() && !IsClosing();
-}
-
-bool QuicStream::IsClosing() {
-  return !is_writable() && !is_readable();
-}
-
-int QuicStream::ReadStart() {
-  CHECK(!is_destroyed());
-  CHECK(is_readable());
-  state_->read_started = 1;
-  state_->read_paused = 0;
-  IncrementStat(
-      &QuicStreamStats::max_offset,
-      inbound_consumed_data_while_paused_);
-  session_->ExtendStreamOffset(id(), inbound_consumed_data_while_paused_);
-  return 0;
-}
-
-int QuicStream::ReadStop() {
-  CHECK(!is_destroyed());
-  CHECK(is_readable());
-  state_->read_paused = 1;
-  return 0;
 }
 
 void QuicStream::IncrementStats(size_t datalen) {
@@ -274,14 +285,20 @@ void QuicStream::IncrementStats(size_t datalen) {
 }
 
 void QuicStream::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("buffer", &streambuf_);
-  StatsBase::StatsMemoryInfo(tracker);
+  tracker->TrackField("outbound", outbound_source_);
+  tracker->TrackField("outbound_strong_ptr",
+                      outbound_source_strong_ptr_);
+  tracker->TrackField("inbound", inbound_);
+  tracker->TrackField("inbound_consumer_strong_ptr_",
+                      inbound_consumer_strong_ptr_);
   tracker->TrackField("headers", headers_);
+  StatsBase::StatsMemoryInfo(tracker);
 }
 
 BaseObjectPtr<QuicStream> QuicStream::New(
     QuicSession* session,
-    int64_t stream_id) {
+    int64_t stream_id,
+    QuicBufferSource* source) {
   Local<Object> obj;
   if (!session->quic_state()
               ->quicserverstream()
@@ -290,96 +307,10 @@ BaseObjectPtr<QuicStream> QuicStream::New(
     return {};
   }
   BaseObjectPtr<QuicStream> stream =
-      MakeDetachedBaseObject<QuicStream>(session, obj, stream_id);
+      MakeDetachedBaseObject<QuicStream>(session, obj, stream_id, source);
   CHECK(stream);
   session->AddStream(stream);
   return stream;
-}
-
-// Passes chunks of data on to the JavaScript side as soon as they are
-// received but only if we're still readable. The caller of this must have a
-// HandleScope.
-//
-// Note that this is pushing data to the JS side regardless of whether
-// anything is listening. For flow-control, we only send window updates
-// to the sending peer if the stream is in flowing mode, so the sender
-// should not be sending too much data.
-void QuicStream::ReceiveData(
-    uint32_t flags,
-    const uint8_t* data,
-    size_t datalen,
-    uint64_t offset) {
-  CHECK(!is_destroyed());
-  Debug(this, "Receiving %d bytes. Final? %s. Readable? %s",
-        datalen,
-        flags & NGTCP2_STREAM_DATA_FLAG_FIN ? "yes" : "no",
-        is_readable() ? "yes" : "no");
-
-  // If the QuicStream is not (or was never) readable, just ignore the chunk.
-  if (!is_readable())
-    return;
-
-  // ngtcp2 guarantees that datalen will only be 0 if fin is set.
-  // Let's just make sure.
-  CHECK(datalen > 0 || flags & NGTCP2_STREAM_DATA_FLAG_FIN);
-
-  // ngtcp2 guarantees that offset is always greater than the previously
-  // received offset. Let's just make sure.
-  CHECK_GE(offset, GetStat(&QuicStreamStats::max_offset_received));
-  SetStat(&QuicStreamStats::max_offset_received, offset);
-
-  if (datalen > 0) {
-    // IncrementStats will update the data_rx_rate_ and data_rx_size_
-    // histograms. These will provide data necessary to detect and
-    // prevent Slow Send DOS attacks specifically by allowing us to
-    // see if a connection is sending very small chunks of data at very
-    // slow speeds. It is important to emphasize, however, that slow send
-    // rates may be perfectly legitimate so we cannot simply take blanket
-    // action when slow rates are detected. Nor can we reliably define what
-    // a slow rate even is! Will will need to determine some reasonable
-    // default and allow user code to change the default as well as determine
-    // what action to take. The current strategy will be to trigger an event
-    // on the stream when data transfer rates are likely to be considered too
-    // slow.
-    IncrementStats(datalen);
-
-    while (datalen > 0) {
-      uv_buf_t buf = EmitAlloc(datalen);
-      size_t avail = std::min(static_cast<size_t>(buf.len), datalen);
-
-      // For now, we're allocating and copying. Once we determine if we can
-      // safely switch to a non-allocated mode like we do with http2 streams,
-      // we can make this branch more efficient by using the LIKELY
-      // optimization. The way ngtcp2 currently works, however, we have
-      // to memcpy here.
-      if (UNLIKELY(buf.base == nullptr))
-        buf.base = reinterpret_cast<char*>(const_cast<uint8_t*>(data));
-      else
-        memcpy(buf.base, data, avail);
-      data += avail;
-      datalen -= avail;
-      // Capture read_paused before EmitRead in case user code callbacks
-      // alter the state when EmitRead is called.
-      bool read_paused = state_->read_paused == 1;
-      EmitRead(avail, buf);
-      // Reading can be paused while we are processing. If that's
-      // the case, we still want to acknowledge the current bytes
-      // so that pausing does not throw off our flow control.
-      if (read_paused) {
-        inbound_consumed_data_while_paused_ += avail;
-      } else {
-        IncrementStat(&QuicStreamStats::max_offset, avail);
-        session_->ExtendStreamOffset(id(), avail);
-      }
-    }
-  }
-
-  // When fin != 0, we've received that last chunk of data for this
-  // stream, indicating that the stream will no longer be readable.
-  if (flags & NGTCP2_STREAM_DATA_FLAG_FIN) {
-    set_final_size(offset + datalen);
-    EmitRead(UV_EOF);
-  }
 }
 
 int QuicStream::DoPull(
@@ -388,12 +319,55 @@ int QuicStream::DoPull(
     ngtcp2_vec* data,
     size_t count,
     size_t max_count_hint) {
-  return streambuf_.Pull(
+  // If an outbound source has not yet been attached, block until
+  // one is available. When AttachOutboundSource() is called the
+  // stream will be resumed.
+  if (outbound_source_ == nullptr) {
+    int status = bob::Status::STATUS_BLOCK;
+    std::move(next)(status, nullptr, 0, [](size_t len) {});
+    return status;
+  }
+
+  return outbound_source_->Pull(
       std::move(next),
       options,
       data,
       count,
       max_count_hint);
+}
+
+// ResetStream will cause ngtcp2 to queue a RESET_STREAM and STOP_SENDING
+// frame, as appropriate, for the given stream_id. For a locally-initiated
+// unidirectional stream, only a RESET_STREAM frame will be scheduled and
+// the stream will be immediately closed. For a bidirectional stream, a
+// STOP_SENDING frame will be sent.
+void QuicStream::ResetStream(uint64_t app_error_code) {
+  QuicSession::SendSessionScope send_scope(session());
+  session()->ShutdownStream(id(), app_error_code);
+  state_->read_ended = 1;
+}
+
+// StopSending will cause ngtcp2 to queue a STOP_SENDING frame if the
+// stream is still inbound readable.
+void QuicStream::StopSending(uint64_t app_error_code) {
+  QuicSession::SendSessionScope send_scope(session());
+  ngtcp2_conn_shutdown_stream_read(
+      session()->connection(),
+      stream_id_,
+      app_error_code);
+  state_->read_ended = 1;
+}
+
+bool QuicStream::SubmitInformation(v8::Local<v8::Array> headers) {
+  return session_->SubmitInformation(stream_id_, headers);
+}
+
+bool QuicStream::SubmitHeaders(v8::Local<v8::Array> headers, uint32_t flags) {
+  return session_->SubmitHeaders(stream_id_, headers, flags);
+}
+
+bool QuicStream::SubmitTrailers(v8::Local<v8::Array> headers) {
+  return session_->SubmitTrailers(stream_id_, headers);
 }
 
 // JavaScript API
@@ -407,6 +381,8 @@ void QuicStreamGetID(const FunctionCallbackInfo<Value>& args) {
 void OpenUnidirectionalStream(const FunctionCallbackInfo<Value>& args) {
   CHECK(!args.IsConstructCall());
   CHECK(args[0]->IsObject());
+  CHECK_IMPLIES(!args[1]->IsUndefined(), args[1]->IsObject());
+
   QuicSession* session;
   ASSIGN_OR_RETURN_UNWRAP(&session, args[0].As<Object>());
 
@@ -414,13 +390,22 @@ void OpenUnidirectionalStream(const FunctionCallbackInfo<Value>& args) {
   if (!session->OpenUnidirectionalStream(&stream_id))
     return;
 
-  BaseObjectPtr<QuicStream> stream = QuicStream::New(session, stream_id);
+  QuicBufferSource* source = nullptr;
+  if (args[1]->IsObject()) {
+    BaseObject* source_obj;
+    ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[1]);
+    source = reinterpret_cast<QuicBufferSource*>(source_obj);
+  }
+
+  BaseObjectPtr<QuicStream> stream =
+      QuicStream::New(session, stream_id, source);
   args.GetReturnValue().Set(stream->object());
 }
 
 void OpenBidirectionalStream(const FunctionCallbackInfo<Value>& args) {
   CHECK(!args.IsConstructCall());
   CHECK(args[0]->IsObject());
+  CHECK_IMPLIES(!args[1]->IsUndefined(), args[1]->IsObject());
   QuicSession* session;
   ASSIGN_OR_RETURN_UNWRAP(&session, args[0].As<Object>());
 
@@ -428,7 +413,15 @@ void OpenBidirectionalStream(const FunctionCallbackInfo<Value>& args) {
   if (!session->OpenBidirectionalStream(&stream_id))
     return;
 
-  BaseObjectPtr<QuicStream> stream = QuicStream::New(session, stream_id);
+  QuicBufferSource* source = nullptr;
+  if (args[1]->IsObject()) {
+    BaseObject* source_obj;
+    ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[1]);
+    source = reinterpret_cast<QuicBufferSource*>(source_obj);
+  }
+
+  BaseObjectPtr<QuicStream> stream =
+      QuicStream::New(session, stream_id, source);
   args.GetReturnValue().Set(stream->object());
 }
 
@@ -498,19 +491,34 @@ void QuicStreamSubmitTrailers(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsArray());
   args.GetReturnValue().Set(stream->SubmitTrailers(args[0].As<Array>()));
 }
+
+void QuicStreamAttachConsumer(const FunctionCallbackInfo<Value>& args) {
+  QuicStream* stream;
+  ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
+  CHECK(args[0]->IsObject());
+  JSQuicBufferConsumer* consumer;
+  ASSIGN_OR_RETURN_UNWRAP(&consumer, args[0].As<Object>());
+  stream->AttachInboundConsumer(consumer, BaseObjectPtr<AsyncWrap>(consumer));
+}
+
+void QuicStreamAttachSource(const FunctionCallbackInfo<Value>& args) {
+  QuicStream* stream;
+  ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
+  CHECK(args[0]->IsObject());
+  BaseObject* source_obj;
+  ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[0].As<Object>());
+  QuicBufferSource* source = reinterpret_cast<QuicBufferSource*>(source_obj);
+  stream->AttachOutboundSource(source);
+}
 }  // namespace
 
-void QuicStream::Initialize(
-    Environment* env,
-    Local<Object> target,
-    Local<Context> context) {
-  QuicState* state = env->GetBindingData<QuicState>(context);
+void QuicStream::Initialize(Environment* env, Local<Object> target) {
+  QuicState* state = env->GetBindingData<QuicState>(env->context());
   Isolate* isolate = env->isolate();
   Local<String> class_name = FIXED_ONE_BYTE_STRING(isolate, "QuicStream");
   Local<FunctionTemplate> stream = FunctionTemplate::New(env->isolate());
   stream->SetClassName(class_name);
   stream->Inherit(AsyncWrap::GetConstructorTemplate(env));
-  StreamBase::AddMethods(env, stream);
   Local<ObjectTemplate> streamt = stream->InstanceTemplate();
   streamt->SetInternalFieldCount(StreamBase::kInternalFieldCount);
   streamt->Set(env->owner_symbol(), Null(env->isolate()));
@@ -521,6 +529,8 @@ void QuicStream::Initialize(
   env->SetProtoMethod(stream, "submitInformation", QuicStreamSubmitInformation);
   env->SetProtoMethod(stream, "submitHeaders", QuicStreamSubmitHeaders);
   env->SetProtoMethod(stream, "submitTrailers", QuicStreamSubmitTrailers);
+  env->SetProtoMethod(stream, "attachConsumer", QuicStreamAttachConsumer);
+  env->SetProtoMethod(stream, "attachSource", QuicStreamAttachSource);
   state->set_quicserverstream(stream);
   target->Set(env->context(),
               class_name,

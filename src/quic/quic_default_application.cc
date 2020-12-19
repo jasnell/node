@@ -1,10 +1,12 @@
 #include "debug_utils-inl.h"
 #include "aliased_struct-inl.h"
-#include "quic_buffer-inl.h"
+#include "async_wrap-inl.h"
+#include "base_object-inl.h"
+#include "quic_buffer.h"
 #include "quic_default_application.h"
-#include "quic_session-inl.h"
-#include "quic_socket-inl.h"
-#include "quic_stream-inl.h"
+#include "quic_session.h"
+#include "quic_socket.h"
+#include "quic_stream.h"
 #include "quic_util-inl.h"
 #include "node_sockaddr-inl.h"
 #include <ngtcp2/ngtcp2.h>
@@ -171,7 +173,9 @@ bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
   if (!stream_data.stream ||
       !IsEmpty(stream_data.buf, stream_data.count))
     return false;
-  return !stream_data.stream->is_writable();
+  // TODO(@jasnell): Revisit this?
+  //return !stream_data.stream->is_writable();
+  return true;
 }
 
 }  // namespace quic

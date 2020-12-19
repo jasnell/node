@@ -166,14 +166,14 @@ class QuicPacket final : public MemoryRetainer {
   // QuicSocket and ultimately become the responsibility of the
   // SendWrap instance. When the SendWrap is cleaned up, the
   // QuicPacket instance will be freed.
-  static inline std::unique_ptr<QuicPacket> Create(
+  static std::unique_ptr<QuicPacket> Create(
       const char* diagnostic_label = nullptr,
       size_t len = MAX_PKTLEN);
 
   // Copy the data of the QuicPacket to a new one. Currently,
   // this is only used when retransmitting close connection
   // packets from a QuicServer.
-  static inline std::unique_ptr<QuicPacket> Copy(
+  static std::unique_ptr<QuicPacket> Copy(
       const std::unique_ptr<QuicPacket>& other);
 
   QuicPacket(const char* diagnostic_label, size_t len);
@@ -189,7 +189,10 @@ class QuicPacket final : public MemoryRetainer {
       length());
   }
 
-  inline void set_length(size_t len);
+  inline void set_length(size_t len) {
+    CHECK_LE(len, MAX_PKTLEN);
+    len_ = len;
+  }
 
   const char* diagnostic_label() const;
 
@@ -246,29 +249,29 @@ class QuicSocket final : public AsyncWrap,
 
   // Waits for any currently pending callbacks to be completed
   // then triggers the immediate close/destruction of the QuicSocket
-  inline void WaitForPendingCallbacks();
+  void WaitForPendingCallbacks();
 
   // The local UDP address to which the QuicSocket is bound.
-  inline SocketAddress local_address() const;
+  SocketAddress local_address() const;
 
   void MaybeClose();
 
-  inline void AddSession(
+  void AddSession(
       const QuicCID& cid,
       BaseObjectPtr<QuicSession> session);
 
-  inline void AssociateCID(
+  void AssociateCID(
       const QuicCID& cid,
       const QuicCID& scid);
 
-  inline void DisassociateCID(
+  void DisassociateCID(
       const QuicCID& cid);
 
-  inline void AssociateStatelessResetToken(
+  void AssociateStatelessResetToken(
       const StatelessResetToken& token,
       BaseObjectPtr<QuicSession> session);
 
-  inline void DisassociateStatelessResetToken(
+  void DisassociateStatelessResetToken(
       const StatelessResetToken& token);
 
   void Listen(
@@ -277,11 +280,11 @@ class QuicSocket final : public AsyncWrap,
       const std::string& alpn = NGHTTP3_ALPN_H3,
       uint32_t options = 0);
 
-  inline void ReceiveStart();
+  void ReceiveStart();
 
-  inline void ReceiveStop();
+  void ReceiveStop();
 
-  inline void RemoveSession(
+  void RemoveSession(
       const QuicCID& cid,
       const SocketAddress& addr);
 
@@ -301,9 +304,12 @@ class QuicSocket final : public AsyncWrap,
   // Allows the server busy status to be enabled from C++. A notification
   // will be sent to the JavaScript side informing that the status has
   // changed.
-  inline void ServerBusy(bool on);
+  void ServerBusy(bool on);
 
-  inline void set_diagnostic_packet_loss(double rx = 0.0, double tx = 0.0);
+  inline void set_diagnostic_packet_loss(double rx, double tx) {
+    rx_loss_ = rx;
+    tx_loss_ = tx;
+  }
 
   BaseObjectPtr<crypto::SecureContext> server_secure_context() const {
     return server_secure_context_;
@@ -360,7 +366,7 @@ class QuicSocket final : public AsyncWrap,
   bool has_pending_callbacks() const { return pending_callbacks_ > 0; }
 
   void OnSendDone(ReqWrap<uv_udp_send_t>* wrap, int status) override;
-  inline void OnError(ssize_t error);
+  void OnError(ssize_t error);
   void OnEndpointDone();
 
   void OnReceive(
@@ -382,9 +388,9 @@ class QuicSocket final : public AsyncWrap,
 
   void OnSend(int status, QuicPacket* packet);
 
-  inline void set_validated_address(const SocketAddress& addr);
+  void set_validated_address(const SocketAddress& addr);
 
-  inline bool is_validated_address(const SocketAddress& addr) const;
+  bool is_validated_address(const SocketAddress& addr) const;
 
   bool MaybeStatelessReset(
       const QuicCID& dcid,
@@ -407,19 +413,19 @@ class QuicSocket final : public AsyncWrap,
 
   BaseObjectPtr<QuicSession> FindSession(const QuicCID& cid);
 
-  inline void IncrementSocketAddressCounter(const SocketAddress& addr);
+  void IncrementSocketAddressCounter(const SocketAddress& addr);
 
-  inline void DecrementSocketAddressCounter(const SocketAddress& addr);
+  void DecrementSocketAddressCounter(const SocketAddress& addr);
 
-  inline void IncrementStatelessResetCounter(const SocketAddress& addr);
+  void IncrementStatelessResetCounter(const SocketAddress& addr);
 
-  inline size_t GetCurrentSocketAddressCounter(const SocketAddress& addr);
+  size_t GetCurrentSocketAddressCounter(const SocketAddress& addr);
 
-  inline size_t GetCurrentStatelessResetCounter(const SocketAddress& addr);
+  size_t GetCurrentStatelessResetCounter(const SocketAddress& addr);
 
   // Returns true if, and only if, diagnostic packet loss is enabled
   // and the current packet should be artificially considered lost.
-  inline bool is_diagnostic_packet_loss(double prob) const;
+  bool is_diagnostic_packet_loss(double prob) const;
 
   ngtcp2_mem alloc_info_;
 

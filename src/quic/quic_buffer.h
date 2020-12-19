@@ -3,29 +3,51 @@
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
-#include "memory_tracker-inl.h"
-#include "ngtcp2/ngtcp2.h"
+#include "async_wrap.h"
+#include "base_object.h"
+#include "memory_tracker.h"
 #include "node.h"
 #include "node_bob.h"
+#include "node_file.h"
 #include "node_internals.h"
-#include "util.h"
+#include "stream_base.h"
+#include "util-inl.h"
 #include "uv.h"
 
-#include <vector>
+#include "ngtcp2/ngtcp2.h"
+
+#include <deque>
 
 namespace node {
 namespace quic {
 
 class QuicBuffer;
+class QuicStream;
 
 constexpr size_t kMaxVectorCount = 16;
 
 using DoneCB = std::function<void(int)>;
 
+// A QuicBufferSource provides outbound data for a QuicStream.
+class QuicBufferSource : public bob::SourceImpl<ngtcp2_vec>,
+                         public MemoryRetainer {
+ public:
+  virtual BaseObjectPtr<BaseObject> GetStrongPtr() = 0;
+  virtual size_t Acknowledge(uint64_t offset, size_t amount) = 0;
+  virtual size_t Seek(size_t amount) = 0;
+  inline void set_owner(QuicStream* owner) { owner_ = owner; }
+
+ protected:
+  QuicStream* owner() { return owner_; }
+
+ private:
+  QuicStream* owner_ = nullptr;
+};
+
 // When data is sent over QUIC, we are required to retain it in memory
 // until we receive an acknowledgement that it has been successfully
-// received. The QuicBuffer object is what we use to handle that
-// and track until it is acknowledged. To understand the QuicBuffer
+// received by the peer. The QuicBuffer object is what we use to handle
+// that and track until it is acknowledged. To understand the QuicBuffer
 // object itself, it is important to understand how ngtcp2 and nghttp3
 // handle data that is given to it to serialize into QUIC packets.
 //
@@ -41,112 +63,94 @@ using DoneCB = std::function<void(int)>;
 //
 // Once written to a QUIC Packet, we have to keep the data in memory
 // until an acknowledgement is received. In QUIC, acknowledgements are
-// received per range of packets.
+// received per range of packets, but (fortunately) ngtcp2 gives us that
+// information as byte offsets instead.
 //
 // QuicBuffer is complicated because it needs to be able to accomplish
-// three things: (a) buffering uv_buf_t instances passed down from
-// JavaScript without memcpy and keeping track of the Write callback
-// associated with each, (b) tracking what data has already been
+// three things: (a) buffering v8::BackingStore instances passed down
+// from JavaScript without memcpy, (b) tracking what data has already been
 // encoded in a QUIC packet and what data is remaining to be read, and
 // (c) tracking which data has been acknowledged and which hasn't.
-// QuicBuffer is further complicated by design quirks and limitations
-// of the StreamBase API and how it interacts with the JavaScript side.
 //
-// QuicBuffer is a linked list of QuicBufferChunk instances.
-// A single QuicBufferChunk wraps a single non-zero-length uv_buf_t.
-// When the QuicBufferChunk is created, we capture the total length
-// of the buffer and the total number of bytes remaining to be sent.
+// QuicBuffer contains a deque of QuicBufferChunk instances.
+// A single QuicBufferChunk wraps a v8::BackingStore with length and
+// offset. When the QuicBufferChunk is created, we capture the total
+// length of the buffer and the total number of bytes remaining to be sent.
 // Initially, these numbers are identical.
 //
 // When data is encoded into a QuicPacket, we advance the QuicBufferChunk's
 // remaining-to-be-read by the number of bytes actually encoded. If there
 // are no more bytes remaining to be encoded, we move to the next chunk
-// in the linked list.
+// in the deque (but we do not yet pop it off the deque).
 //
 // When an acknowledgement is received, we decrement the QuicBufferChunk's
 // length by the number of acknowledged bytes. Once the unacknowledged
-// length reaches 0, we invoke the callback function associated with the
-// QuicBufferChunk (if any).
-//
-// QuicStream is a StreamBase implementation. For every DoWrite call,
-// it receives one or more uv_buf_t instances in a single batch associated
-// with a single write callback. For each uv_buf_t DoWrite gets, a
-// corresponding QuicBufferChunk is added to the QuicBuffer, with the
-// callback associated with the final chunk added to the list.
+// length reaches 0 we pop the chunk off the deque.
 
-
-// A QuicBufferChunk contains the actual buffered data
-// along with a callback to be called when the data has
-// been consumed.
-//
-// Any given chunk has a remaining-to-be-acknowledged length (length()) and a
-// remaining-to-be-read-length (remaining()). The former tracks the number
-// of bytes that have yet to be acknowledged by the QUIC peer. Once the
-// remaining-to-be-acknowledged length reaches zero, the done callback
-// associated with the QuicBufferChunk can be called and the QuicBufferChunk
-// can be discarded. The remaining-to-be-read length is adjusted as data is
-// serialized into QUIC packets and sent.
-// The remaining-to-be-acknowledged length is adjusted using consume(),
-// while the remaining-to-be-ead length is adjusted using seek().
+// QuicBufferChunk is used to store chunks of both inbound and
+// outbound data. Each chunk stores a shared pointer to a
+// v8::BackingStore with appropriate length and offset details.
+// Each QuicBufferChunk is stored in a deque in QuicBuffer which
+// manages the aggregate collection of all chunks.
 class QuicBufferChunk final : public MemoryRetainer {
  public:
-  // Default non-op done handler.
-  static void default_done(int status) {}
+  // Create chunk as a copy of the provided data
+  static std::unique_ptr<QuicBufferChunk> Create(
+      Environment* env,
+      const uint8_t* data,
+      size_t len);
 
-  // In this variant, the QuicBufferChunk owns the underlying
-  // data storage within a vector. The data will be
-  // freed when the QuicBufferChunk is destroyed.
-  inline explicit QuicBufferChunk(size_t len);
+  static std::unique_ptr<QuicBufferChunk> Create(
+      const std::shared_ptr<v8::BackingStore>& data,
+      size_t offset,
+      size_t length);
 
-  // In this variant, the QuicBufferChunk only maintains a
-  // pointer to the underlying data buffer. The QuicBufferChunk
-  // does not take ownership of the buffer. The done callback
-  // is invoked to let the caller know when the chunk is no
-  // longer being used.
-  inline QuicBufferChunk(uv_buf_t buf_, DoneCB done_);
+  // Releases the chunk to a v8 Uint8Array. data_ is reset
+  // and offset_, length_, and consumed_ are all set to 0
+  // and the strong_ptr_, if any, is reset. This is used
+  // only for inbound data and only when queued data is
+  // being flushed out to the JavaScript side.
+  v8::MaybeLocal<v8::Value> Release(Environment* env);
 
-  inline ~QuicBufferChunk() override;
+  // Increments consumed_ by amount bytes. If amount is greater
+  // than remaining(), remaining() bytes are advanced. Returns
+  // the actual number of bytes advanced.
+  size_t Seek(size_t amount);
 
-  // Invokes the done callback associated with the QuicBufferChunk.
-  inline void Done(int status);
+  size_t Acknowledge(size_t amount);
 
-  // length() provides the remaining-to-be-acknowledged length.
-  // The QuicBufferChunk must be retained in memory while this
-  // count is greater than zero. The length is adjusted by
-  // calling Consume();
-  inline size_t length() const { return length_; }
+  // Returns a pointer to the remaining data. This is used only
+  // for outbound data.
+  const uint8_t* data() const;
 
-  // remaining() provides the remaining-to-be-read length number of bytes.
-  // The length is adjusted by calling Seek()
-  inline size_t remaining() const { return buf_.len; }
+  inline size_t remaining() const { return length_ - read_; }
 
-  // Consumes (acknowledges) the given number of bytes. If amount
-  // is greater than length(), only length() bytes are consumed.
-  // Returns the actual number of bytes consumed.
-  inline size_t Consume(size_t amount);
+  inline size_t length() const { return unacknowledged_; }
 
-  // Seeks (reads) the given number of bytes. If amount is greater
-  // than remaining(), only remaining() bytes are read. Returns
-  // the actual number of bytes read.
-  inline size_t Seek(size_t amount);
-
-  uint8_t* out() { return reinterpret_cast<uint8_t*>(buf_.base); }
-  uv_buf_t buf() { return buf_; }
-  const uv_buf_t buf() const { return buf_; }
+  ngtcp2_vec vec() const;
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(QuicBufferChunk)
   SET_SELF_SIZE(QuicBufferChunk)
 
  private:
-  std::vector<uint8_t> data_buf_;
-  uv_buf_t buf_;
-  DoneCB done_ = default_done;
-  size_t length_ = 0;
-  bool done_called_ = false;
-  std::unique_ptr<QuicBufferChunk> next_;
+  QuicBufferChunk(
+      const std::shared_ptr<v8::BackingStore>& data,
+      size_t length,
+      size_t offset = 0);
 
-  friend class QuicBuffer;
+  std::shared_ptr<v8::BackingStore> data_;
+  size_t offset_ = 0;
+  size_t length_ = 0;
+  size_t read_ = 0;
+  size_t unacknowledged_ = 0;
+};
+
+// A QuicBufferConsumer receives the inbound data for a QuicStream.
+struct QuicBufferConsumer {
+  virtual v8::Maybe<size_t> Process(
+      std::deque<std::unique_ptr<QuicBufferChunk>> queue,
+      bool ended = false) = 0;
 };
 
 class QuicBuffer final : public bob::SourceImpl<ngtcp2_vec>,
@@ -154,58 +158,57 @@ class QuicBuffer final : public bob::SourceImpl<ngtcp2_vec>,
  public:
   QuicBuffer() = default;
 
-  inline QuicBuffer(QuicBuffer&& src) noexcept;
-  inline QuicBuffer& operator=(QuicBuffer&& src) noexcept;
-
-  ~QuicBuffer() override {
-    Cancel();  // Cancel the remaining data
-    CHECK_EQ(length_, 0);
-  }
+  QuicBuffer(const QuicBuffer& other) = delete;
+  QuicBuffer(const QuicBuffer&& src) = delete;
+  QuicBuffer& operator=(const QuicBuffer& other) = delete;
+  QuicBuffer& operator=(const QuicBuffer&& src) = delete;
 
   // Marks the QuicBuffer as having ended, preventing new QuicBufferChunk
-  // instances from being appended to the linked list and allowing the
-  // Pull operation to know when to signal that the flow of data is
-  // completed.
-  void End() { ended_ = true; }
-  bool is_ended() const { return ended_; }
+  // instances from being added and allowing the Pull operation to know when
+  // to signal that the flow of data is completed.
+  inline void End() { ended_ = true; }
+  inline bool is_ended() const { return ended_; }
 
-  // Push one or more uv_buf_t instances into the buffer.
-  // the DoneCB callback will be invoked when the last
-  // uv_buf_t in the bufs array is consumed and popped out
-  // of the internal linked list. Ownership of the uv_buf_t
-  // remains with the caller.
-  size_t Push(
-      uv_buf_t* bufs,
-      size_t nbufs,
-      DoneCB done = QuicBufferChunk::default_done);
+  // Push inbound data onto the buffer.
+  void Push(Environment* env, const uint8_t* data, size_t len);
 
-  // Pushes a single QuicBufferChunk into the linked list
-  void Push(std::unique_ptr<QuicBufferChunk> chunk);
+  // Push outbound data onto the buffer.
+  void Push(
+      std::shared_ptr<v8::BackingStore> data,
+      size_t length,
+      size_t offset = 0);
 
-  // Consume the given number of bytes within the buffer. If amount
-  // is greater than length(), length() bytes are consumed. Returns
-  // the actual number of bytes consumed.
-  inline size_t Consume(size_t amount);
-
-  // Cancels the remaining bytes within the buffer.
-  inline size_t Cancel(int status = UV_ECANCELED);
-
-  // Seeks (reads) the given number of bytes. If amount is greater
-  // than remaining(), seeks remaining() bytes. Returns the actual
-  // number of bytes read.
+  // Increment the given number of bytes within the buffer. If amount
+  // is greater than length(), length() bytes are advanced. Returns
+  // the actual number of bytes advanced. Will not cause bytes to be
+  // freed.
   size_t Seek(size_t amount);
 
-  // The total number of unacknowledged bytes remaining.
-  size_t length() const { return length_; }
+  // Acknowledge the given number of bytes in the buffer. May cause
+  // bytes to be freed.
+  size_t Acknowledge(size_t amount);
 
-  // The total number of unread bytes remaining.
-  size_t remaining() const { return remaining_; }
+  // Clears any bytes remaining in the buffer.
+  inline void Clear() {
+    queue_.clear();
+    head_ = 0;
+    length_ = 0;
+    remaining_ = 0;
+  }
 
-  void MemoryInfo(MemoryTracker* tracker) const override;
-  SET_MEMORY_INFO_NAME(QuicBuffer);
-  SET_SELF_SIZE(QuicBuffer);
+  // The total number of unacknowledged bytes remaining. The length
+  // is incremented by Push and decremented by Acknowledge.
+  inline size_t length() const { return length_; }
 
- protected:
+  // The total number of unread bytes remaining. The remaining
+  // length is incremental by Push and decremented by Seek.
+  inline size_t remaining() const { return remaining_; }
+
+  // Flushes the entire inbound queue into a v8::Local<v8::Array>
+  // of Uint8Array instances, returning the total number of bytes
+  // released to the consumer.
+  v8::Maybe<size_t> Release(QuicBufferConsumer* consumer);
+
   int DoPull(
       bob::Next<ngtcp2_vec> next,
       int options,
@@ -213,24 +216,173 @@ class QuicBuffer final : public bob::SourceImpl<ngtcp2_vec>,
       size_t count,
       size_t max_count_hint) override;
 
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(QuicBuffer);
+  SET_SELF_SIZE(QuicBuffer);
+
  private:
-  inline static bool is_empty(uv_buf_t buf);
-  size_t Consume(int status, size_t amount);
-  bool Pop(int status = 0);
-  inline void Push(uv_buf_t buf, DoneCB done = nullptr);
-
-  std::unique_ptr<QuicBufferChunk> root_;
-  QuicBufferChunk* head_ = nullptr;  // Current Read Position
-  QuicBufferChunk* tail_ = nullptr;  // Current Write Position
-
-  bool canceled_ = false;
+  std::deque<std::unique_ptr<QuicBufferChunk>> queue_;
   bool ended_ = false;
+
+  // The queue_ index of the current read head.
+  // This is incremented by Seek() as necessary and
+  // decremented by Acknowledge() as data is consumed.
+  size_t head_ = 0;
   size_t length_ = 0;
   size_t remaining_ = 0;
-
-  friend class QuicBufferChunk;
 };
 
+// The JSQuicBufferConsumer receives inbound data for a QuicStream
+// and forwards that up as Uint8Array instances to the JavaScript
+// API.
+class JSQuicBufferConsumer : public QuicBufferConsumer,
+                             public AsyncWrap {
+ public:
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(JSQuicBufferConsumer)
+  SET_SELF_SIZE(JSQuicBufferConsumer)
+
+  JSQuicBufferConsumer(
+      Environment* env,
+      v8::Local<v8::Object> wrap);
+
+  v8::Maybe<size_t> Process(
+      std::deque<std::unique_ptr<QuicBufferChunk>> queue,
+      bool ended = false) override;
+};
+
+// Receives a single ArrayBufferView and uses it's contents as the
+// complete source of outbound data for the QuicStream.
+class ArrayBufferViewSource : public BaseObject,
+                              public QuicBufferSource {
+ public:
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  int DoPull(
+      bob::Next<ngtcp2_vec> next,
+      int options,
+      ngtcp2_vec* data,
+      size_t count,
+      size_t max_count_hint) override;
+
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
+
+  size_t Acknowledge(uint64_t offset, size_t datalen) override;
+  size_t Seek(size_t amount) override;
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(ArrayBufferViewSource);
+  SET_SELF_SIZE(ArrayBufferViewSource);
+
+ private:
+  ArrayBufferViewSource(
+      Environment* env,
+      v8::Local<v8::Object> wrap,
+      std::unique_ptr<QuicBufferChunk> chunk);
+
+  std::unique_ptr<QuicBufferChunk> chunk_;
+};
+
+// Implements StreamBase to asynchronously accept outbound data from the
+// JavaScript side.
+class StreamSource : public AsyncWrap,
+                     public StreamBase,
+                     public QuicBufferSource {
+ public:
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  size_t Acknowledge(uint64_t offset, size_t datalen) override;
+  size_t Seek(size_t amount) override;
+
+  // This is a write-only stream. These are ignored.
+  int ReadStart() override { return 0; }
+  int ReadStop() override { return 0; }
+  bool IsAlive() override { return !queue_.is_ended(); }
+  bool IsClosing() override { return queue_.is_ended(); }
+
+  int DoShutdown(ShutdownWrap* wrap) override;
+
+  int DoWrite(
+      WriteWrap* w,
+      uv_buf_t* bufs,
+      size_t count,
+      uv_stream_t* send_handle) override;
+
+  AsyncWrap* GetAsyncWrap() override { return this; }
+
+  int DoPull(
+      bob::Next<ngtcp2_vec> next,
+      int options,
+      ngtcp2_vec* data,
+      size_t count,
+      size_t max_count_hint) override;
+
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(StreamSource);
+  SET_SELF_SIZE(StreamSource);
+
+ private:
+  StreamSource(
+      Environment* env,
+      v8::Local<v8::Object> wrap);
+
+  QuicBuffer queue_;
+};
+
+// Implements StreamListener to receive data from any native level
+// StreamBase implementation.
+class StreamBaseSource : public AsyncWrap,
+                         public QuicBufferSource,
+                         public StreamListener {
+ public:
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  ~StreamBaseSource() override;
+
+  int DoPull(
+      bob::Next<ngtcp2_vec> next,
+      int options,
+      ngtcp2_vec* data,
+      size_t count,
+      size_t max_count_hint) override;
+
+  size_t Acknowledge(uint64_t offset, size_t datalen) override;
+  size_t Seek(size_t amount) override;
+
+  uv_buf_t OnStreamAlloc(size_t suggested_size) override;
+  void OnStreamRead(ssize_t nread, const uv_buf_t& buf) override;
+
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(StreamBaseSource)
+  SET_SELF_SIZE(StreamBaseSource)
+
+ private:
+  StreamBaseSource(
+      Environment* env,
+      v8::Local<v8::Object> wrap,
+      StreamResource* resource,
+      BaseObjectPtr<AsyncWrap> strong_ptr = BaseObjectPtr<AsyncWrap>());
+
+  StreamResource* resource_;
+  BaseObjectPtr<AsyncWrap> strong_ptr_;
+  QuicBuffer buffer_;
+};
 }  // namespace quic
 }  // namespace node
 

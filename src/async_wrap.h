@@ -50,6 +50,7 @@ namespace node {
   V(HTTP2SETTINGS)                                                            \
   V(HTTPINCOMINGMESSAGE)                                                      \
   V(HTTPCLIENTREQUEST)                                                        \
+  V(JSQUICBUFFERCONSUMER)                                                     \
   V(JSSTREAM)                                                                 \
   V(JSUDPWRAP)                                                                \
   V(MESSAGEPORT)                                                              \
@@ -69,6 +70,8 @@ namespace node {
   V(SIGNALWRAP)                                                               \
   V(STATWATCHER)                                                              \
   V(STREAMPIPE)                                                               \
+  V(STREAMSOURCE)                                                             \
+  V(STREAMBASESOURCE)                                                         \
   V(TCPCONNECTWRAP)                                                           \
   V(TCPSERVERWRAP)                                                            \
   V(TCPWRAP)                                                                  \
