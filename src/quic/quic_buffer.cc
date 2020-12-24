@@ -168,7 +168,8 @@ size_t QuicBuffer::Acknowledge(size_t amount) {
 }
 
 void QuicBufferChunk::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("data", data_);
+  if (data_)
+    tracker->TrackFieldWithSize("data", data_->ByteLength());
 }
 
 void QuicBuffer::MemoryInfo(MemoryTracker* tracker) const {
@@ -354,8 +355,8 @@ void ArrayBufferViewSource::New(const FunctionCallbackInfo<Value>& args) {
       args.This(),
       QuicBufferChunk::Create(
           view->Buffer()->GetBackingStore(),
-          view->ByteOffset(),
-          view->ByteLength()));
+          view->ByteLength(),
+          view->ByteOffset()));
 }
 
 ArrayBufferViewSource::ArrayBufferViewSource(
@@ -363,7 +364,9 @@ ArrayBufferViewSource::ArrayBufferViewSource(
     Local<Object> wrap,
     std::unique_ptr<QuicBufferChunk> chunk)
     : BaseObject(env, wrap),
-      chunk_(std::move(chunk)) {}
+      chunk_(std::move(chunk)) {
+  MakeWeak();
+}
 
 int ArrayBufferViewSource::DoPull(
     bob::Next<ngtcp2_vec> next,
@@ -417,7 +420,8 @@ size_t ArrayBufferViewSource::Seek(size_t amount) {
 }
 
 void ArrayBufferViewSource::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("data", chunk_);
+  if (chunk_)
+    tracker->TrackField("data", chunk_);
 }
 
 void StreamSource::New(const FunctionCallbackInfo<Value>& args) {
@@ -428,7 +432,9 @@ void StreamSource::New(const FunctionCallbackInfo<Value>& args) {
 
 StreamSource::StreamSource(Environment* env, Local<Object> wrap)
     : AsyncWrap(env, wrap, AsyncWrap::PROVIDER_STREAMSOURCE),
-      StreamBase(env) {}
+      StreamBase(env) {
+  MakeWeak();
+}
 
 int StreamSource::DoPull(
     bob::Next<ngtcp2_vec> next,
@@ -512,6 +518,7 @@ StreamBaseSource::StreamBaseSource(
     BaseObjectPtr<AsyncWrap> strong_ptr)
     : AsyncWrap(env, obj, AsyncWrap::PROVIDER_STREAMBASESOURCE),
       strong_ptr_(std::move(strong_ptr)) {
+  MakeWeak();
   resource_->PushStreamListener(this);
 }
 

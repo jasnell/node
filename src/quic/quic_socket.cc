@@ -341,10 +341,6 @@ void QuicSocket::AssociateCID(
     const QuicCID& scid) {
   if (cid && scid)
     dcid_to_scid_[cid] = scid;
-
-  for (const auto& p : dcid_to_scid_) {
-    printf(":: %s <=> %s\n", p.first.ToString().c_str(), p.second.ToString().c_str());
-  }
 }
 
 void QuicSocket::DisassociateCID(const QuicCID& cid) {
@@ -678,8 +674,6 @@ void QuicSocket::OnReceive(
     IncrementStat(&QuicSocketStats::packets_ignored);
     return;
   }
-
-printf(">> %s\n", sessions_.begin()->first.ToString().c_str());
 
   IncrementStat(&QuicSocketStats::packets_received);
 }

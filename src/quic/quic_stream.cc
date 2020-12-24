@@ -80,6 +80,8 @@ QuicStream::~QuicStream() {
 }
 
 void QuicStream::Resume() {
+  QuicSession::SendSessionScope send_scope(session());
+  Debug(this, "Resuming stream %" PRIu64, id());
   session()->ResumeStream(id());
 }
 
@@ -149,7 +151,7 @@ void QuicStream::AttachOutboundSource(QuicBufferSource* source) {
         source != nullptr ? "Attaching" : "Clearing");
   source->set_owner(this);
   outbound_source_ = source;
-  outbound_source_strong_ptr_ = source->GetStrongPtr();
+  outbound_source_strong_ptr_.reset(source->GetStrongPtr());
   Resume();
 }
 
@@ -306,10 +308,12 @@ BaseObjectPtr<QuicStream> QuicStream::New(
               ->NewInstance(session->env()->context()).ToLocal(&obj)) {
     return {};
   }
+
   BaseObjectPtr<QuicStream> stream =
       MakeDetachedBaseObject<QuicStream>(session, obj, stream_id, source);
   CHECK(stream);
   session->AddStream(stream);
+  stream->Resume();
   return stream;
 }
 
@@ -319,6 +323,7 @@ int QuicStream::DoPull(
     ngtcp2_vec* data,
     size_t count,
     size_t max_count_hint) {
+  Debug(this, "Pulling outbound data for serialization");
   // If an outbound source has not yet been attached, block until
   // one is available. When AttachOutboundSource() is called the
   // stream will be resumed.
@@ -415,9 +420,10 @@ void OpenBidirectionalStream(const FunctionCallbackInfo<Value>& args) {
 
   QuicBufferSource* source = nullptr;
   if (args[1]->IsObject()) {
-    BaseObject* source_obj;
+    // TODO(@jasnell): Make this work for all...
+    ArrayBufferViewSource* source_obj;
     ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[1]);
-    source = reinterpret_cast<QuicBufferSource*>(source_obj);
+    source = source_obj;
   }
 
   BaseObjectPtr<QuicStream> stream =

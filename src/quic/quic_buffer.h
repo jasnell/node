@@ -32,9 +32,9 @@ using DoneCB = std::function<void(int)>;
 class QuicBufferSource : public bob::SourceImpl<ngtcp2_vec>,
                          public MemoryRetainer {
  public:
-  virtual BaseObjectPtr<BaseObject> GetStrongPtr() = 0;
-  virtual size_t Acknowledge(uint64_t offset, size_t amount) = 0;
-  virtual size_t Seek(size_t amount) = 0;
+  virtual BaseObject* GetStrongPtr() { return nullptr; }
+  virtual size_t Acknowledge(uint64_t offset, size_t amount);
+  virtual size_t Seek(size_t amount);
   inline void set_owner(QuicStream* owner) { owner_ = owner; }
 
  protected:
@@ -269,9 +269,7 @@ class ArrayBufferViewSource : public BaseObject,
       size_t count,
       size_t max_count_hint) override;
 
-  BaseObjectPtr<BaseObject> GetStrongPtr() override {
-    return BaseObjectPtr<BaseObject>(this);
-  }
+  BaseObject* GetStrongPtr() override { return this; }
 
   size_t Acknowledge(uint64_t offset, size_t datalen) override;
   size_t Seek(size_t amount) override;
@@ -324,9 +322,7 @@ class StreamSource : public AsyncWrap,
       size_t count,
       size_t max_count_hint) override;
 
-  BaseObjectPtr<BaseObject> GetStrongPtr() override {
-    return BaseObjectPtr<BaseObject>(this);
-  }
+  BaseObject* GetStrongPtr() override { return this; }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(StreamSource);
@@ -364,9 +360,7 @@ class StreamBaseSource : public AsyncWrap,
   uv_buf_t OnStreamAlloc(size_t suggested_size) override;
   void OnStreamRead(ssize_t nread, const uv_buf_t& buf) override;
 
-  BaseObjectPtr<BaseObject> GetStrongPtr() override {
-    return BaseObjectPtr<BaseObject>(this);
-  }
+  BaseObject* GetStrongPtr() override { return this; }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(StreamBaseSource)

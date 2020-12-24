@@ -15,14 +15,12 @@ int SourceImpl<T>::Pull(
     T* data,
     size_t count,
     size_t max_count_hint) {
-
   int status;
   if (eos_) {
     status = bob::Status::STATUS_EOS;
     std::move(next)(status, nullptr, 0, [](size_t len) {});
     return status;
   }
-
   status = DoPull(std::move(next), options, data, count, max_count_hint);
 
   if (status == bob::Status::STATUS_END)
