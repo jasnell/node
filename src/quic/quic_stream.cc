@@ -136,7 +136,6 @@ void QuicStream::Schedule(Queue* queue) {
 void QuicStream::AttachInboundConsumer(
     QuicBufferConsumer* consumer,
     BaseObjectPtr<AsyncWrap> strong_ptr) {
-  CHECK_NULL(inbound_consumer_);
   CHECK_IMPLIES(strong_ptr, consumer != nullptr);
   Debug(this, "%s data consumer",
         consumer != nullptr ? "Attaching" : "Clearing");
@@ -146,13 +145,14 @@ void QuicStream::AttachInboundConsumer(
 }
 
 void QuicStream::AttachOutboundSource(QuicBufferSource* source) {
-  CHECK_NULL(outbound_source_);
   Debug(this, "%s data source",
         source != nullptr ? "Attaching" : "Clearing");
-  source->set_owner(this);
   outbound_source_ = source;
-  outbound_source_strong_ptr_.reset(source->GetStrongPtr());
-  Resume();
+  outbound_source_strong_ptr_ = source->GetStrongPtr();
+  if (source != nullptr) {
+    Resume();
+    source->set_owner(this);
+  }
 }
 
 void QuicStream::ReceiveData(
@@ -228,6 +228,22 @@ void QuicStreamStatsTraits::ToString(const QuicStream& ptr, Fn&& add_field) {
   add_field(label, ptr.GetStat(&QuicStreamStats::name));
   STREAM_STATS(V)
 #undef V
+}
+
+void QuicStream::OnClose() {
+  Unschedule();
+  set_destroyed();
+  if (outbound_source_ != nullptr) {
+    outbound_source_ = nullptr;
+    outbound_source_strong_ptr_.reset();
+  }
+  if (inbound_consumer_ != nullptr) {
+    inbound_consumer_ = nullptr;
+    inbound_consumer_strong_ptr_.reset();
+  }
+  session()->RemoveStream(id());
+
+  session_.reset();
 }
 
 // Acknowledge is called when ngtcp2 has received an acknowledgement
@@ -383,48 +399,26 @@ void QuicStreamGetID(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(static_cast<double>(stream->id()));
 }
 
-void OpenUnidirectionalStream(const FunctionCallbackInfo<Value>& args) {
+void OpenStream(const FunctionCallbackInfo<Value>& args) {
   CHECK(!args.IsConstructCall());
   CHECK(args[0]->IsObject());
   CHECK_IMPLIES(!args[1]->IsUndefined(), args[1]->IsObject());
+
+  bool unidirectional = args[2]->IsTrue();
 
   QuicSession* session;
   ASSIGN_OR_RETURN_UNWRAP(&session, args[0].As<Object>());
 
   int64_t stream_id;
-  if (!session->OpenUnidirectionalStream(&stream_id))
-    return;
 
-  QuicBufferSource* source = nullptr;
-  if (args[1]->IsObject()) {
-    BaseObject* source_obj;
-    ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[1]);
-    source = reinterpret_cast<QuicBufferSource*>(source_obj);
+  if ((unidirectional && !session->OpenUnidirectionalStream(&stream_id)) ||
+      !session->OpenBidirectionalStream(&stream_id)) {
+    return;
   }
 
-  BaseObjectPtr<QuicStream> stream =
-      QuicStream::New(session, stream_id, source);
-  args.GetReturnValue().Set(stream->object());
-}
-
-void OpenBidirectionalStream(const FunctionCallbackInfo<Value>& args) {
-  CHECK(!args.IsConstructCall());
-  CHECK(args[0]->IsObject());
-  CHECK_IMPLIES(!args[1]->IsUndefined(), args[1]->IsObject());
-  QuicSession* session;
-  ASSIGN_OR_RETURN_UNWRAP(&session, args[0].As<Object>());
-
-  int64_t stream_id;
-  if (!session->OpenBidirectionalStream(&stream_id))
-    return;
-
-  QuicBufferSource* source = nullptr;
-  if (args[1]->IsObject()) {
-    // TODO(@jasnell): Make this work for all...
-    ArrayBufferViewSource* source_obj;
-    ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[1]);
-    source = source_obj;
-  }
+  QuicBufferSource* source = args[1]->IsObject()
+      ? QuicBufferSource::FromObject(args[1].As<Object>())
+      : nullptr;
 
   BaseObjectPtr<QuicStream> stream =
       QuicStream::New(session, stream_id, source);
@@ -542,8 +536,7 @@ void QuicStream::Initialize(Environment* env, Local<Object> target) {
               class_name,
               stream->GetFunction(env->context()).ToLocalChecked()).Check();
 
-  env->SetMethod(target, "openBidirectionalStream", OpenBidirectionalStream);
-  env->SetMethod(target, "openUnidirectionalStream", OpenUnidirectionalStream);
+  env->SetMethod(target, "openStream", OpenStream);
 }
 
 }  // namespace quic

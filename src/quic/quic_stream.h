@@ -315,6 +315,8 @@ class QuicStream : public AsyncWrap,
   // called when there is data available.
   void Resume();
 
+  void OnClose();
+
   // QuicStream instances cannot be transferred or cloned meaningfully
   // to a Worker Thread.
   TransferMode GetTransferMode() const override {

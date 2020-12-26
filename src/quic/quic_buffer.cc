@@ -37,6 +37,16 @@ using v8::Object;
 using v8::String;
 using v8::Value;
 namespace quic {
+QuicBufferSource* QuicBufferSource::FromObject(Local<Object> object) {
+  return static_cast<QuicBufferSource*>(
+      object->GetAlignedPointerFromInternalField(
+          QuicBufferSource::kSourceField));
+}
+
+void QuicBufferSource::AttachToObject(Local<Object> object) {
+  object->SetAlignedPointerInInternalField(
+      QuicBufferSource::kSourceField, this);
+}
 
 QuicBufferChunk::QuicBufferChunk(
     const std::shared_ptr<v8::BackingStore>& data,
@@ -301,7 +311,7 @@ void ArrayBufferViewSource::Initialize(Environment* env, Local<Object> target) {
   Local<String> class_name =
       FIXED_ONE_BYTE_STRING(env->isolate(), "ArrayBufferViewSource");
   temp->InstanceTemplate()->SetInternalFieldCount(
-      ArrayBufferViewSource::kInternalFieldCount);
+      QuicBufferSource::kInternalFieldCount);
   temp->SetClassName(class_name);
   target->Set(
       env->context(),
@@ -331,7 +341,7 @@ void StreamBaseSource::Initialize(Environment* env, Local<Object> target) {
   Local<String> class_name =
       FIXED_ONE_BYTE_STRING(env->isolate(), "StreamBaseSource");
   temp->InstanceTemplate()->SetInternalFieldCount(
-      StreamBaseSource::kInternalFieldCount);
+      QuicBufferSource::kInternalFieldCount);
   temp->SetClassName(class_name);
   target->Set(
       env->context(),
@@ -363,9 +373,11 @@ ArrayBufferViewSource::ArrayBufferViewSource(
     Environment* env,
     Local<Object> wrap,
     std::unique_ptr<QuicBufferChunk> chunk)
-    : BaseObject(env, wrap),
+    : QuicBufferSource(),
+      BaseObject(env, wrap),
       chunk_(std::move(chunk)) {
   MakeWeak();
+  AttachToObject(object());
 }
 
 int ArrayBufferViewSource::DoPull(
@@ -420,8 +432,8 @@ size_t ArrayBufferViewSource::Seek(size_t amount) {
 }
 
 void ArrayBufferViewSource::MemoryInfo(MemoryTracker* tracker) const {
-  if (chunk_)
-    tracker->TrackField("data", chunk_);
+  // if (chunk_)
+  //   tracker->TrackField("data", chunk_);
 }
 
 void StreamSource::New(const FunctionCallbackInfo<Value>& args) {

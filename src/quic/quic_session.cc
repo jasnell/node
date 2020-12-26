@@ -1675,9 +1675,7 @@ void QuicApplication::StreamClose(
   BaseObjectPtr<QuicStream> stream = session()->FindStream(stream_id);
   if (stream) {
     CHECK(!stream->is_destroyed());  // Should not be possible
-    stream->Unschedule();
-    stream->set_destroyed();
-    session()->RemoveStream(stream_id);
+    stream->OnClose();
     session()->listener()->OnStreamClose(stream_id, app_error_code);
   }
 }
@@ -2594,8 +2592,9 @@ void QuicSession::RemoveStream(int64_t stream_id) {
       ngtcp2_conn_extend_max_streams_uni(connection_.get(), 1);
   }
 
-  // This will have the side effect of destroying the QuicStream
-  // instance.
+  // Frees the persistent reference to the QuicStream object,
+  // allowing it to be gc'd any time after the JS side releases
+  // it's own reference.
   streams_.erase(stream_id);
 }
 

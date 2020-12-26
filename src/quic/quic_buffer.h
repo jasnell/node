@@ -32,13 +32,23 @@ using DoneCB = std::function<void(int)>;
 class QuicBufferSource : public bob::SourceImpl<ngtcp2_vec>,
                          public MemoryRetainer {
  public:
-  virtual BaseObject* GetStrongPtr() { return nullptr; }
-  virtual size_t Acknowledge(uint64_t offset, size_t amount);
-  virtual size_t Seek(size_t amount);
+  enum InternalFields {
+    kSlot = BaseObject::kSlot,
+    kSourceField = BaseObject::kInternalFieldCount,
+    kInternalFieldCount
+  };
+  virtual BaseObjectPtr<BaseObject> GetStrongPtr() {
+    return BaseObjectPtr<BaseObject>();
+  }
+  virtual size_t Acknowledge(uint64_t offset, size_t amount) = 0;
+  virtual size_t Seek(size_t amount) = 0;
   inline void set_owner(QuicStream* owner) { owner_ = owner; }
 
+  static QuicBufferSource* FromObject(v8::Local<v8::Object> object);
+
  protected:
-  QuicStream* owner() { return owner_; }
+  void AttachToObject(v8::Local<v8::Object> object);
+  inline QuicStream* owner() { return owner_; }
 
  private:
   QuicStream* owner_ = nullptr;
@@ -256,8 +266,8 @@ class JSQuicBufferConsumer : public QuicBufferConsumer,
 
 // Receives a single ArrayBufferView and uses it's contents as the
 // complete source of outbound data for the QuicStream.
-class ArrayBufferViewSource : public BaseObject,
-                              public QuicBufferSource {
+class ArrayBufferViewSource : public QuicBufferSource,
+                              public BaseObject {
  public:
   static void Initialize(Environment* env, v8::Local<v8::Object> target);
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -269,8 +279,9 @@ class ArrayBufferViewSource : public BaseObject,
       size_t count,
       size_t max_count_hint) override;
 
-  BaseObject* GetStrongPtr() override { return this; }
-
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
   size_t Acknowledge(uint64_t offset, size_t datalen) override;
   size_t Seek(size_t amount) override;
 
@@ -322,7 +333,9 @@ class StreamSource : public AsyncWrap,
       size_t count,
       size_t max_count_hint) override;
 
-  BaseObject* GetStrongPtr() override { return this; }
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(StreamSource);
@@ -360,7 +373,9 @@ class StreamBaseSource : public AsyncWrap,
   uv_buf_t OnStreamAlloc(size_t suggested_size) override;
   void OnStreamRead(ssize_t nread, const uv_buf_t& buf) override;
 
-  BaseObject* GetStrongPtr() override { return this; }
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>(this);
+  }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(StreamBaseSource)
