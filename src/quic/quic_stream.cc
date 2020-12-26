@@ -412,7 +412,7 @@ void OpenStream(const FunctionCallbackInfo<Value>& args) {
   int64_t stream_id;
 
   if ((unidirectional && !session->OpenUnidirectionalStream(&stream_id)) ||
-      !session->OpenBidirectionalStream(&stream_id)) {
+      (!unidirectional && !session->OpenBidirectionalStream(&stream_id))) {
     return;
   }
 
@@ -422,6 +422,7 @@ void OpenStream(const FunctionCallbackInfo<Value>& args) {
 
   BaseObjectPtr<QuicStream> stream =
       QuicStream::New(session, stream_id, source);
+
   args.GetReturnValue().Set(stream->object());
 }
 
@@ -505,9 +506,7 @@ void QuicStreamAttachSource(const FunctionCallbackInfo<Value>& args) {
   QuicStream* stream;
   ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
   CHECK(args[0]->IsObject());
-  BaseObject* source_obj;
-  ASSIGN_OR_RETURN_UNWRAP(&source_obj, args[0].As<Object>());
-  QuicBufferSource* source = reinterpret_cast<QuicBufferSource*>(source_obj);
+  QuicBufferSource* source = QuicBufferSource::FromObject(args[0].As<Object>());
   stream->AttachOutboundSource(source);
 }
 }  // namespace

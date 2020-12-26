@@ -353,7 +353,7 @@ class QuicStream : public AsyncWrap,
   // is attached. Only a single inbound_consumer_ may be
   // attached at a time.
   QuicBuffer inbound_;
-  QuicBufferConsumer* inbound_consumer_;
+  QuicBufferConsumer* inbound_consumer_ = nullptr;
   BaseObjectPtr<AsyncWrap> inbound_consumer_strong_ptr_;
 
   int64_t stream_id_ = 0;
