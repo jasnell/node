@@ -44,6 +44,14 @@ class QuicBufferSource : public bob::SourceImpl<ngtcp2_vec>,
   virtual size_t Seek(size_t amount) = 0;
   inline void set_owner(QuicStream* owner) { owner_ = owner; }
 
+  // If the BufferSource is explicitly marked closed, then it
+  // should not accept any more pending data than what's already
+  // in it's queue, if any, and it should send EOS as soon as possible.
+  // The set_closed state will not be relevant to all sources
+  // (e.g. ArrayBufferViewSource and NullSource) so the default
+  // implementation is to do nothing.
+  virtual void set_closed() { }
+
   static QuicBufferSource* FromObject(v8::Local<v8::Object> object);
 
  protected:
@@ -264,6 +272,37 @@ class JSQuicBufferConsumer : public QuicBufferConsumer,
       bool ended = false) override;
 };
 
+// The NullSource is used when no payload source is provided
+// for a QuicStream. Whenever DoPull is called, it simply
+// immediately responds with no data and EOS set.
+class NullSource : public QuicBufferSource {
+ public:
+  NullSource() = default;
+
+  int DoPull(
+      bob::Next<ngtcp2_vec> next,
+      int options,
+      ngtcp2_vec* data,
+      size_t count,
+      size_t max_count_hint) override;
+
+  BaseObjectPtr<BaseObject> GetStrongPtr() override {
+    return BaseObjectPtr<BaseObject>();
+  }
+
+  size_t Acknowledge(uint64_t offset, size_t datalen) override {
+    return 0;
+  }
+
+  size_t Seek(size_t amount) override {
+    return 0;
+  }
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(NullSource)
+  SET_SELF_SIZE(NullSource)
+};
+
 // Receives a single ArrayBufferView and uses it's contents as the
 // complete source of outbound data for the QuicStream.
 class ArrayBufferViewSource : public QuicBufferSource,
@@ -317,6 +356,7 @@ class StreamSource : public AsyncWrap,
   bool IsClosing() override { return queue_.is_ended(); }
 
   int DoShutdown(ShutdownWrap* wrap) override;
+  void set_closed() override;
 
   int DoWrite(
       WriteWrap* w,
@@ -376,6 +416,8 @@ class StreamBaseSource : public AsyncWrap,
   BaseObjectPtr<BaseObject> GetStrongPtr() override {
     return BaseObjectPtr<BaseObject>(this);
   }
+
+  void set_closed() override;
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(StreamBaseSource)

@@ -38,9 +38,39 @@ using v8::Value;
 
 namespace quic {
 
+namespace {
+  // The NullSource is used when a QuicStream is created without
+  // an outbound source. It simply returns end of stream any time
+  // DoPull is called.
+  NullSource null_source;
+}
+
 bool QuicStream::HasInstance(Environment* env, v8::Local<v8::Object> obj) {
   QuicState* state = env->GetBindingData<QuicState>(env->context());
   return state->quicserverstream()->HasInstance(obj);
+}
+
+BaseObjectPtr<QuicStream> QuicStream::New(
+    QuicSession* session,
+    int64_t stream_id,
+    QuicBufferSource* source) {
+  Local<Object> obj;
+  if (!session->quic_state()
+              ->quicserverstream()
+              ->InstanceTemplate()
+              ->NewInstance(session->env()->context()).ToLocal(&obj)) {
+    return {};
+  }
+
+  BaseObjectPtr<QuicStream> stream(
+      new QuicStream(
+          session,
+          obj,
+          stream_id,
+          source));
+  DCHECK(stream);
+  session->AddStream(stream);
+  return stream;
 }
 
 QuicStream::QuicStream(
@@ -57,8 +87,8 @@ QuicStream::QuicStream(
     stream_id_(stream_id),
     state_(sess->env()->isolate()),
     quic_state_(sess->quic_state()) {
-  CHECK_NOT_NULL(sess);
   MakeWeak();
+  CHECK_NOT_NULL(sess);
   Debug(this, "Created");
 
   if (source != nullptr)
@@ -81,8 +111,8 @@ QuicStream::~QuicStream() {
 
 void QuicStream::Resume() {
   QuicSession::SendSessionScope send_scope(session());
-  Debug(this, "Resuming stream %" PRIu64, id());
-  session()->ResumeStream(id());
+  Debug(this, "Resuming stream %" PRIu64, stream_id_);
+  session()->ResumeStream(stream_id_);
 }
 
 void QuicStream::set_final_size(uint64_t final_size) {
@@ -97,9 +127,6 @@ void QuicStream::set_final_size(uint64_t final_size) {
 void QuicStream::set_fin_sent() {
   Debug(this, "Final stream frame sent");
   state_->fin_sent = 1;
-  if (shutdown_done_ != nullptr) {
-    shutdown_done_(0);
-  }
 }
 
 void QuicStream::EndHeaders() {
@@ -231,18 +258,14 @@ void QuicStreamStatsTraits::ToString(const QuicStream& ptr, Fn&& add_field) {
 }
 
 void QuicStream::OnClose() {
+  if (!destroyed_)
+    destroyed_ = true;
   Unschedule();
-  set_destroyed();
   if (outbound_source_ != nullptr) {
     outbound_source_ = nullptr;
     outbound_source_strong_ptr_.reset();
   }
-  if (inbound_consumer_ != nullptr) {
-    inbound_consumer_ = nullptr;
-    inbound_consumer_strong_ptr_.reset();
-  }
-  session()->RemoveStream(id());
-
+  session()->RemoveStream(stream_id_);
   session_.reset();
 }
 
@@ -291,8 +314,12 @@ void QuicStream::Destroy(QuicError* error) {
   if (destroyed_)
     return;
   destroyed_ = true;
+  // Triggers sending a RESET_STREAM and/or STOP_SENDING as
+  // appropriate.
+  // TODO(@jasnell): Determine if the shutdown stream triggers the
+  // stream close flow. If so, then we don't need to call OnClose.
   session()->ShutdownStream(id(), error != nullptr ? error->code : 0);
-  session_->RemoveStream(stream_id_);
+  OnClose();
 }
 
 void QuicStream::IncrementStats(size_t datalen) {
@@ -311,26 +338,6 @@ void QuicStream::MemoryInfo(MemoryTracker* tracker) const {
                       inbound_consumer_strong_ptr_);
   tracker->TrackField("headers", headers_);
   StatsBase::StatsMemoryInfo(tracker);
-}
-
-BaseObjectPtr<QuicStream> QuicStream::New(
-    QuicSession* session,
-    int64_t stream_id,
-    QuicBufferSource* source) {
-  Local<Object> obj;
-  if (!session->quic_state()
-              ->quicserverstream()
-              ->InstanceTemplate()
-              ->NewInstance(session->env()->context()).ToLocal(&obj)) {
-    return {};
-  }
-
-  BaseObjectPtr<QuicStream> stream =
-      MakeDetachedBaseObject<QuicStream>(session, obj, stream_id, source);
-  CHECK(stream);
-  session->AddStream(stream);
-  stream->Resume();
-  return stream;
 }
 
 int QuicStream::DoPull(
@@ -391,6 +398,11 @@ bool QuicStream::SubmitTrailers(v8::Local<v8::Array> headers) {
   return session_->SubmitTrailers(stream_id_, headers);
 }
 
+void QuicStream::Close() {
+  if (outbound_source_ != nullptr)
+    outbound_source_->set_closed();
+}
+
 // JavaScript API
 namespace {
 void QuicStreamGetID(const FunctionCallbackInfo<Value>& args) {
@@ -399,31 +411,44 @@ void QuicStreamGetID(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(static_cast<double>(stream->id()));
 }
 
-void OpenStream(const FunctionCallbackInfo<Value>& args) {
+void CreateStream(const FunctionCallbackInfo<Value>& args) {
   CHECK(!args.IsConstructCall());
   CHECK(args[0]->IsObject());
   CHECK_IMPLIES(!args[1]->IsUndefined(), args[1]->IsObject());
 
-  bool unidirectional = args[2]->IsTrue();
-
   QuicSession* session;
   ASSIGN_OR_RETURN_UNWRAP(&session, args[0].As<Object>());
 
-  int64_t stream_id;
+  Maybe<int64_t> stream_id =
+      session->OpenStream(args[2]->IsTrue()
+          ? QUIC_STREAM_UNIDIRECTIONAL
+          : QUIC_STREAM_BIRECTIONAL);
 
-  if ((unidirectional && !session->OpenUnidirectionalStream(&stream_id)) ||
-      (!unidirectional && !session->OpenBidirectionalStream(&stream_id))) {
-    return;
+  // If opening the stream fails here, undefined will be returned.
+  // On the JavaScript side, an exception will be raised.
+  if (stream_id.IsJust()) {
+    // If a source is not provided, the null_source is used, causing the
+    // QuicStream's writable side to be closed immediately after the first
+    // attempt to send data (An empty data frame with fin flag set will
+    // be sent to the peer).
+    QuicBufferSource* source = args[1]->IsObject()
+        ? QuicBufferSource::FromObject(args[1].As<Object>())
+        : &null_source;
+
+    BaseObjectPtr<QuicStream> stream =
+        QuicStream::New(
+            session,
+            stream_id.FromJust(),
+            source);
+
+    args.GetReturnValue().Set(stream->object());
   }
+}
 
-  QuicBufferSource* source = args[1]->IsObject()
-      ? QuicBufferSource::FromObject(args[1].As<Object>())
-      : nullptr;
-
-  BaseObjectPtr<QuicStream> stream =
-      QuicStream::New(session, stream_id, source);
-
-  args.GetReturnValue().Set(stream->object());
+void QuicStreamClose(const FunctionCallbackInfo<Value>& args) {
+  QuicStream* stream;
+  ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
+  stream->Close();
 }
 
 void QuicStreamDestroy(const FunctionCallbackInfo<Value>& args) {
@@ -521,6 +546,7 @@ void QuicStream::Initialize(Environment* env, Local<Object> target) {
   Local<ObjectTemplate> streamt = stream->InstanceTemplate();
   streamt->SetInternalFieldCount(StreamBase::kInternalFieldCount);
   streamt->Set(env->owner_symbol(), Null(env->isolate()));
+  env->SetProtoMethod(stream, "close", QuicStreamClose);
   env->SetProtoMethod(stream, "destroy", QuicStreamDestroy);
   env->SetProtoMethod(stream, "resetStream", QuicStreamReset);
   env->SetProtoMethod(stream, "stopSending", QuicStreamStopSending);
@@ -535,7 +561,7 @@ void QuicStream::Initialize(Environment* env, Local<Object> target) {
               class_name,
               stream->GetFunction(env->context()).ToLocalChecked()).Check();
 
-  env->SetMethod(target, "openStream", OpenStream);
+  env->SetMethod(target, "createStream", CreateStream);
 }
 
 }  // namespace quic

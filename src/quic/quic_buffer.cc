@@ -355,6 +355,17 @@ void JSQuicBufferConsumer::New(const FunctionCallbackInfo<Value>& args) {
   new JSQuicBufferConsumer(env, args.This());
 }
 
+int NullSource::DoPull(
+    bob::Next<ngtcp2_vec> next,
+    int options,
+    ngtcp2_vec* data,
+    size_t count,
+    size_t max_count_hint) {
+  int status = bob::Status::STATUS_END;
+  std::move(next)(status, nullptr, 0, [](size_t len) {});
+  return status;
+}
+
 void ArrayBufferViewSource::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
   CHECK(args[0]->IsArrayBufferView());
@@ -469,11 +480,16 @@ int StreamSource::DoShutdown(ShutdownWrap* wrap) {
   return 0;
 }
 
+void StreamSource::set_closed() {
+  queue_.End();
+}
+
 int StreamSource::DoWrite(
     WriteWrap* w,
     uv_buf_t* bufs,
     size_t count,
     uv_stream_t* send_handle) {
+  CHECK(!queue_.is_ended());
   CHECK_NOT_NULL(owner());
   for (size_t n = 0; n < count; n++) {
     std::shared_ptr<BackingStore> store;
@@ -538,6 +554,12 @@ StreamBaseSource::~StreamBaseSource() {
   resource_->RemoveStreamListener(this);
 }
 
+void StreamBaseSource::set_closed() {
+  resource_->ReadStop();
+  resource_->DoShutdown(nullptr);
+  buffer_.End();
+}
+
 uv_buf_t StreamBaseSource::OnStreamAlloc(size_t suggested_size) {
   uv_buf_t buf;
   buf.base = Malloc<char>(suggested_size);
@@ -546,6 +568,7 @@ uv_buf_t StreamBaseSource::OnStreamAlloc(size_t suggested_size) {
 }
 
 void StreamBaseSource::OnStreamRead(ssize_t nread, const uv_buf_t& buf_) {
+  CHECK(!buffer_.is_ended());
   CHECK_NOT_NULL(owner());
   if (nread < 0) {
     buffer_.End();

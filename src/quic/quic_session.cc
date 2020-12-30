@@ -50,7 +50,10 @@ using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::Integer;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
+using v8::Nothing;
 using v8::Number;
 using v8::Object;
 using v8::ObjectTemplate;
@@ -1674,9 +1677,13 @@ void QuicApplication::StreamClose(
     uint64_t app_error_code) {
   BaseObjectPtr<QuicStream> stream = session()->FindStream(stream_id);
   if (stream) {
-    CHECK(!stream->is_destroyed());  // Should not be possible
-    stream->OnClose();
+    // Calling stream->OnClose() frees up the internal state and
+    // disconnects the stream from the session. The subsequent
+    // call to OnStreamClose notifies the JavaScript side (or
+    // whichever listener is attached) so that any references and
+    // state on that side can be freed up.
     session()->listener()->OnStreamClose(stream_id, app_error_code);
+    stream->OnClose();
   }
 }
 
@@ -2174,10 +2181,11 @@ void QuicSession::AddToSocket(QuicSocket* socket) {
 
 // Add the given QuicStream to this QuicSession's collection of streams. All
 // streams added must be removed before the QuicSession instance is freed.
-void QuicSession::AddStream(BaseObjectPtr<QuicStream> stream) {
+void QuicSession::AddStream(const BaseObjectPtr<QuicStream>& stream) {
   DCHECK(!is_graceful_closing());
   Debug(this, "Adding stream %" PRId64 " to session", stream->id());
   streams_.emplace(stream->id(), stream);
+  stream->Resume();
 
   // Update tracking statistics for the number of streams associated with
   // this session.
@@ -2360,18 +2368,29 @@ void QuicSession::OnRetransmitTimeout() {
   SendPendingData();
 }
 
-bool QuicSession::OpenBidirectionalStream(int64_t* stream_id) {
+Maybe<int64_t> QuicSession::OpenStream(
+    QuicStreamDirection direction) {
   DCHECK(!is_destroyed());
   DCHECK(!is_closing());
   DCHECK(!is_graceful_closing());
-  return ngtcp2_conn_open_bidi_stream(connection(), stream_id, nullptr) == 0;
-}
-
-bool QuicSession::OpenUnidirectionalStream(int64_t* stream_id) {
-  DCHECK(!is_destroyed());
-  DCHECK(!is_closing());
-  DCHECK(!is_graceful_closing());
-  return ngtcp2_conn_open_uni_stream(connection(), stream_id, nullptr) == 0;
+  int64_t stream_id;
+  switch (direction) {
+    case QUIC_STREAM_BIRECTIONAL:
+      if (ngtcp2_conn_open_bidi_stream(
+              connection(),
+              &stream_id,
+              nullptr) == 0) {
+        return Just(stream_id);
+      }
+    case QUIC_STREAM_UNIDIRECTIONAL:
+      if (ngtcp2_conn_open_uni_stream(
+              connection(),
+              &stream_id,
+              nullptr) == 0) {
+        return Just(stream_id);
+      }
+  }
+  return Nothing<int64_t>();
 }
 
 // When ngtcp2 receives a successful response to a PATH_CHALLENGE,

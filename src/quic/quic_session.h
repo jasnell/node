@@ -923,7 +923,7 @@ class QuicSession final : public AsyncWrap,
 
   ngtcp2_conn* connection() const { return connection_.get(); }
 
-  void AddStream(BaseObjectPtr<QuicStream> stream);
+  void AddStream(const BaseObjectPtr<QuicStream>& stream);
 
   void AddToSocket(QuicSocket* socket);
 
@@ -957,9 +957,7 @@ class QuicSession final : public AsyncWrap,
   // idle for too long and needs to be torn down.
   void OnIdleTimeout();
 
-  bool OpenBidirectionalStream(int64_t* stream_id);
-
-  bool OpenUnidirectionalStream(int64_t* stream_id);
+  v8::Maybe<int64_t> OpenStream(QuicStreamDirection direction);
 
   // Ping causes the QuicSession to serialize any currently
   // pending frames in it's queue, including any necessary

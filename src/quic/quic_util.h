@@ -51,6 +51,23 @@ constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
 
 constexpr int ERR_FAILED_TO_CREATE_SESSION = -1;
 
+enum QuicStreamDirection {
+  // The QuicStream is readable and writable in both directions
+  QUIC_STREAM_BIRECTIONAL,
+
+  // The QuicStream is writable and readable in only one direction.
+  // The direction depends on the QuicStreamOrigin.
+  QUIC_STREAM_UNIDIRECTIONAL
+};
+
+enum QuicStreamOrigin {
+  // The QuicStream was created by the server.
+  QUIC_STREAM_SERVER,
+
+  // The QuicStream was created by the client.
+  QUIC_STREAM_CLIENT
+};
+
 // The preferred address policy determines how a client QuicSession
 // handles a server-advertised preferred address. As suggested, the
 // preferred address is the address the server would prefer the

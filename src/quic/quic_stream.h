@@ -102,23 +102,6 @@ enum QuicStreamStateFields {
 };
 #undef V
 
-enum QuicStreamDirection {
-  // The QuicStream is readable and writable in both directions
-  QUIC_STREAM_BIRECTIONAL,
-
-  // The QuicStream is writable and readable in only one direction.
-  // The direction depends on the QuicStreamOrigin.
-  QUIC_STREAM_UNIDIRECTIONAL
-};
-
-enum QuicStreamOrigin {
-  // The QuicStream was created by the server.
-  QUIC_STREAM_SERVER,
-
-  // The QuicStream was created by the client.
-  QUIC_STREAM_CLIENT
-};
-
 // QuicStream's are simple data flows that may be:
 //
 // * Bidirectional or Unidirectional
@@ -192,12 +175,6 @@ class QuicStream : public AsyncWrap,
       int64_t stream_id,
       QuicBufferSource* source = nullptr);
 
-  QuicStream(
-      QuicSession* session,
-      v8::Local<v8::Object> target,
-      int64_t stream_id,
-      QuicBufferSource* source = nullptr);
-
   ~QuicStream() override;
 
   std::string diagnostic_name() const override;
@@ -247,6 +224,11 @@ class QuicStream : public AsyncWrap,
   // This means that the data range may be released from
   // memory.
   void Acknowledge(uint64_t offset, size_t datalen);
+
+  // Mark the stream for graceful close. If a source has been
+  // provided, it will be marked closed to prevent more data
+  // from being queued.
+  void Close();
 
   // Destroy the QuicStream and render it no longer usable.
   void Destroy(QuicError* error = nullptr);
@@ -329,6 +311,12 @@ class QuicStream : public AsyncWrap,
   SET_SELF_SIZE(QuicStream)
 
  private:
+  QuicStream(
+      QuicSession* session,
+      v8::Local<v8::Object> target,
+      int64_t stream_id,
+      QuicBufferSource* source = nullptr);
+
   // Process the inbound_ QuicBuffer instance. If there is an
   // inbound consumer it will be passed the full contents of
   // the inbound queue as an Array of Uint8Array objects.
@@ -359,7 +347,6 @@ class QuicStream : public AsyncWrap,
   int64_t stream_id_ = 0;
   bool destroyed_ = false;
   AliasedStruct<QuicStreamState> state_;
-  DoneCB shutdown_done_ = nullptr;
 
   std::vector<std::unique_ptr<QuicHeader>> headers_;
   QuicStreamHeadersKind headers_kind_;

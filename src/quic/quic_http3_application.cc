@@ -21,7 +21,7 @@ namespace node {
 
 using v8::Array;
 using v8::Local;
-
+using v8::Maybe;
 namespace quic {
 
 // nghttp3 uses a numeric identifier for a large number
@@ -219,8 +219,10 @@ void Http3Application::CreateConnection() {
 // stream in each direction to exchange frames impacting the entire
 // connection.
 bool Http3Application::CreateAndBindControlStream() {
-  if (!session()->OpenUnidirectionalStream(&control_stream_id_))
+  if (!session()->OpenStream(
+          QUIC_STREAM_UNIDIRECTIONAL).To(&control_stream_id_)) {
     return false;
+  }
   Debug(
       session(),
       "Open stream %" PRId64 " and bind as control stream",
@@ -233,8 +235,10 @@ bool Http3Application::CreateAndBindControlStream() {
 // The HTTP/3 QUIC binding creates two unidirectional streams in
 // each direction to exchange header compression details.
 bool Http3Application::CreateAndBindQPackStreams() {
-  if (!session()->OpenUnidirectionalStream(&qpack_enc_stream_id_) ||
-      !session()->OpenUnidirectionalStream(&qpack_dec_stream_id_)) {
+  if (!session()->OpenStream(
+          QUIC_STREAM_UNIDIRECTIONAL).To(&qpack_enc_stream_id_) ||
+      !session()->OpenStream(
+          QUIC_STREAM_UNIDIRECTIONAL).To(&qpack_dec_stream_id_)) {
     return false;
   }
   Debug(
