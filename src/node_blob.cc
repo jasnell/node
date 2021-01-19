@@ -3,6 +3,7 @@
 #include "base_object-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_bob-inl.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "threadpoolwork-inl.h"
@@ -22,13 +23,141 @@ using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
 using v8::MaybeLocal;
+using v8::Nothing;
 using v8::Number;
 using v8::Object;
 using v8::Uint32;
 using v8::Undefined;
 using v8::Value;
+
+std::shared_ptr<BackingStoreView> empty_backing_store_view =
+    std::make_shared<BackingStoreView>();
+
+BackingStoreView::BackingStoreView(std::shared_ptr<v8::BackingStore> store)
+    : BackingStoreView(std::move(store), store->ByteLength(), 0) {}
+
+BackingStoreView::BackingStoreView(
+    std::shared_ptr<v8::BackingStore> store,
+    size_t length,
+    size_t offset)
+    : store_(store),
+      length_(length),
+      offset_(offset) {
+  if (store_) {
+    CHECK_LE(offset, store_->ByteLength());
+    CHECK_LE(length, store_->ByteLength() - offset);
+  }
+}
+
+BackingStoreView::BackingStoreView()
+    : BackingStoreView(std::shared_ptr<BackingStore>(), 0, 0) {}
+
+BackingStoreView::BackingStoreView(const BackingStoreView& other)
+    : store_(other.store_),
+      length_(other.length_),
+      offset_(other.offset_) {}
+
+BackingStoreView& BackingStoreView::operator=(
+    const BackingStoreView& other) {
+  if (&other == this) return *this;
+  this->~BackingStoreView();
+  return *new (this) BackingStoreView(other);
+}
+
+BackingStoreView::BackingStoreView(BackingStoreView&& other)
+    : store_(std::move(other.store_)),
+      length_(other.length_),
+      offset_(other.offset_) {
+  other.length_ = 0;
+  other.offset_ = 0;
+}
+
+BackingStoreView& BackingStoreView::operator=(BackingStoreView&& other) {
+  if (&other == this) return *this;
+  this->~BackingStoreView();
+  return *new (this) BackingStoreView(other);
+}
+
+const uv_buf_t BackingStoreView::View() const {
+  if (!store_) return { nullptr, 0 };
+  char* base = reinterpret_cast<char*>(store_->Data());
+  base += offset_;
+  return uv_buf_init(base, length_);
+};
+
+std::shared_ptr<BackingStoreView> BackingStoreView::Slice(
+    size_t start,
+    size_t end) {
+  if (!store_) return empty_backing_store_view;
+  CHECK_LE(offset_ + start, store_->ByteLength());
+  CHECK_LE(offset_ + end, store_->ByteLength());
+  CHECK_LE(start, end);
+  return std::make_shared<BackingStoreView>(
+      store,
+      end - start,
+      offset_ + start);
+}
+
+Maybe<bool> BackingStoreView::CopyInto(
+    std::shared_ptr<BackingStore> dest,
+    size_t offset) {
+  const uv_buf_t view = View();
+  if (!dest ||
+      offset > dest->ByteLength() ||
+      (dest->ByteLength() - offset) < view.len) {
+    return Nothing<bool>();
+  }
+  if (view.len > 0) {
+    CHECK_NOT_NULL(view.base);
+    memcpy(dest->Data(), view.base, view.len);
+  }
+  return Just(true);
+}
+
+BlobItem::BlobItem(const BackingStoreView::List& items)
+    : realized_(items) {
+  size_t length = 0;
+  for (const auto& item : realized_)
+    length += item->length();
+  expected_length_ = realized_length_ = length;
+}
+
+BlobItem::BlobItem(Loader loader, size_t expected_length)
+    : loader_(std::move(loader)),
+      expected_length_(expected_length) {}
+
+Maybe<bool> BlobItem::WaitForData(
+    Reader* reader,
+    size_t start_hint,
+    size_t end_hint) {
+  if (!is_loading() || start_hint > end_hint)
+    return Nothing<bool>();
+
+  // There's no point in waiting for nothing, or in waiting for
+  // data that has already been realized.
+  if (start_hint == end_hint || end_hint <= realized_length_)
+    return Just(false);
+
+  //
+  min_waiting_reader_offset_ = std::min(min_waiting_reader_offset_, start_hint);
+  max_waiting_reader_offset_ = std::max(max_waiting_reader_offset_, end_hint);
+
+  return Just(true);
+}
+
+void BlobItem::StopWaitingForData(Reader* reader) {}
+
+Maybe<BackingStoreView::List> BlobItem::Slice(size_t start, size_t end) {
+  return Nothing<BackingStoreView::List>();
+}
+
+void BlobItem::ReadMore() {}
+
+
 
 void Blob::Initialize(Environment* env, v8::Local<v8::Object> target) {
   env->SetMethod(target, "createBlob", New);
