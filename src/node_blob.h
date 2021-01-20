@@ -171,13 +171,12 @@ class BlobItem {
     bob::Next<std::shared_ptr<BackingStoreView>> next_;
 
     static void OnNotify(uv_async_t* signal);
-    void ProcessNext();
+    bob::Status ProcessNext();
 
     bool eos_ = false;
 
     // The waiting_for_start_ and waiting_for_end_ specify the
     // range of Data in item_ the Reader is waiting for.
-    size_t waiting_for_start_ = 0;
     size_t waiting_for_end_ = 0;
 
     // The max_offset_ is the total amount of data that has been

@@ -1354,6 +1354,7 @@
         'test/cctest/test_aliased_buffer.cc',
         'test/cctest/test_base64.cc',
         'test/cctest/test_base_object_ptr.cc',
+        'test/cctest/test_blob.cc',
         'test/cctest/test_node_postmortem_metadata.cc',
         'test/cctest/test_environment.cc',
         'test/cctest/test_linked_binding.cc',

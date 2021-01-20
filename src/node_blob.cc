@@ -97,7 +97,7 @@ std::shared_ptr<BackingStoreView> BackingStoreView::Slice(
   CHECK_LE(offset_ + end, store_->ByteLength());
   CHECK_LE(start, end);
   return std::make_shared<BackingStoreView>(
-      store,
+      store_,
       end - start,
       offset_ + start);
 }
@@ -119,7 +119,8 @@ Maybe<bool> BackingStoreView::CopyInto(
 }
 
 BlobItem::BlobItem(Environment* env, const BackingStoreView::List& items)
-    : env_(env), realized_(items) {
+    : env_(env),
+      realized_(items) {
   size_t length = 0;
   for (const auto& item : realized_)
     length += item->length();
@@ -250,12 +251,14 @@ BlobItem::Reader::Reader(Environment* env, std::shared_ptr<BlobItem> item)
     : env_(env),
       item_(item) {
   uv_async_init(env_->event_loop(), &notify_signal_, OnNotify);
+  uv_unref(reinterpret_cast<uv_handle_t*>(&notify_signal_));
 }
 
 void BlobItem::Reader::OnNotify(uv_async_t* signal) {
   BlobItem::Reader* reader =
       ContainerOf(&BlobItem::Reader::notify_signal_, signal);
-  reader->ProcessNext();
+  if (reader->next_ == nullptr) return;
+  USE(reader->ProcessNext());
 }
 
 bool BlobItem::Reader::Notify(size_t start, size_t end, NotifyFlag flag) {
@@ -270,21 +273,22 @@ bool BlobItem::Reader::Notify(size_t start, size_t end, NotifyFlag flag) {
   return end < waiting_for_end_;
 }
 
-void BlobItem::Reader::ProcessNext() {
-  if (next_ == nullptr) return;
-
+bob::Status BlobItem::Reader::ProcessNext() {
   Maybe<BackingStoreView::List> maybe_slice =
       item_->Slice(max_offset_, item_->realized_length());
   CHECK(maybe_slice.IsJust());
   max_offset_ = item_->realized_length();
 
   BackingStoreView::List slice = maybe_slice.FromJust();
+  bob::Status status =
+      eos_ ? bob::Status::STATUS_END : bob::Status::STATUS_BLOCK;
   std::move(next_)(
-      eos_ ? bob::Status::STATUS_END : bob::Status::STATUS_BLOCK,
+      status,
       slice.data(),
       slice.size(),
       [](size_t count) {});
   next_ = nullptr;
+  return status;
 }
 
 int BlobItem::Reader::DoPull(
@@ -293,7 +297,16 @@ int BlobItem::Reader::DoPull(
     std::shared_ptr<BackingStoreView>* data,
     size_t count,
     size_t max_count_hint) {
-  return bob::Status::STATUS_END;
+  // If max_offset_ is less than the realized length, pull
+  // the slice max_offset_ thru realized length, otherwise
+  // queue the reader as pending.
+  next_ = std::move(next);
+  if (max_offset_ < item_->realized_length())
+    return ProcessNext();
+
+  waiting_for_end_ = item_->realized_length();
+  item_->WaitForData(this, max_offset_, waiting_for_end_);
+  return bob::STATUS_WAIT;
 }
 
 // --------------
