@@ -10,9 +10,11 @@
 #include "node_bob.h"
 #include "node_internals.h"
 #include "node_worker.h"
+#include "uv.h"
 #include "v8.h"
 
 #include <vector>
+#include <set>
 
 namespace node {
 
@@ -85,17 +87,23 @@ class BackingStoreView {
 // associated. Every reader is a Bob Source.
 class BlobItem {
  public:
-  using Loader = std::unique_ptr<bob::Source<BackingStoreView>>;
+  using Loader =
+      std::unique_ptr<bob::Source<std::shared_ptr<BackingStoreView>>>;
 
   // Creates a fully realized BlobItem from the given set of BackingStoreView
   // items. The expected_length_ and realized_length_ will be calculated and
   // is_loading() will be false.
-  explicit BlobItem(const BackingStoreView::List& items);
+  BlobItem(
+      Environment* env,
+      const BackingStoreView::List& items);
 
   // Creates a BlobItem for which no data is yet loaded. is_loading() will
   // be true, expected_length is given, and realized_length will initially
   // be zero.
-  BlobItem(Loader loader, size_t expected_length = 0);
+  BlobItem(
+      Environment* env,
+      Loader loader,
+      size_t expected_length = 0);
 
   bool is_loading() const { return bool(loader_); }
 
@@ -112,65 +120,73 @@ class BlobItem {
   // is_loading() is false, this value will be constant.
   size_t realized_length() const { return realized_length_; }
 
-  class Reader : public bob::SourceImpl<BackingStoreView> {
-    public:
-     explicit Reader(std::shared_ptr<BlobItem> item);
+  class Reader : public bob::SourceImpl<std::shared_ptr<BackingStoreView>> {
+   public:
+    explicit Reader(Environment* env, std::shared_ptr<BlobItem> item);
 
-    protected:
-      enum class NotifyFlag {
-        kNone,
-        kDone
-      };
+    enum class NotifyFlag {
+      kNone,
+      kDone
+    };
 
-      // Signal the Reader that data is now available in the
-      // BlobItem covering the given range from start to end.
-      // If the data satisfies the Readers current wait, or if
-      // the Reader does not want to continue waiting for data,
-      // Notify must return false. If the Reader wants to still
-      // wait for data, it must return true, and the BlobItem
-      // will continue to notify the Reader as data is available.
-      // If flag == NotifyFlag::kDone, the BlobItem is explicitly
-      // signaling the Reader that there will be no more data read,
-      // and therefore there will be no more notifications. After
-      // this point, item_->is_loading() will be false and the
-      // BlobItem will release any references it has to the Reader.
-      bool Notify(
-          size_t start,
-          size_t end,
-          NotifyFlag flag = NotifyFlag::kNone);
+    // Signal the Reader that data is now available in the
+    // BlobItem covering the given range from start to end.
+    // If the data satisfies the Readers current wait, or if
+    // the Reader does not want to continue waiting for data,
+    // Notify must return false. If the Reader wants to still
+    // wait for data, it must return true, and the BlobItem
+    // will continue to notify the Reader as data is available.
+    // If flag == NotifyFlag::kDone, the BlobItem is explicitly
+    // signaling the Reader that there will be no more data read,
+    // and therefore there will be no more notifications. After
+    // this point, item_->is_loading() will be false and the
+    // BlobItem will release any references it has to the Reader.
+    bool Notify(
+        size_t start,
+        size_t end,
+        NotifyFlag flag = NotifyFlag::kNone);
 
-      // Consumers of Reader call the Pull() method on the
-      // bob::Source interface to retrieve data. The Reader
-      // will determine the appropriate range of data to
-      // pull. If the Readers determined range is available,
-      // the next() callback will be invoked immediately with
-      // the data. Otherwise, the Reader will cache the next
-      // callback and invoke it once Notify() signals that
-      // the acceptable range has been realized. A Pull
-      // will be rejected if the Reader has already completely
-      // read the BlobItem or there is already a pending read
-      // operation.
-      int DoPull(
-          bob::Next<BackingStoreView> next,
-          int options,
-          BackingStoreView* data,
-          size_t count,
-          size_t max_count_hint) override;
+   protected:
+    // Consumers of Reader call the Pull() method on the
+    // bob::Source interface to retrieve data. The Reader
+    // will determine the appropriate range of data to
+    // pull. If the Readers determined range is available,
+    // the next() callback will be invoked immediately with
+    // the data. Otherwise, the Reader will cache the next
+    // callback and invoke it once Notify() signals that
+    // the acceptable range has been realized. A Pull
+    // will be rejected if the Reader has already completely
+    // read the BlobItem or there is already a pending read
+    // operation.
+    int DoPull(
+        bob::Next<std::shared_ptr<BackingStoreView>> next,
+        int options,
+        std::shared_ptr<BackingStoreView>* data,
+        size_t count,
+        size_t max_count_hint) override;
 
-    private:
-     std::shared_ptr<BlobItem> item_;
-     bob::Next<BackingStoreView> next_;
+   private:
+    Environment* env_;
+    std::shared_ptr<BlobItem> item_;
+    bob::Next<std::shared_ptr<BackingStoreView>> next_;
 
-     // The waiting_for_start_ and waiting_for_end_ specify the
-     // range of Data in item_ the Reader is waiting for.
-     size_t waiting_for_start_ = 0;
-     size_t waiting_for_end_ = 0;
+    static void OnNotify(uv_async_t* signal);
+    void ProcessNext();
 
-     // The max_offset_ is the total amount of data that has been
-     // read from the item. If max_offset_ equals the items
-     // realized_length() and the item is no longer loading, then
-     // the Reader has read all of the data that is available.
-     size_t max_offset_ = 0;
+    bool eos_ = false;
+
+    // The waiting_for_start_ and waiting_for_end_ specify the
+    // range of Data in item_ the Reader is waiting for.
+    size_t waiting_for_start_ = 0;
+    size_t waiting_for_end_ = 0;
+
+    // The max_offset_ is the total amount of data that has been
+    // read from the item. If max_offset_ equals the items
+    // realized_length() and the item is no longer loading, then
+    // the Reader has read all of the data that is available.
+    size_t max_offset_ = 0;
+
+    uv_async_t notify_signal_;
   };
 
   // When a Reader determines that a loading BlobItem does not yet
@@ -207,11 +223,15 @@ class BlobItem {
 
  private:
   // If still loading, triggers asking the loader for more data.
+  // If not still loading, it's a non-op
   void ReadMore();
+  static void OnWaitingReader(uv_async_t* signal);
 
+  Environment* env_;
   Loader loader_;
+  bool waiting_on_loader_ = false;
   BackingStoreView::List realized_;
-  std::vector<Reader*> waiting_readers_;
+  std::set<Reader*> waiting_readers_;
   size_t expected_length_;
   size_t realized_length_ = 0;
 
@@ -220,6 +240,9 @@ class BlobItem {
   // currently active set of Readers are waiting on.
   size_t min_waiting_reader_offset_ = 0;
   size_t max_waiting_reader_offset_ = 0;
+
+  Mutex waiting_readers_mutex_;
+  uv_async_t waiting_reader_signal_;
 };
 
 struct BlobEntry {

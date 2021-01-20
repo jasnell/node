@@ -118,17 +118,26 @@ Maybe<bool> BackingStoreView::CopyInto(
   return Just(true);
 }
 
-BlobItem::BlobItem(const BackingStoreView::List& items)
-    : realized_(items) {
+BlobItem::BlobItem(Environment* env, const BackingStoreView::List& items)
+    : env_(env), realized_(items) {
   size_t length = 0;
   for (const auto& item : realized_)
     length += item->length();
   expected_length_ = realized_length_ = length;
 }
 
-BlobItem::BlobItem(Loader loader, size_t expected_length)
-    : loader_(std::move(loader)),
-      expected_length_(expected_length) {}
+BlobItem::BlobItem(Environment* env, Loader loader, size_t expected_length)
+    : env_(env),
+      loader_(std::move(loader)),
+      expected_length_(expected_length),
+      min_waiting_reader_offset_(expected_length) {
+  uv_async_init(env_->event_loop(), &waiting_reader_signal_, OnWaitingReader);
+}
+
+void BlobItem::OnWaitingReader(uv_async_t* signal) {
+  BlobItem* item = ContainerOf(&BlobItem::waiting_reader_signal_, signal);
+  item->ReadMore();
+}
 
 Maybe<bool> BlobItem::WaitForData(
     Reader* reader,
@@ -142,21 +151,152 @@ Maybe<bool> BlobItem::WaitForData(
   if (start_hint == end_hint || end_hint <= realized_length_)
     return Just(false);
 
-  //
-  min_waiting_reader_offset_ = std::min(min_waiting_reader_offset_, start_hint);
-  max_waiting_reader_offset_ = std::max(max_waiting_reader_offset_, end_hint);
+  {
+    Mutex::ScopedLock lock(waiting_readers_mutex_);
+
+    // The minimum waiting reader offset is the minimum offset
+    min_waiting_reader_offset_ =
+        std::max(
+            realized_length_,
+            std::min(
+                min_waiting_reader_offset_,
+                start_hint));
+    max_waiting_reader_offset_ =
+        std::max(
+            max_waiting_reader_offset_,
+            end_hint);
+
+    waiting_readers_.insert(reader);
+  }
+
+  uv_async_send(&waiting_reader_signal_);
 
   return Just(true);
 }
 
-void BlobItem::StopWaitingForData(Reader* reader) {}
-
-Maybe<BackingStoreView::List> BlobItem::Slice(size_t start, size_t end) {
-  return Nothing<BackingStoreView::List>();
+void BlobItem::StopWaitingForData(Reader* reader) {
+  Mutex::ScopedLock lock(waiting_readers_mutex_);
+  waiting_readers_.erase(reader);
 }
 
-void BlobItem::ReadMore() {}
+Maybe<BackingStoreView::List> BlobItem::Slice(size_t start, size_t end) {
+  if (start > end || end > realized_length_)
+    return Nothing<BackingStoreView::List>();
 
+  BackingStoreView::List list;
+
+  if (end - start > 0) {
+    for (const auto& item : realized_) {
+      if (start > item->length()) {
+        start -= item->length();
+        end -= item->length();
+        continue;
+      }
+      size_t current_end = std::min(end, item->length());
+      list.emplace_back(item->Slice(start, current_end));
+      start = 0;
+      end -= current_end;
+      if (end == 0)
+        break;
+    }
+  }
+
+  return Just(list);
+}
+
+void BlobItem::ReadMore() {
+  // If there is no loader, or we're already waiting on the loader,
+  // just return. There's nothing else to do.
+  if (!loader_ || waiting_on_loader_) return;
+
+  waiting_on_loader_ = true;
+
+  loader_->Pull([&](
+      int status,
+      const std::shared_ptr<BackingStoreView>* views,
+      size_t count,
+      bob::Done done) {
+        // No need to lock here since adding to the realized data is always
+        // done on the same event loop thread.
+        waiting_on_loader_ = false;
+        size_t prior_realized_length_ = realized_length_;
+        for (size_t n = 0; n < count; n++) {
+          realized_.emplace_back(views[n]);
+          realized_length_ += views[n]->length();
+          expected_length_ = std::max(expected_length_, realized_length_);
+        }
+        Mutex::ScopedLock lock(waiting_readers_mutex_);
+        std::set<Reader*> waiting_readers = waiting_readers_;
+        Reader::NotifyFlag flag = (status == bob::Status::STATUS_EOS)
+            ? Reader::NotifyFlag::kDone
+            : Reader::NotifyFlag::kNone;
+        for (Reader* reader : waiting_readers) {
+          if (!reader->Notify(prior_realized_length_, realized_length_, flag))
+            waiting_readers_.erase(reader);
+        }
+        if (flag == Reader::NotifyFlag::kDone) {
+          waiting_readers_.clear();
+          loader_.reset();
+        }
+        done(count);
+        if (realized_length_ < max_waiting_reader_offset_)
+          uv_async_send(&waiting_reader_signal_);
+      },
+      bob::OPTIONS_NONE,
+      nullptr, 0);
+}
+
+BlobItem::Reader::Reader(Environment* env, std::shared_ptr<BlobItem> item)
+    : env_(env),
+      item_(item) {
+  uv_async_init(env_->event_loop(), &notify_signal_, OnNotify);
+}
+
+void BlobItem::Reader::OnNotify(uv_async_t* signal) {
+  BlobItem::Reader* reader =
+      ContainerOf(&BlobItem::Reader::notify_signal_, signal);
+  reader->ProcessNext();
+}
+
+bool BlobItem::Reader::Notify(size_t start, size_t end, NotifyFlag flag) {
+  eos_ = flag == NotifyFlag::kDone;
+  if (next_ != nullptr)
+    uv_async_send(&notify_signal_);
+
+  // Returning false from this function will instruct the BlobItem to remove
+  // this Reader from the waiting_readers set. Returning true will keep the
+  // Reader in the set until the end of the stream is reached. Typically,
+  // returning false is what we want.
+  return end < waiting_for_end_;
+}
+
+void BlobItem::Reader::ProcessNext() {
+  if (next_ == nullptr) return;
+
+  Maybe<BackingStoreView::List> maybe_slice =
+      item_->Slice(max_offset_, item_->realized_length());
+  CHECK(maybe_slice.IsJust());
+  max_offset_ = item_->realized_length();
+
+  BackingStoreView::List slice = maybe_slice.FromJust();
+  std::move(next_)(
+      eos_ ? bob::Status::STATUS_END : bob::Status::STATUS_BLOCK,
+      slice.data(),
+      slice.size(),
+      [](size_t count) {});
+  next_ = nullptr;
+}
+
+int BlobItem::Reader::DoPull(
+    bob::Next<std::shared_ptr<BackingStoreView>> next,
+    int options,
+    std::shared_ptr<BackingStoreView>* data,
+    size_t count,
+    size_t max_count_hint) {
+  return bob::Status::STATUS_END;
+}
+
+// --------------
 
 
 void Blob::Initialize(Environment* env, v8::Local<v8::Object> target) {
