@@ -87,6 +87,8 @@ class BackingStoreView {
 // associated. Every reader is a Bob Source.
 class BlobItem {
  public:
+  using List = std::vector<std::shared_ptr<BlobItem>>;
+
   using Loader =
       std::unique_ptr<bob::Source<std::shared_ptr<BackingStoreView>>>;
 
@@ -243,6 +245,71 @@ class BlobItem {
   Mutex waiting_readers_mutex_;
   uv_async_t waiting_reader_signal_;
 };
+
+class Blob2 : public BaseObject {
+ public:
+  static void RegisterExternalReferences(
+      ExternalReferenceRegistry* registry);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void ToSlice(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+
+  static BaseObjectPtr<Blob2> Create(
+      Environment* env,
+      const BlobItem::List& store,
+      size_t length);
+
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> object);
+
+  const BlobItem::List& entries() const { return store_; }
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(Blob2);
+  SET_SELF_SIZE(Blob2);
+
+  inline size_t length() const { return length_; }
+
+  BaseObjectPtr<Blob2> Slice(Environment* env, size_t start, size_t end);
+
+  class BlobTransferData : public worker::TransferData {
+   public:
+    explicit BlobTransferData(const BlobItem::List& store, size_t length)
+        : store_(store),
+          length_(length) {}
+
+    BaseObjectPtr<BaseObject> Deserialize(
+        Environment* env,
+        v8::Local<v8::Context> context,
+        std::unique_ptr<worker::TransferData> self) override;
+
+    SET_MEMORY_INFO_NAME(BlobTransferData)
+    SET_SELF_SIZE(BlobTransferData)
+    SET_NO_MEMORY_INFO()
+
+   private:
+    BlobItem::List store_;
+    size_t length_ = 0;
+  };
+
+  BaseObject::TransferMode GetTransferMode() const override;
+  std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
+
+  Blob2(
+      Environment* env,
+      v8::Local<v8::Object> obj,
+      const BlobItem::List& store,
+      size_t length);
+
+ private:
+  BlobItem::List store_;
+  size_t length_ = 0;
+};
+
+
 
 struct BlobEntry {
   std::shared_ptr<v8::BackingStore> store;

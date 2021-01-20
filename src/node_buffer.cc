@@ -1202,6 +1202,7 @@ void Initialize(Local<Object> target,
   env->SetMethod(target, "getZeroFillToggle", GetZeroFillToggle);
 
   Blob::Initialize(env, target);
+  Blob2::Initialize(env, target);
 }
 
 }  // anonymous namespace
@@ -1244,6 +1245,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(GetZeroFillToggle);
 
   Blob::RegisterExternalReferences(registry);
+  Blob2::RegisterExternalReferences(registry);
   FixedSizeBlobCopyJob::RegisterExternalReferences(registry);
 }
 

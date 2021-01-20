@@ -309,6 +309,181 @@ int BlobItem::Reader::DoPull(
   return bob::STATUS_WAIT;
 }
 
+void Blob2::Initialize(Environment* env, v8::Local<v8::Object> target) {
+  env->SetMethod(target, "createBlob2", New);
+  // FixedSizeBlobCopyJob::Initialize(env, target);
+}
+
+Local<FunctionTemplate> Blob2::GetConstructorTemplate(Environment* env) {
+  Local<FunctionTemplate> tmpl = env->blob2_constructor_template();
+  if (tmpl.IsEmpty()) {
+    tmpl = FunctionTemplate::New(env->isolate());
+    tmpl->InstanceTemplate()->SetInternalFieldCount(1);
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->SetClassName(
+        FIXED_ONE_BYTE_STRING(env->isolate(), "Blob2"));
+    // env->SetProtoMethod(tmpl, "toArrayBuffer", ToArrayBuffer);
+    env->SetProtoMethod(tmpl, "slice", ToSlice);
+    env->set_blob2_constructor_template(tmpl);
+  }
+  return tmpl;
+}
+
+bool Blob2::HasInstance(Environment* env, v8::Local<v8::Value> object) {
+  return GetConstructorTemplate(env)->HasInstance(object);
+}
+
+BaseObjectPtr<Blob2> Blob2::Create(
+    Environment* env,
+    const BlobItem::List& store,
+    size_t length) {
+
+  HandleScope scope(env->isolate());
+
+  Local<Function> ctor;
+  if (!GetConstructorTemplate(env)->GetFunction(env->context()).ToLocal(&ctor))
+    return BaseObjectPtr<Blob2>();
+
+  Local<Object> obj;
+  if (!ctor->NewInstance(env->context()).ToLocal(&obj))
+    return BaseObjectPtr<Blob2>();
+
+  return MakeBaseObject<Blob2>(env, obj, store, length);
+}
+
+void Blob2::New(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  CHECK(args[0]->IsArray());  // sources
+  CHECK(args[1]->IsUint32());  // length
+
+  BlobItem::List entries;
+
+  size_t length = args[1].As<Uint32>()->Value();
+  size_t len = 0;
+  Local<Array> ary = args[0].As<Array>();
+  for (size_t n = 0; n < ary->Length(); n++) {
+    Local<Value> entry;
+    if (!ary->Get(env->context(), n).ToLocal(&entry))
+      return;
+    CHECK(entry->IsArrayBufferView() || Blob2::HasInstance(env, entry));
+    if (entry->IsArrayBufferView()) {
+      Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
+      CHECK_EQ(view->ByteOffset(), 0);
+      std::shared_ptr<BackingStore> store = view->Buffer()->GetBackingStore();
+      size_t byte_length = view->ByteLength();
+      view->Buffer()->Detach();  // The Blob will own the backing store now.
+
+      BackingStoreView::List view_list;
+      view_list.emplace_back(
+          std::make_shared<BackingStoreView>(std::move(store), byte_length));
+
+      entries.emplace_back(std::make_shared<BlobItem>(env, view_list));
+      len += byte_length;
+    } else {
+      Blob2* blob;
+      ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
+      auto source = blob->entries();
+      entries.insert(entries.end(), source.begin(), source.end());
+      len += blob->length();
+    }
+  }
+
+  CHECK_EQ(length, len);
+
+  BaseObjectPtr<Blob2> blob = Create(env, entries, length);
+  if (blob)
+    args.GetReturnValue().Set(blob->object());
+}
+
+void Blob2::ToSlice(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Blob2* blob;
+  ASSIGN_OR_RETURN_UNWRAP(&blob, args.Holder());
+  CHECK(args[0]->IsUint32());
+  CHECK(args[1]->IsUint32());
+  size_t start = args[0].As<Uint32>()->Value();
+  size_t end = args[1].As<Uint32>()->Value();
+  BaseObjectPtr<Blob2> slice = blob->Slice(env, start, end);
+
+  if (slice)
+    args.GetReturnValue().Set(slice->object());
+}
+
+void Blob2::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackFieldWithSize("store", length_);
+}
+
+BaseObjectPtr<Blob2> Blob2::Slice(Environment* env, size_t start, size_t end) {
+  CHECK_LE(start, length());
+  CHECK_LE(end, length());
+  CHECK_LE(start, end);
+
+  BlobItem::List slices;
+  size_t total = end - start;
+
+  if (total == 0) return Create(env, slices, 0);
+
+  for (const auto& entry : entries()) {
+    if (start >= entry->expected_length()) {
+      start -= entry->expected_length();
+      end -= entry->expected_length();
+      continue;
+    }
+
+    size_t adjusted_end = std::min(end, entry->expected_length());
+
+    Maybe<BackingStoreView::List> slice = entry->Slice(start, adjusted_end);
+    if (slice.IsNothing())
+      return BaseObjectPtr<Blob2>();
+
+    slices.emplace_back(std::make_shared<BlobItem>(env, slice.FromJust()));
+
+    start = 0;
+    end -= adjusted_end;
+
+    if (end == 0)
+      break;
+  }
+
+  return Create(env, slices, total);
+}
+
+Blob2::Blob2(
+    Environment* env,
+    v8::Local<v8::Object> obj,
+    const BlobItem::List& store,
+    size_t length)
+    : BaseObject(env, obj),
+      store_(store),
+      length_(length) {
+  MakeWeak();
+}
+
+BaseObjectPtr<BaseObject>
+Blob2::BlobTransferData::Deserialize(
+    Environment* env,
+    Local<Context> context,
+    std::unique_ptr<worker::TransferData> self) {
+  if (context != env->context()) {
+    THROW_ERR_MESSAGE_TARGET_CONTEXT_UNAVAILABLE(env);
+    return {};
+  }
+  return Blob2::Create(env, store_, length_);
+}
+
+BaseObject::TransferMode Blob2::GetTransferMode() const {
+  return BaseObject::TransferMode::kCloneable;
+}
+
+std::unique_ptr<worker::TransferData> Blob2::CloneForMessaging() const {
+  return std::make_unique<BlobTransferData>(store_, length_);
+}
+
+void Blob2::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
+  registry->Register(Blob2::New);
+  registry->Register(Blob2::ToSlice);
+}
+
 // --------------
 
 
