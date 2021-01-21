@@ -51,6 +51,8 @@ struct AllocatedBuffer {
   inline size_t size() const;
   inline void clear();
 
+  inline std::unique_ptr<v8::BackingStore> ReleaseBackingStore();
+
   inline v8::MaybeLocal<v8::Object> ToBuffer();
   inline v8::Local<v8::ArrayBuffer> ToArrayBuffer();
 

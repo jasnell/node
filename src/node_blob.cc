@@ -6,6 +6,7 @@
 #include "node_bob-inl.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
+#include "node_file-inl.h"
 #include "stream_base-inl.h"
 #include "threadpoolwork-inl.h"
 #include "v8.h"
@@ -13,6 +14,8 @@
 #include <algorithm>
 
 namespace node {
+
+using node::fs::FileHandle;
 
 using v8::Array;
 using v8::ArrayBuffer;
@@ -52,6 +55,13 @@ BackingStoreView::BackingStoreView(
     CHECK_LE(offset, store_->ByteLength());
     CHECK_LE(length, store_->ByteLength() - offset);
   }
+  if (!store_) {
+    view_ = { nullptr, 0 };
+  } else {
+    char* base = reinterpret_cast<char*>(store_->Data());
+    base += offset_;
+    view_ = uv_buf_init(base, length_);
+  }
 }
 
 BackingStoreView::BackingStoreView()
@@ -60,7 +70,8 @@ BackingStoreView::BackingStoreView()
 BackingStoreView::BackingStoreView(const BackingStoreView& other)
     : store_(other.store_),
       length_(other.length_),
-      offset_(other.offset_) {}
+      offset_(other.offset_),
+      view_(other.view_) {}
 
 BackingStoreView& BackingStoreView::operator=(
     const BackingStoreView& other) {
@@ -72,9 +83,11 @@ BackingStoreView& BackingStoreView::operator=(
 BackingStoreView::BackingStoreView(BackingStoreView&& other)
     : store_(std::move(other.store_)),
       length_(other.length_),
-      offset_(other.offset_) {
+      offset_(other.offset_),
+      view_(other.view_) {
   other.length_ = 0;
   other.offset_ = 0;
+  other.view_ = uv_buf_init(nullptr, 0);
 }
 
 BackingStoreView& BackingStoreView::operator=(BackingStoreView&& other) {
@@ -82,13 +95,6 @@ BackingStoreView& BackingStoreView::operator=(BackingStoreView&& other) {
   this->~BackingStoreView();
   return *new (this) BackingStoreView(other);
 }
-
-const uv_buf_t BackingStoreView::View() const {
-  if (!store_) return { nullptr, 0 };
-  char* base = reinterpret_cast<char*>(store_->Data());
-  base += offset_;
-  return uv_buf_init(base, length_);
-};
 
 std::shared_ptr<BackingStoreView> BackingStoreView::Slice(
     size_t start,
@@ -370,7 +376,6 @@ void Blob2::New(const FunctionCallbackInfo<Value>& args) {
     Local<Value> entry;
     if (!ary->Get(env->context(), n).ToLocal(&entry))
       return;
-    CHECK(entry->IsArrayBufferView() || Blob2::HasInstance(env, entry));
     if (entry->IsArrayBufferView()) {
       Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
       CHECK_EQ(view->ByteOffset(), 0);
@@ -384,20 +389,47 @@ void Blob2::New(const FunctionCallbackInfo<Value>& args) {
 
       entries.emplace_back(std::make_shared<BlobItem>(env, view_list));
       len += byte_length;
-    } else {
+    } else if (Blob2::HasInstance(env, entry)) {
       Blob2* blob;
       ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
       auto source = blob->entries();
       entries.insert(entries.end(), source.begin(), source.end());
       len += blob->length();
+    } else if (FileHandle::HasInstance(env, entry)) {
+      FileHandle* file;
+      ASSIGN_OR_RETURN_UNWRAP(&file, entry);
+
+      uv_fs_t fs;
+      fs.file = file->GetFD();
+      if (uv_fs_stat(env->event_loop(), &fs, nullptr, nullptr) != 0) {
+        // TODO(@jasnell): Better, more appropriate error
+        return THROW_ERR_INVALID_ARG_VALUE(env, "Invalid File");
+      }
+      len += fs.statbuf.st_size;
+
+      BlobItem::Loader loader(
+          new StreamBaseBlobItemLoader(
+              env,
+              file,
+              BaseObjectPtr<FileHandle>(file)));
+      entries.emplace_back(
+          std::make_shared<BlobItem>(
+              env,
+              std::move(loader),
+              fs.statbuf.st_size));
+    } else {
+      UNREACHABLE();
     }
   }
 
-  CHECK_EQ(length, len);
-
   BaseObjectPtr<Blob2> blob = Create(env, entries, length);
-  if (blob)
+  if (blob) {
+    blob->object()->Set(
+        env->context(),
+        env->size_string(),
+        Number::New(env->isolate(), len));
     args.GetReturnValue().Set(blob->object());
+  }
 }
 
 void Blob2::ToSlice(const FunctionCallbackInfo<Value>& args) {
@@ -630,6 +662,8 @@ StreamBaseBlobItemLoader::StreamBaseBlobItemLoader(
       stream_(stream),
       strong_ptr_(strong_ptr) {
   stream->PushStreamListener(this);
+  uv_async_init(env->event_loop(), &data_signal_, OnData);
+  uv_unref(reinterpret_cast<uv_handle_t*>(&data_signal_));
 }
 
 StreamBaseBlobItemLoader::~StreamBaseBlobItemLoader() {
@@ -637,11 +671,42 @@ StreamBaseBlobItemLoader::~StreamBaseBlobItemLoader() {
 }
 
 uv_buf_t StreamBaseBlobItemLoader::OnStreamAlloc(
-    size_t suggested_size) {}
+    size_t suggested_size) {
+  return AllocatedBuffer::AllocateManaged(env(), suggested_size).release();
+}
 
 void StreamBaseBlobItemLoader::OnStreamRead(
     ssize_t nread,
-    const uv_buf_t& buf) {}
+    const uv_buf_t& buf) {
+  AllocatedBuffer buffer(env(), buf);
+  stream_->ReadStop();
+
+  if (nread <= 0) {
+    if (nread == 0) return;
+    if (nread == UV_EOF)
+      eos_ = true;
+  } else {
+    std::shared_ptr<BackingStoreView> view =
+        std::make_shared<BackingStoreView>(
+            buffer.ReleaseBackingStore());
+    items_.emplace_back(std::move(view));
+  }
+  uv_async_send(&data_signal_);
+}
+
+void StreamBaseBlobItemLoader::OnData(uv_async_t* handle) {
+  StreamBaseBlobItemLoader* loader =
+      ContainerOf(&StreamBaseBlobItemLoader::data_signal_, handle);
+  loader->ProcessNext();
+}
+
+void StreamBaseBlobItemLoader::ProcessNext() {
+  CHECK_NOT_NULL(next_);
+  int status = eos_ ? bob::Status::STATUS_END : bob::STATUS_CONTINUE;
+  std::move(next_)(status, items_.data(), items_.size(), [](int status) {});
+  items_.clear();
+  next_ = nullptr;
+}
 
 int StreamBaseBlobItemLoader::DoPull(
     bob::Next<std::shared_ptr<BackingStoreView>> next,
@@ -649,7 +714,11 @@ int StreamBaseBlobItemLoader::DoPull(
     std::shared_ptr<BackingStoreView>* data,
     size_t count,
     size_t max_count_hint) {
-  return 0;
+  if (next_ == nullptr)
+    next_ = std::move(next);
+  return stream_->ReadStart() == UV_EOF
+      ? bob::Status::STATUS_EOS
+      : bob::Status::STATUS_WAIT;
 }
 
 // --------------

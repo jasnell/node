@@ -142,6 +142,26 @@ void FSReqBase::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("continuation_data", continuation_data_);
 }
 
+bool FileHandle::HasInstance(Environment* env, Local<Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
+Local<FunctionTemplate> FileHandle::GetConstructorTemplate(Environment* env) {
+  Local<FunctionTemplate> fd = env->fd_constructor_template();
+  if (fd.IsEmpty()) {
+    fd = env->NewFunctionTemplate(FileHandle::New);
+    fd->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "FileHandle"));
+    fd->Inherit(AsyncWrap::GetConstructorTemplate(env));
+    env->SetProtoMethod(fd, "close", FileHandle::Close);
+    env->SetProtoMethod(fd, "releaseFD", FileHandle::ReleaseFD);
+    Local<ObjectTemplate> fdt = fd->InstanceTemplate();
+    fdt->SetInternalFieldCount(StreamBase::kInternalFieldCount);
+    StreamBase::AddMethods(env, fd);
+    env->set_fd_constructor_template(fd);
+  }
+  return fd;
+}
+
 // The FileHandle object wraps a file descriptor and will close it on garbage
 // collection if necessary. If that happens, a process warning will be
 // emitted (or a fatal exception will occur if the fd cannot be closed.)
@@ -159,6 +179,7 @@ FileHandle* FileHandle::New(BindingData* binding_data,
                             int fd, Local<Object> obj) {
   Environment* env = binding_data->env();
   if (obj.IsEmpty() && !env->fd_constructor_template()
+                            ->InstanceTemplate()
                             ->NewInstance(env->context())
                             .ToLocal(&obj)) {
     return nullptr;
@@ -2499,15 +2520,8 @@ void Initialize(Local<Object> target,
   env->set_fsreqpromise_constructor_template(fpo);
 
   // Create FunctionTemplate for FileHandle
-  Local<FunctionTemplate> fd = env->NewFunctionTemplate(FileHandle::New);
-  fd->Inherit(AsyncWrap::GetConstructorTemplate(env));
-  env->SetProtoMethod(fd, "close", FileHandle::Close);
-  env->SetProtoMethod(fd, "releaseFD", FileHandle::ReleaseFD);
-  Local<ObjectTemplate> fdt = fd->InstanceTemplate();
-  fdt->SetInternalFieldCount(StreamBase::kInternalFieldCount);
-  StreamBase::AddMethods(env, fd);
+  Local<FunctionTemplate> fd = FileHandle::GetConstructorTemplate(env);
   env->SetConstructorFunction(target, "FileHandle", fd);
-  env->set_fd_constructor_template(fdt);
 
   // Create FunctionTemplate for FileHandle::CloseReq
   Local<FunctionTemplate> fdclose = FunctionTemplate::New(isolate);

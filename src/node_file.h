@@ -235,6 +235,10 @@ class FileHandleReadWrap final : public ReqWrap<uv_fs_t> {
 // the object is garbage collected
 class FileHandle final : public AsyncWrap, public StreamBase {
  public:
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+
   static FileHandle* New(BindingData* binding_data,
                          int fd,
                          v8::Local<v8::Object> obj = v8::Local<v8::Object>());

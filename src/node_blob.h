@@ -53,7 +53,7 @@ class BackingStoreView {
   const std::shared_ptr<v8::BackingStore>& store() const { return store_; }
 
   // Returns the view of the store adjusted for offset and length.
-  const uv_buf_t View() const;
+  const uv_buf_t& View() const { return view_; }
 
   // Creates a new BackingStoreEntry that points to a subset of this
   // BackingStoreEntry. The start and end are calculated from offset
@@ -76,6 +76,7 @@ class BackingStoreView {
   std::shared_ptr<v8::BackingStore> store_;
   size_t length_;
   size_t offset_;
+  uv_buf_t view_;
 };
 
 // A BlobItem is a collection of realized or future
@@ -356,6 +357,8 @@ class StreamBaseBlobItemLoader :
   uv_buf_t OnStreamAlloc(size_t suggested_size) override;
   void OnStreamRead(ssize_t nread, const uv_buf_t& buf) override;
 
+  Environment* env() { return env_; }
+
  protected:
   int DoPull(
       bob::Next<std::shared_ptr<BackingStoreView>> next,
@@ -365,11 +368,18 @@ class StreamBaseBlobItemLoader :
       size_t max_count_hint) override;
 
  private:
+  static void OnData(uv_async_t* handle);
+  void ProcessNext();
+
   Environment* env_;
   StreamBase* stream_;
   BaseObjectPtr<BaseObject> strong_ptr_;
   BackingStoreView::List items_;
   bool eos_ = false;
+
+  bob::Next<std::shared_ptr<BackingStoreView>> next_;
+
+  uv_async_t data_signal_;
 };
 
 struct BlobEntry {

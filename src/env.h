@@ -455,7 +455,7 @@ constexpr size_t kFsStatsBufferLength =
   V(blocklist_instance_template, v8::ObjectTemplate)                           \
   V(compiled_fn_entry_template, v8::ObjectTemplate)                            \
   V(dir_instance_template, v8::ObjectTemplate)                                 \
-  V(fd_constructor_template, v8::ObjectTemplate)                               \
+  V(fd_constructor_template, v8::FunctionTemplate)                             \
   V(fdclose_constructor_template, v8::ObjectTemplate)                          \
   V(filehandlereadwrap_template, v8::ObjectTemplate)                           \
   V(fsreqpromise_constructor_template, v8::ObjectTemplate)                     \

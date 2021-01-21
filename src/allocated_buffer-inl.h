@@ -75,6 +75,10 @@ uv_buf_t AllocatedBuffer::release() {
   return ret;
 }
 
+std::unique_ptr<v8::BackingStore> AllocatedBuffer::ReleaseBackingStore() {
+  return std::move(backing_store_);
+}
+
 char* AllocatedBuffer::data() {
   if (!backing_store_) return nullptr;
   return static_cast<char*>(backing_store_->Data());
