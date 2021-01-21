@@ -1203,6 +1203,7 @@ void Initialize(Local<Object> target,
 
   Blob::Initialize(env, target);
   Blob2::Initialize(env, target);
+  BlobReader::Initialize(env, target);
 }
 
 }  // anonymous namespace
@@ -1246,6 +1247,7 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
 
   Blob::RegisterExternalReferences(registry);
   Blob2::RegisterExternalReferences(registry);
+  BlobReader::RegisterExternalReferences(registry);
   FixedSizeBlobCopyJob::RegisterExternalReferences(registry);
 }
 

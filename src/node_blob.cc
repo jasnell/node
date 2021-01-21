@@ -228,7 +228,7 @@ void BlobItem::ReadMore() {
         }
         Mutex::ScopedLock lock(waiting_readers_mutex_);
         std::set<Reader*> waiting_readers = waiting_readers_;
-        Reader::NotifyFlag flag = (status == bob::Status::STATUS_EOS)
+        Reader::NotifyFlag flag = (status == bob::Status::STATUS_END)
             ? Reader::NotifyFlag::kDone
             : Reader::NotifyFlag::kNone;
         for (Reader* reader : waiting_readers) {
@@ -262,7 +262,7 @@ void BlobItem::Reader::OnNotify(uv_async_t* signal) {
 }
 
 bool BlobItem::Reader::Notify(size_t start, size_t end, NotifyFlag flag) {
-  eos_ = flag == NotifyFlag::kDone;
+  eos_ = (flag == NotifyFlag::kDone);
   if (next_ != nullptr)
     uv_async_send(&notify_signal_);
 
@@ -301,10 +301,14 @@ int BlobItem::Reader::DoPull(
   // the slice max_offset_ thru realized length, otherwise
   // queue the reader as pending.
   next_ = std::move(next);
-  if (max_offset_ < item_->realized_length())
-    return ProcessNext();
-
   waiting_for_end_ = item_->realized_length();
+
+  if (max_offset_ < waiting_for_end_) {
+    eos_ = true;
+    uv_async_send(&notify_signal_);
+    return bob::STATUS_CONTINUE;
+  }
+
   item_->WaitForData(this, max_offset_, waiting_for_end_);
   return bob::STATUS_WAIT;
 }
@@ -482,6 +486,139 @@ std::unique_ptr<worker::TransferData> Blob2::CloneForMessaging() const {
 void Blob2::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(Blob2::New);
   registry->Register(Blob2::ToSlice);
+}
+
+void BlobReader::RegisterExternalReferences(
+    ExternalReferenceRegistry* registry) {
+  registry->Register(BlobReader::New);
+  registry->Register(BlobReader::StartReading);
+}
+
+void BlobReader::Initialize(Environment* env, Local<Object> target) {
+  Local<FunctionTemplate> tmpl = env->NewFunctionTemplate(New);
+  tmpl->InstanceTemplate()->SetInternalFieldCount(
+      AsyncWrap::kInternalFieldCount);
+  tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
+  env->SetProtoMethod(tmpl, "startReading", StartReading);
+  env->SetConstructorFunction(target, "BlobReader", tmpl);
+}
+
+void BlobReader::New(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  CHECK(args.IsConstructCall());
+  CHECK(Blob2::HasInstance(env, args[0]));
+
+  Blob2* blob;
+  ASSIGN_OR_RETURN_UNWRAP(&blob, args[0]);
+
+  new BlobReader(env, args.This(), blob);
+}
+
+void BlobReader::MemoryInfo(MemoryTracker* tracker) const {
+  // tracker->TrackField("blob", blob_);
+  // tracker->TrackField("views", views_);
+}
+
+void BlobReader::StartReading(const FunctionCallbackInfo<Value>& args) {
+  BlobReader* reader;
+  ASSIGN_OR_RETURN_UNWRAP(&reader, args.Holder());
+  args.GetReturnValue().Set(reader->Start());
+}
+
+BlobReader::BlobReader(Environment* env, Local<Object> obj, Blob2* blob)
+    : AsyncWrap(env, obj, AsyncWrap::PROVIDER_FIXEDSIZEBLOBCOPY),
+      blob_(blob) {
+  MakeWeak();
+  uv_async_init(env->event_loop(), &done_signal_, OnDone);
+  uv_async_init(env->event_loop(), &read_signal_, OnRead);
+  uv_unref(reinterpret_cast<uv_handle_t*>(&done_signal_));
+  uv_unref(reinterpret_cast<uv_handle_t*>(&read_signal_));
+}
+
+void BlobReader::PullNext() {
+  current_item_reader_->Pull(
+      [&](int status,
+          const std::shared_ptr<BackingStoreView>* views,
+          size_t count,
+          bob::Done done) {
+        for (size_t n = 0; n < count; n++)
+          views_.emplace_back(std::move(views[n]));
+        if (status == bob::Status::STATUS_END) {
+          current_item_++;
+          if (current_item_ == blob_->entries().end()) {
+            uv_async_send(&done_signal_);
+            done(0);
+            return;
+          }
+          current_item_reader_.reset(
+              new BlobItem::Reader(env(), *current_item_));
+        }
+
+        uv_async_send(&read_signal_);
+        done(0);
+      },
+      bob::Options::OPTIONS_NONE,
+      nullptr, 0);
+}
+
+bool BlobReader::Start() {
+  if (reading_) return false;
+
+  if (blob_->entries().size() == 0) {
+    uv_async_send(&done_signal_);
+    return true;
+  }
+
+  reading_ = true;
+  current_item_ = blob_->entries().begin();
+  if (!*current_item_) return false;
+
+  current_item_reader_ =
+      std::make_unique<BlobItem::Reader>(env(), *current_item_);
+
+  uv_ref(reinterpret_cast<uv_handle_t*>(&done_signal_));
+  uv_ref(reinterpret_cast<uv_handle_t*>(&read_signal_));
+  uv_async_send(&read_signal_);
+  return true;
+}
+
+void BlobReader::OnDone(uv_async_t* handle) {
+  BlobReader* reader = ContainerOf(&BlobReader::done_signal_, handle);
+  reader->Done();
+}
+
+void BlobReader::OnRead(uv_async_t* handle) {
+  BlobReader* reader = ContainerOf(&BlobReader::read_signal_, handle);
+  reader->PullNext();
+}
+
+void BlobReader::Done() {
+  reading_ = false;
+  HandleScope handle_scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  uv_unref(reinterpret_cast<uv_handle_t*>(&done_signal_));
+  uv_unref(reinterpret_cast<uv_handle_t*>(&read_signal_));
+
+  // TODO(@jasnell): Make the copy async again
+  size_t total = 0;
+  for (const auto& view : views_)
+    total += view->View().len;
+
+  std::shared_ptr<BackingStore> result =
+      ArrayBuffer::NewBackingStore(env()->isolate(), total);
+  char* ptr = static_cast<char*>(result->Data());
+
+  for (const auto& view : views_) {
+    uv_buf_t buf = view->View();
+    if (buf.len > 0) {
+      memcpy(ptr, buf.base, buf.len);
+      ptr += buf.len;
+    }
+  }
+  Local<Value> val = ArrayBuffer::New(env()->isolate(), result);
+
+  MakeCallback(env()->ondone_string(), 1, &val);
 }
 
 // --------------

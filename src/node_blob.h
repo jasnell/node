@@ -309,7 +309,38 @@ class Blob2 : public BaseObject {
   size_t length_ = 0;
 };
 
+class BlobReader : public AsyncWrap {
+ public:
+  static void RegisterExternalReferences(
+      ExternalReferenceRegistry* registry);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void StartReading(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  BlobReader(Environment* env, v8::Local<v8::Object> obj, Blob2* blob);
+
+  // Starts reading from the blob.
+  bool Start();
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(BlobReader);
+  SET_SELF_SIZE(BlobReader);
+
+ private:
+  static void OnDone(uv_async_t* handle);
+  static void OnRead(uv_async_t* handle);
+  void PullNext();
+  void Done();
+
+  BaseObjectPtr<Blob2> blob_;
+  BlobItem::List::const_iterator current_item_;
+  std::unique_ptr<BlobItem::Reader> current_item_reader_;
+  BackingStoreView::List views_;
+
+  bool reading_ = false;
+  uv_async_t done_signal_;
+  uv_async_t read_signal_;
+};
 
 struct BlobEntry {
   std::shared_ptr<v8::BackingStore> store;
