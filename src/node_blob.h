@@ -10,6 +10,7 @@
 #include "node_bob.h"
 #include "node_internals.h"
 #include "node_worker.h"
+#include "stream_base.h"
 #include "uv.h"
 #include "v8.h"
 
@@ -340,6 +341,35 @@ class BlobReader : public AsyncWrap {
   bool reading_ = false;
   uv_async_t done_signal_;
   uv_async_t read_signal_;
+};
+
+class StreamBaseBlobItemLoader :
+    public bob::SourceImpl<std::shared_ptr<BackingStoreView>>,
+    public StreamListener {
+ public:
+  StreamBaseBlobItemLoader(
+      Environment* env,
+      StreamBase* stream,
+      BaseObjectPtr<BaseObject> strong_ptr = BaseObjectPtr<BaseObject>());
+  ~StreamBaseBlobItemLoader() override;
+
+  uv_buf_t OnStreamAlloc(size_t suggested_size) override;
+  void OnStreamRead(ssize_t nread, const uv_buf_t& buf) override;
+
+ protected:
+  int DoPull(
+      bob::Next<std::shared_ptr<BackingStoreView>> next,
+      int options,
+      std::shared_ptr<BackingStoreView>* data,
+      size_t count,
+      size_t max_count_hint) override;
+
+ private:
+  Environment* env_;
+  StreamBase* stream_;
+  BaseObjectPtr<BaseObject> strong_ptr_;
+  BackingStoreView::List items_;
+  bool eos_ = false;
 };
 
 struct BlobEntry {

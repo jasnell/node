@@ -6,6 +6,7 @@
 #include "node_bob-inl.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
+#include "stream_base-inl.h"
 #include "threadpoolwork-inl.h"
 #include "v8.h"
 
@@ -619,6 +620,36 @@ void BlobReader::Done() {
   Local<Value> val = ArrayBuffer::New(env()->isolate(), result);
 
   MakeCallback(env()->ondone_string(), 1, &val);
+}
+
+StreamBaseBlobItemLoader::StreamBaseBlobItemLoader(
+    Environment* env,
+    StreamBase* stream,
+    BaseObjectPtr<BaseObject> strong_ptr)
+    : env_(env),
+      stream_(stream),
+      strong_ptr_(strong_ptr) {
+  stream->PushStreamListener(this);
+}
+
+StreamBaseBlobItemLoader::~StreamBaseBlobItemLoader() {
+  stream_->RemoveStreamListener(this);
+}
+
+uv_buf_t StreamBaseBlobItemLoader::OnStreamAlloc(
+    size_t suggested_size) {}
+
+void StreamBaseBlobItemLoader::OnStreamRead(
+    ssize_t nread,
+    const uv_buf_t& buf) {}
+
+int StreamBaseBlobItemLoader::DoPull(
+    bob::Next<std::shared_ptr<BackingStoreView>> next,
+    int options,
+    std::shared_ptr<BackingStoreView>* data,
+    size_t count,
+    size_t max_count_hint) {
+  return 0;
 }
 
 // --------------
