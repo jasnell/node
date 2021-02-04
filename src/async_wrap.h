@@ -38,7 +38,7 @@ namespace node {
   V(ELDHISTOGRAM)                                                             \
   V(FILEHANDLE)                                                               \
   V(FILEHANDLECLOSEREQ)                                                       \
-  V(FIXEDSIZEBLOBCOPY)                                                       \
+  V(FIXEDSIZEBLOBCOPY)                                                        \
   V(FSEVENTWRAP)                                                              \
   V(FSREQCALLBACK)                                                            \
   V(FSREQPROMISE)                                                             \
@@ -96,6 +96,15 @@ namespace node {
 #define NODE_ASYNC_CRYPTO_PROVIDER_TYPES(V)
 #endif  // HAVE_OPENSSL
 
+#ifndef OPENSSL_NO_QUIC
+#define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)                                     \
+  V(QUICSESSION)                                                              \
+  V(QUICSOCKET)                                                               \
+  V(QUICSTREAM)
+#else
+#define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)
+#endif  // OPENSSL_NO_QUIC
+
 #if HAVE_INSPECTOR
 #define NODE_ASYNC_INSPECTOR_PROVIDER_TYPES(V)                                \
   V(INSPECTORJSBINDING)
@@ -106,7 +115,8 @@ namespace node {
 #define NODE_ASYNC_PROVIDER_TYPES(V)                                          \
   NODE_ASYNC_NON_CRYPTO_PROVIDER_TYPES(V)                                     \
   NODE_ASYNC_CRYPTO_PROVIDER_TYPES(V)                                         \
-  NODE_ASYNC_INSPECTOR_PROVIDER_TYPES(V)
+  NODE_ASYNC_INSPECTOR_PROVIDER_TYPES(V)                                      \
+  NODE_ASYNC_QUIC_PROVIDER_TYPES(V)
 
 class Environment;
 class DestroyParam;

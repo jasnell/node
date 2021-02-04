@@ -987,11 +987,9 @@
           'defines': [ 'NODE_ENABLE_LARGE_CODE_PAGES=1' ],
         }],
         [
-          # We can only use QUIC if using our modified, static linked
-          # OpenSSL because we have patched in the QUIC support.
           'no_quic=="false"', {
           'sources': [
-
+            'src/quic/quic.cc'
           ]
         }],
         [ 'use_openssl_def==1', {
