@@ -6,7 +6,7 @@
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
-
+#ifndef OPENSSL_NO_QUIC
 #include "ssl_local.h"
 #include "internal/cryptlib.h"
 #include "internal/refcount.h"
@@ -315,7 +315,7 @@ int SSL_process_quic_post_handshake(SSL *ssl)
     /* if there is no data, return success as BoringSSL */
     if (ssl->quic_input_data_head == NULL)
         return 1;
-    
+
     /*
      * This is always safe (we are sure to be at a record boundary) because
      * SSL_read()/SSL_write() are never used for QUIC connections -- the
@@ -334,3 +334,4 @@ int SSL_is_quic(SSL* ssl)
 {
     return SSL_IS_QUIC(ssl);
 }
+#endif  // OPENSSL_NO_QUIC
