@@ -38,6 +38,14 @@ namespace node {
 #define NODE_VERSIONS_KEY_CRYPTO(V)
 #endif
 
+#ifndef OPENSSL_NO_QUIC
+#define NODE_VERSIONS_KEY_QUIC(V)                                              \
+  V(ngtcp2)                                                                    \
+  V(nghttp3)
+#else
+#define NODE_VERSIONS_KEY_QUIC(V)
+#endif  // OPENSSL_NO_QUIC
+
 #ifdef NODE_HAVE_I18N_SUPPORT
 #define NODE_VERSIONS_KEY_INTL(V)                                              \
   V(cldr)                                                                      \
@@ -51,7 +59,8 @@ namespace node {
 #define NODE_VERSIONS_KEYS(V)                                                  \
   NODE_VERSIONS_KEYS_BASE(V)                                                   \
   NODE_VERSIONS_KEY_CRYPTO(V)                                                  \
-  NODE_VERSIONS_KEY_INTL(V)
+  NODE_VERSIONS_KEY_INTL(V)                                                    \
+  NODE_VERSIONS_KEY_QUIC(V)
 
 class Metadata {
  public:

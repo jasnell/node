@@ -187,6 +187,18 @@
       'dependencies': [ 'deps/nghttp2/nghttp2.gyp:nghttp2' ],
     }],
 
+    [
+      'no_quic=="false"', {
+      'conditions': [
+        [
+          'node_shared_ngtcp2=="false" and node_shared_nghttp3=="false"', {
+          'dependencies': [
+            'deps/ngtcp2/quic.gyp:quic',
+          ]}
+        ]
+      ]}
+    ],
+
     [ 'node_shared_brotli=="false"', {
       'dependencies': [ 'deps/brotli/brotli.gyp:brotli' ],
     }],

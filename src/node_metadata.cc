@@ -20,6 +20,11 @@
 #include <unicode/uversion.h>
 #endif  // NODE_HAVE_I18N_SUPPORT
 
+#ifndef OPENSSL_NO_QUIC
+#include <ngtcp2/version.h>
+#include <nghttp3/version.h>
+#endif  // OPENSSL_NO_QUIC
+
 namespace node {
 
 namespace per_process {
@@ -95,6 +100,11 @@ Metadata::Versions::Versions() {
   icu = U_ICU_VERSION;
   unicode = U_UNICODE_VERSION;
 #endif  // NODE_HAVE_I18N_SUPPORT
+
+#ifndef OPENSSL_NO_QUIC
+  ngtcp2 = NGTCP2_VERSION;
+  nghttp3 = NGHTTP3_VERSION;
+#endif  // OPENSSL_NO_QUIC
 }
 
 Metadata::Release::Release() : name(NODE_RELEASE) {

@@ -27,6 +27,7 @@
     'node_lib_target_name%': 'libnode',
     'node_intermediate_lib_type%': 'static_library',
     'node_builtin_modules_path%': '',
+    'no_quic': 'false',
     'library_files': [
       'lib/internal/bootstrap/environment.js',
       'lib/internal/bootstrap/loaders.js',
@@ -310,6 +311,11 @@
       }, {
         'use_openssl_def%': 0,
       }],
+      [ 'no_quic==1', {
+        'defines': [
+          'OPENSSL_NO_QUIC'
+        ]
+      }]
     ],
   },
 
@@ -706,6 +712,8 @@
         'src/node_api_types.h',
         'src/node_binding.h',
         'src/node_blob.h',
+        'src/node_bob.h',
+        'src/node_bob-inl.h',
         'src/node_buffer.h',
         'src/node_constants.h',
         'src/node_context_data.h',
@@ -977,6 +985,14 @@
           'target_arch=="x64" and '
           'node_target_type=="executable"', {
           'defines': [ 'NODE_ENABLE_LARGE_CODE_PAGES=1' ],
+        }],
+        [
+          # We can only use QUIC if using our modified, static linked
+          # OpenSSL because we have patched in the QUIC support.
+          'no_quic=="false"', {
+          'sources': [
+
+          ]
         }],
         [ 'use_openssl_def==1', {
           # TODO(bnoordhuis) Make all platforms export the same list of symbols.

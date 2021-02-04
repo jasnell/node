@@ -16,6 +16,11 @@
         'OPENSSL_NO_HW',
       ],
       'conditions': [
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
+          ]
+        }],
         [ 'openssl_no_asm==1', {
           'includes': ['./openssl_no_asm.gypi'],
         }, 'target_arch=="arm64" and OS=="win"', {

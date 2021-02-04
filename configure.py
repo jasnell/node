@@ -283,6 +283,56 @@ shared_optgroup.add_argument('--shared-nghttp2-libpath',
     dest='shared_nghttp2_libpath',
     help='a directory to search for the shared nghttp2 DLLs')
 
+parser.add_argument('--no-quic',
+    action='store_true',
+    dest='no_quic',
+    default=None,
+    help='disable quic support')
+
+shared_optgroup.add_argument('--shared-ngtcp2',
+    action='store_true',
+    dest='shared_ngtcp2',
+    default=None,
+    help='link to a shared ngtcp2 DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-ngtcp2-includes',
+    action='store',
+    dest='shared_ngtcp2_includes',
+    help='directory containing ngtcp2 header files')
+
+shared_optgroup.add_argument('--shared-ngtcp2-libname',
+    action='store',
+    dest='shared_ngtcp2_libname',
+    default='ngtcp2',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-ngtcp2-libpath',
+    action='store',
+    dest='shared_ngtcp2_libpath',
+    help='a directory to search for the shared ngtcp2 DLLs')
+
+shared_optgroup.add_argument('--shared-nghttp3',
+    action='store_true',
+    dest='shared_nghttp3',
+    default=None,
+    help='link to a shared nghttp3 DLL instead of static linking')
+
+shared_optgroup.add_argument('--shared-nghttp3-includes',
+    action='store',
+    dest='shared_nghttp3_includes',
+    help='directory containing nghttp3 header files')
+
+shared_optgroup.add_argument('--shared-nghttp3-libname',
+    action='store',
+    dest='shared_nghttp3_libname',
+    default='nghttp3',
+    help='alternative lib name to link to [default: %(default)s]')
+
+shared_optgroup.add_argument('--shared-nghttp3-libpath',
+    action='store',
+    dest='shared_nghttp3_libpath',
+    help='a directory to search for the shared nghttp3 DLLs')
+
 shared_optgroup.add_argument('--shared-openssl',
     action='store_true',
     dest='shared_openssl',
@@ -1240,6 +1290,11 @@ def configure_node(o):
   else:
     o['variables']['debug_nghttp2'] = 'false'
 
+  if options.no_quic:
+    o['variables']['no_quic'] = 1
+  else:
+    o['variables']['no_quic'] = 'false'
+
   o['variables']['node_no_browser_globals'] = b(options.no_browser_globals)
 
   o['variables']['node_shared'] = b(options.shared)
@@ -1363,6 +1418,7 @@ def configure_openssl(o):
       without_ssl_error('--openssl-fips')
     if options.openssl_default_cipher_list:
       without_ssl_error('--openssl-default-cipher-list')
+    variables['no_quic'] = 1
     return
 
   if options.use_openssl_ca_store:
@@ -1831,6 +1887,8 @@ configure_library('libuv', output)
 configure_library('brotli', output, pkgname=['libbrotlidec', 'libbrotlienc'])
 configure_library('cares', output, pkgname='libcares')
 configure_library('nghttp2', output, pkgname='libnghttp2')
+configure_library('ngtcp2', output, pkgname='libngtcp2')
+configure_library('nghttp3', output, pkgname='libhttp3')
 configure_v8(output)
 configure_openssl(output)
 configure_intl(output)
