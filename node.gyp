@@ -412,6 +412,11 @@
       'msvs_disabled_warnings!': [4244],
 
       'conditions': [
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
+          ]
+        }],
         [ 'error_on_warn=="true"', {
           'cflags': ['-Werror'],
           'xcode_settings': {
@@ -989,7 +994,15 @@
         [
           'no_quic=="false"', {
           'sources': [
-            'src/quic/quic.cc'
+            'src/quic/endpoint.cc',
+            'src/quic/session.cc',
+            'src/quic/stream.cc',
+            'src/quic/quic.cc',
+          ]
+        }],
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
           ]
         }],
         [ 'use_openssl_def==1', {
@@ -1347,6 +1360,11 @@
       ],
 
       'conditions': [
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
+          ]
+        }],
         [ 'node_use_openssl=="true"', {
           'defines': [
             'HAVE_OPENSSL=1',
@@ -1505,6 +1523,11 @@
       ],
 
       'conditions': [
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
+          ]
+        }],
         [ 'node_use_openssl=="true"', {
           'defines': [
             'HAVE_OPENSSL=1',
@@ -1559,6 +1582,11 @@
       ],
 
       'conditions': [
+        [ 'no_quic==1', {
+          'defines': [
+            'OPENSSL_NO_QUIC'
+          ]
+        }],
         [ 'node_use_openssl=="true"', {
           'defines': [
             'HAVE_OPENSSL=1',

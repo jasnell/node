@@ -98,8 +98,8 @@ namespace node {
 
 #ifndef OPENSSL_NO_QUIC
 #define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)                                     \
+  V(QUICENDPOINT)                                                             \
   V(QUICSESSION)                                                              \
-  V(QUICSOCKET)                                                               \
   V(QUICSTREAM)
 #else
 #define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)

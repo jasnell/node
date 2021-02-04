@@ -1,8 +1,12 @@
+#ifndef OPENSSL_NO_QUIC
+
 #include "quic/stream.h"
+#include "quic/quic.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_sockaddr-inl.h"
 #include "v8.h"
 
 namespace node {
@@ -10,10 +14,27 @@ namespace node {
 using v8::FunctionTemplate;
 using v8::Local;
 using v8::Object;
-
 namespace quic {
 
-Local<FunctionTemplate> Stream::GetConstructorTemplate(Environment* env) {}
+Local<FunctionTemplate> Stream::GetConstructorTemplate(Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  CHECK_NOT_NULL(state);
+  Local<FunctionTemplate> tmpl = state->stream_constructor_template(env);
+  if (tmpl.IsEmpty()) {
+    tmpl = FunctionTemplate::New(env->isolate());
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "QuicStream"));
+    tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        Stream::kInternalFieldCount);
+    state->set_stream_constructor_template(env, tmpl);
+  }
+  return tmpl;
+}
+
+void Stream::Initialize(Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  state->set_stream_constructor_template(env, GetConstructorTemplate(env));
+}
 
 BaseObjectPtr<Stream> Stream::Create(
     Environment* env,
@@ -41,3 +62,5 @@ Stream::Stream(
 
 }  // namespace quic
 }  // namespace node
+
+#endif  // OPENSSL_NO_QUIC

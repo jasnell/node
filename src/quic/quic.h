@@ -3,12 +3,15 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
+#include "base_object-inl.h"
+#include "env.h"
 #include "memory_tracker.h"
 #include "node_sockaddr.h"
 #include "string_bytes.h"
 #include "util.h"
 #include <ngtcp2/ngtcp2.h>
 #include <nghttp3/nghttp3.h>
+#include <v8.h>
 #include <uv.h>
 
 #include <string>
@@ -23,11 +26,78 @@ using Http3ConnectionPointer = DeleteFnPtr<nghttp3_conn, nghttp3_conn_del>;
 
 #define stream_id int64_t
 
+#define QUIC_CONSTRUCTORS(V)                                                   \
+  V(endpoint)                                                                  \
+  V(session)                                                                   \
+  V(stream)
+
+#define QUIC_JS_CALLBACKS(V)                                                   \
+  V(socket_close, onSocketClose)                                               \
+  V(socket_server_busy, onSocketServerBusy)                                    \
+  V(session_cert, onSessionCert)                                               \
+  V(session_client_hello, onSessionClientHello)                                \
+  V(session_close, onSessionClose)                                             \
+  V(session_handshake, onSessionHandshake)                                     \
+  V(session_keylog, onSessionKeylog)                                           \
+  V(session_path_validation, onSessionPathValidation)                          \
+  V(session_use_preferred_address, onSessionUsePreferredAddress)               \
+  V(session_qlog, onSessionQlog)                                               \
+  V(session_ready, onSessionReady)                                             \
+  V(session_status, onSessionStatus)                                           \
+  V(session_ticket, onSessionTicket)                                           \
+  V(session_version_negotiation, onSessionVersionNegotiation)                  \
+  V(stream_close, onStreamClose)                                               \
+  V(stream_error, onStreamError)                                               \
+  V(stream_ready, onStreamReady)                                               \
+  V(stream_reset, onStreamReset)                                               \
+  V(stream_headers, onStreamHeaders)                                           \
+  V(stream_blocked, onStreamBlocked)
+
 class Session;
 class Stream;
+class BindingState final : public BaseObject {
+ public:
+  static constexpr FastStringKey binding_data_name { "quic" };
+  BindingState(Environment* env, v8::Local<v8::Object> object);
 
-// CIDs are used to identify QUIC sessions and may be between 0 and 20
-// bytes in length.
+  inline void check_initialized() { CHECK(!initialized_); }
+
+  inline void set_initialized() { initialized_ = true; }
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(BindingState);
+  SET_SELF_SIZE(BindingState);
+
+#define V(name)                                                               \
+  void set_ ## name ## _constructor_template(                                 \
+      Environment* env,                                                       \
+      v8::Local<v8::FunctionTemplate> tmpl);                                  \
+  v8::Local<v8::FunctionTemplate> name ## _constructor_template(              \
+      Environment* env) const;
+  QUIC_CONSTRUCTORS(V)
+#undef V
+
+#define V(name, _)                                                             \
+  void set_ ## name ## _callback(Environment* env, v8::Local<v8::Function> fn);\
+  v8::Local<v8::Function> name ## _callback(Environment* env) const;
+  QUIC_JS_CALLBACKS(V)
+#undef V
+
+ private:
+#define V(name)                                                                \
+  v8::Global<v8::FunctionTemplate> name ## _constructor_template_;
+  QUIC_CONSTRUCTORS(V)
+#undef V
+
+#define V(name, _) v8::Global<v8::Function> name ## _callback_;
+  QUIC_JS_CALLBACKS(V)
+#undef V
+
+  bool initialized_ = false;
+};
+
+// CIDs are used to identify QUIC sessions and may
+// be between 0 and 20 bytes in length.
 class CID final : public MemoryRetainer {
  public:
   // Empty constructor

@@ -6,7 +6,8 @@
 #include "async_wrap.h"
 #include "base_object.h"
 #include "env.h"
-#include "quic.h"
+#include "quic/quic.h"
+#include "quic/session.h"
 
 #include <ngtcp2/ngtcp2.h>
 
@@ -33,6 +34,7 @@ class Stream final : public AsyncWrap {
 
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
+  static void Initialize(Environment* env);
   static BaseObjectPtr<Stream> Create(
       Environment* env,
       Session* session,
@@ -47,6 +49,10 @@ class Stream final : public AsyncWrap {
   stream_id id() const { return id_; }
 
   Session* session() const { return session_.get(); }
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(Stream)
+  SET_SELF_SIZE(Stream)
 
  private:
 

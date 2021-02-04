@@ -1,6 +1,6 @@
 #ifndef OPENSSL_NO_QUIC
 
-#include "quic/session.h"
+#include "quic/endpoint.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
 #include "env-inl.h"
@@ -16,40 +16,40 @@ using v8::Object;
 
 namespace quic {
 
-Local<FunctionTemplate> Session::GetConstructorTemplate(Environment* env) {
+Local<FunctionTemplate> Endpoint::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
-  Local<FunctionTemplate> tmpl = state->session_constructor_template(env);
+  Local<FunctionTemplate> tmpl = state->endpoint_constructor_template(env);
   if (tmpl.IsEmpty()) {
     tmpl = FunctionTemplate::New(env->isolate());
-    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "QuicSession"));
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "QuicEndpoint"));
     tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
     tmpl->InstanceTemplate()->SetInternalFieldCount(
-        Session::kInternalFieldCount);
-    state->set_session_constructor_template(env, tmpl);
+        Endpoint::kInternalFieldCount);
+    state->set_endpoint_constructor_template(env, tmpl);
   }
   return tmpl;
 }
 
-void Session::Initialize(Environment* env) {
+void Endpoint::Initialize(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
-  state->set_session_constructor_template(env, GetConstructorTemplate(env));
+  state->set_endpoint_constructor_template(env, GetConstructorTemplate(env));
 }
 
-BaseObjectPtr<Session> Session::Create(Environment* env) {
+BaseObjectPtr<Endpoint> Endpoint::Create(Environment* env) {
   Local<Object> obj;
   Local<FunctionTemplate> tmpl = GetConstructorTemplate(env);
   CHECK(!tmpl.IsEmpty());
   if (!tmpl->InstanceTemplate()->NewInstance(env->context()).ToLocal(&obj))
-    return BaseObjectPtr<Session>();
+    return BaseObjectPtr<Endpoint>();
 
-  return MakeBaseObject<Session>(env, obj);
+  return MakeBaseObject<Endpoint>(env, obj);
 }
 
-Session::Session(
+Endpoint::Endpoint(
     Environment* env,
     Local<Object> object)
-    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICSESSION) {
+    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICENDPOINT) {
   MakeWeak();
 }
 
