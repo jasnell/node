@@ -8,13 +8,53 @@
 #include "env.h"
 #include "quic/quic.h"
 #include "quic/session.h"
+#include "quic/stats.h"
 
 #include <ngtcp2/ngtcp2.h>
 
 namespace node {
 namespace quic {
 
-class Stream final : public AsyncWrap {
+#define STREAM_STATS(V)                                                        \
+  V(CREATED_AT, created_at, "Created At")                                      \
+  V(RECEIVED_AT, received_at, "Last Received At")                              \
+  V(ACKED_AT, acked_at, "Last Acknowledged At")                                \
+  V(CLOSING_AT, closing_at, "Closing At")                                      \
+  V(DESTROYED_AT, destroyed_at, "Destroyed At")                                \
+  V(BYTES_RECEIVED, bytes_received, "Bytes Received")                          \
+  V(BYTES_SENT, bytes_sent, "Bytes Sent")                                      \
+  V(MAX_OFFSET, max_offset, "Max Offset")                                      \
+  V(MAX_OFFSET_ACK, max_offset_ack, "Max Acknowledged Offset")                 \
+  V(MAX_OFFSET_RECV, max_offset_received, "Max Received Offset")               \
+  V(FINAL_SIZE, final_size, "Final Size")
+
+class Stream;
+
+#define V(name, _, __) IDX_STATS_STREAM_##name,
+enum class StreamStatsIdx : int {
+  STREAM_STATS(V)
+  IDX_STATS_STREAM_COUNT
+};
+#undef V
+
+#define V(_, name, __) uint64_t name;
+struct StreamStats {
+  STREAM_STATS(V)
+};
+#undef V
+
+struct StreamStatsTraits {
+  using Stats = StreamStats;
+  using Base = Stream;
+
+  template <typename Fn>
+  static void ToString(const Base& ptr, Fn&& add_field);
+};
+
+using StreamStatsBase = StatsBase<StreamStatsTraits>;
+
+class Stream final : public AsyncWrap,
+                     public StreamStatsBase {
  public:
   enum class Direction {
     UNIDIRECTIONAL,

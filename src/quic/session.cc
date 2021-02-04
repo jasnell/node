@@ -16,6 +16,13 @@ using v8::Object;
 
 namespace quic {
 
+template <typename Fn>
+void SessionStatsTraits::ToString(const Session& ptr, Fn&& add_field) {
+#define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
+  SESSION_STATS(V)
+#undef V
+}
+
 Local<FunctionTemplate> Session::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
@@ -49,7 +56,8 @@ BaseObjectPtr<Session> Session::Create(Environment* env) {
 Session::Session(
     Environment* env,
     Local<Object> object)
-    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICSESSION) {
+    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICSESSION),
+      SessionStatsBase(env, object) {
   MakeWeak();
 }
 

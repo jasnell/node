@@ -16,6 +16,14 @@ using v8::Object;
 
 namespace quic {
 
+template <typename Fn>
+void EndpointStatsTraits::ToString(const Endpoint& ptr, Fn&& add_field) {
+#define V(_n, name, label)                                                     \
+  add_field(label, ptr.GetStat(&EndpointStats::name));
+  ENDPOINT_STATS(V)
+#undef V
+}
+
 Local<FunctionTemplate> Endpoint::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
@@ -49,7 +57,8 @@ BaseObjectPtr<Endpoint> Endpoint::Create(Environment* env) {
 Endpoint::Endpoint(
     Environment* env,
     Local<Object> object)
-    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICENDPOINT) {
+    : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICENDPOINT),
+      EndpointStatsBase(env, object) {
   MakeWeak();
 }
 

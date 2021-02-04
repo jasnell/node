@@ -16,6 +16,13 @@ using v8::Local;
 using v8::Object;
 namespace quic {
 
+template <typename Fn>
+void StreamStatsTraits::ToString(const Stream& ptr, Fn&& add_field) {
+#define V(_, name, label) add_field(label, ptr.GetStat(&StreamStats::name));
+  STREAM_STATS(V)
+#undef V
+}
+
 Local<FunctionTemplate> Stream::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
@@ -55,6 +62,7 @@ Stream::Stream(
     Session* session,
     stream_id id)
     : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICSTREAM),
+      StreamStatsBase(env, object),
       session_(session),
       id_(id) {
   MakeWeak();

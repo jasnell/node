@@ -26,6 +26,8 @@ using Http3ConnectionPointer = DeleteFnPtr<nghttp3_conn, nghttp3_conn_del>;
 
 #define stream_id int64_t
 
+constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
+
 #define QUIC_CONSTRUCTORS(V)                                                   \
   V(endpoint)                                                                  \
   V(session)                                                                   \
