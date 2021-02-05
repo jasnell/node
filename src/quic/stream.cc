@@ -2,8 +2,10 @@
 
 #include "quic/stream.h"
 #include "quic/quic.h"
+#include "aliased_struct-inl.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
+#include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
 #include "node_sockaddr-inl.h"

@@ -4,6 +4,7 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "node_internals.h"
+#include "env.h"
 #include "v8.h"
 #include <memory>
 
@@ -25,7 +26,10 @@ template <typename T>
 class AliasedStruct final {
  public:
   template <typename... Args>
-  explicit AliasedStruct(v8::Isolate* isolate, Args&&... args);
+  AliasedStruct(v8::Isolate* isolate, Args&&... args);
+
+  template <typename... Args>
+  AliasedStruct(Environment* env, Args&&... args);
 
   inline AliasedStruct(const AliasedStruct& that);
 

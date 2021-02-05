@@ -6,11 +6,14 @@
 #include "base_object-inl.h"
 #include "env.h"
 #include "memory_tracker.h"
+#include "node_mem.h"
 #include "node_sockaddr.h"
 #include "string_bytes.h"
 #include "util.h"
 #include <ngtcp2/ngtcp2.h>
+#include <ngtcp2/version.h
 #include <nghttp3/nghttp3.h>
+#include <nghttp3/version.h>
 #include <v8.h>
 #include <uv.h>
 
@@ -21,21 +24,40 @@
 namespace node {
 namespace quic {
 
+class BindingState;
+
 using QuicConnectionPointer = DeleteFnPtr<ngtcp2_conn, ngtcp2_conn_del>;
 using Http3ConnectionPointer = DeleteFnPtr<nghttp3_conn, nghttp3_conn_del>;
+using QuicMemoryManager = mem::NgLibMemoryManager<BindingState, ngtcp2_mem>;
 
 #define stream_id int64_t
 
+constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
+constexpr size_t kDefaultMaxPacketLength =
+    std::max<size_t>(NGTCP2_MAX_PKTLEN_IPV4, NGTCP2_MAX_PKTLEN_IPV6);
+constexpr size_t kTokenSecretLen = 16;
+
+constexpr size_t DEFAULT_MAX_CONNECTIONS =
+    std::min<size_t>(
+        kMaxSizeT,
+        static_cast<size_t>(kMaxSafeJsInteger));
+constexpr size_t DEFAULT_MAX_CONNECTIONS_PER_HOST = 100;
+constexpr size_t DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE = 1000;
+constexpr size_t DEFAULT_MAX_STATELESS_RESETS = 10;
+constexpr size_t DEFAULT_MAX_RETRY_LIMIT = 10;
+constexpr uint64_t DEFAULT_RETRYTOKEN_EXPIRATION = 10;
 constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
 
 #define QUIC_CONSTRUCTORS(V)                                                   \
   V(endpoint)                                                                  \
+  V(send_wrap)                                                                 \
   V(session)                                                                   \
   V(stream)
 
 #define QUIC_JS_CALLBACKS(V)                                                   \
-  V(socket_close, onSocketClose)                                               \
-  V(socket_server_busy, onSocketServerBusy)                                    \
+  V(endpoint_error, onEndpointError)                                           \
+  V(endpoint_busy, onEndpointBusy)                                             \
+  V(session_ready, onSessionReady)                                             \
   V(session_cert, onSessionCert)                                               \
   V(session_client_hello, onSessionClientHello)                                \
   V(session_close, onSessionClose)                                             \
@@ -44,7 +66,6 @@ constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
   V(session_path_validation, onSessionPathValidation)                          \
   V(session_use_preferred_address, onSessionUsePreferredAddress)               \
   V(session_qlog, onSessionQlog)                                               \
-  V(session_ready, onSessionReady)                                             \
   V(session_status, onSessionStatus)                                           \
   V(session_ticket, onSessionTicket)                                           \
   V(session_version_negotiation, onSessionVersionNegotiation)                  \
@@ -57,7 +78,8 @@ constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
 
 class Session;
 class Stream;
-class BindingState final : public BaseObject {
+class BindingState final : public BaseObject,
+                           public QuicMemoryManager {
  public:
   static constexpr FastStringKey binding_data_name { "quic" };
   BindingState(Environment* env, v8::Local<v8::Object> object);
@@ -69,6 +91,11 @@ class BindingState final : public BaseObject {
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(BindingState);
   SET_SELF_SIZE(BindingState);
+
+  // NgLibMemoryManager
+  void CheckAllocatedSize(size_t previous_size) const;
+  void IncreaseAllocatedSize(size_t size);
+  void DecreaseAllocatedSize(size_t size);
 
 #define V(name)                                                               \
   void set_ ## name ## _constructor_template(                                 \
@@ -85,6 +112,8 @@ class BindingState final : public BaseObject {
   QUIC_JS_CALLBACKS(V)
 #undef V
 
+  bool warn_trace_tls = true;
+
  private:
 #define V(name)                                                                \
   v8::Global<v8::FunctionTemplate> name ## _constructor_template_;
@@ -96,6 +125,7 @@ class BindingState final : public BaseObject {
 #undef V
 
   bool initialized_ = false;
+  size_t current_ngtcp2_memory_ = 0;
 };
 
 // CIDs are used to identify QUIC sessions and may
@@ -195,6 +225,74 @@ class CID final : public MemoryRetainer {
   const ngtcp2_cid* ptr_;
 };
 
+// A serialized QUIC packet. Packets are intended to be transient.
+// They are created, filled with the contents of a serialized packet,
+// and passed off immediately to the Endpoint to be sent. As soon as
+// the packet is sent, it is freed.
+class Packet final : public MemoryRetainer {
+ public:
+  inline Packet(const char* diagnostic_label = nullptr)
+      : ptr_(data_),
+        diagnostic_label_(diagnostic_label) { }
+
+  inline Packet(size_t len, const char* diagnostic_label)
+      : ptr_(len <= kDefaultMaxPacketLength ? data_ : Malloc<uint8_t>(len)),
+        len_(len),
+        diagnostic_label_(diagnostic_label) {
+    CHECK_GT(len_, 0);
+    CHECK_NOT_NULL(ptr_);
+  }
+
+  Packet(const Packet& other) : Packet(other.len_, other.diagnostic_label_) {
+    if (UNLIKELY(len_ == 0)) return;
+    memcpy(ptr_, other.ptr_, len_);
+  }
+
+  Packet(Packet&& other) = delete;
+  Packet& operator=(Packet&& other) = delete;
+
+  ~Packet() {
+    if (ptr_ != data_)
+      std::unique_ptr<uint8_t> free_me(ptr_);
+  }
+
+  inline Packet& operator=(const Packet& other) noexcept {
+    if (this == &other) return *this;
+    this->~Packet();
+    return *new(this) Packet(other);
+  }
+
+  inline uint8_t* data() { return ptr_; }
+
+  inline size_t length() const { return len_; }
+
+  inline uv_buf_t buf() const {
+    return uv_buf_init(reinterpret_cast<char*>(ptr_), len_);
+  }
+
+  inline void set_length(size_t len) {
+    CHECK_LE(len, len_);
+    len_ = len;
+  }
+
+  inline const char* diagnostic_label() const {
+    return diagnostic_label_;
+  }
+
+  void MemoryInfo(MemoryTracker* tracker) const override {
+    tracker->TrackFieldWithSize("allocated", ptr_ != data_ ? len_ : 0);
+  }
+
+  SET_MEMORY_INFO_NAME(Packet);
+  SET_SELF_SIZE(Packet);
+
+ private:
+  uint8_t data_[kDefaultMaxPacketLength];
+  uint8_t* ptr_ = nullptr;
+  size_t len_ = kDefaultMaxPacketLength;
+  const char* diagnostic_label_ = nullptr;
+};
+
 // A utility class that wraps ngtcp2_path to adapt it to work with SocketAddress
 struct Path final : public ngtcp2_path {
   inline Path(const SocketAddress& local, const SocketAddress& remote);
@@ -208,7 +306,7 @@ struct PathStorage final : public ngtcp2_path_storage {
 // receives an advertised preferred address from a server. The helper provides
 // information about the servers advertised preferred address. Call Use()
 // to let ngtcp2 know which preferred address to use (if any).
-  class PreferredAddress final {
+class PreferredAddress final {
  public:
   enum class Policy {
     IGNORE,

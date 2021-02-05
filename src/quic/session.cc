@@ -1,8 +1,10 @@
 #ifndef OPENSSL_NO_QUIC
 
 #include "quic/session.h"
+#include "aliased_struct-inl.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
+#include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
 #include "node_sockaddr-inl.h"

@@ -81,6 +81,8 @@ using SessionStatsBase = StatsBase<SessionStatsTraits>;
 class Session final : public AsyncWrap,
                       public SessionStatsBase {
  public:
+  struct Config : public ngtcp2_settings {};
+
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
   static void Initialize(Environment* env);

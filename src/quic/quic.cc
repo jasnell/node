@@ -1,8 +1,12 @@
 #ifndef OPENSSL_NO_QUIC
 
 #include "node.h"
+#include "aliased_struct-inl.h"
+#include "base_object-inl.h"
+#include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_mem-inl.h"
 #include "node_sockaddr-inl.h"
 #include "util-inl.h"
 #include "quic/endpoint.h"
@@ -35,6 +39,18 @@ void BindingState::MemoryInfo(MemoryTracker* tracker) const {
 #define V(name, _) tracker->TrackField(#name, name ## _callback_);
   QUIC_JS_CALLBACKS(V)
 #undef V
+}
+
+void BindingState::CheckAllocatedSize(size_t previous_size) const {
+  CHECK_GE(current_ngtcp2_memory_, previous_size);
+}
+
+void BindingState::IncreaseAllocatedSize(size_t size) {
+  current_ngtcp2_memory_ += size;
+}
+
+void BindingState::DecreaseAllocatedSize(size_t size) {
+  current_ngtcp2_memory_ -= size;
 }
 
 #define V(name)                                                                \
