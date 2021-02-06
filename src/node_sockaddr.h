@@ -80,6 +80,7 @@ class SocketAddress : public MemoryRetainer {
   inline SocketAddress(const SocketAddress& addr);
   inline SocketAddress& operator=(const sockaddr* other);
   inline SocketAddress& operator=(const SocketAddress& other);
+  inline operator bool() const noexcept { return set_; }
 
   inline const sockaddr& operator*() const;
   inline const sockaddr* operator->() const;
@@ -144,6 +145,7 @@ class SocketAddress : public MemoryRetainer {
   using Map = std::unordered_map<SocketAddress, T, Hash>;
 
  private:
+  bool set_ = false;
   sockaddr_storage address_;
 };
 

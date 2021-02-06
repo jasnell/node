@@ -66,12 +66,6 @@ class Stream final : public AsyncWrap,
     CLIENT,
   };
 
-  enum class HeadersKind {
-    INFO,
-    INITIAL,
-    TRAILING,
-  };
-
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
   static void Initialize(Environment* env);

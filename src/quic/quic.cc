@@ -35,6 +35,11 @@ constexpr FastStringKey BindingState::binding_data_name;
 BindingState::BindingState(Environment* env, Local<Object> object)
     : BaseObject(env, object) {}
 
+ngtcp2_mem BindingState::GetAllocator(Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  return state->MakeAllocator();
+}
+
 void BindingState::MemoryInfo(MemoryTracker* tracker) const {
 #define V(name, _) tracker->TrackField(#name, name ## _callback_);
   QUIC_JS_CALLBACKS(V)

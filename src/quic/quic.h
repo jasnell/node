@@ -11,7 +11,7 @@
 #include "string_bytes.h"
 #include "util.h"
 #include <ngtcp2/ngtcp2.h>
-#include <ngtcp2/version.h
+#include <ngtcp2/version.h>
 #include <nghttp3/nghttp3.h>
 #include <nghttp3/version.h>
 #include <v8.h>
@@ -37,6 +37,14 @@ constexpr size_t kDefaultMaxPacketLength =
     std::max<size_t>(NGTCP2_MAX_PKTLEN_IPV4, NGTCP2_MAX_PKTLEN_IPV6);
 constexpr size_t kTokenSecretLen = 16;
 
+constexpr uint64_t DEFAULT_ACTIVE_CONNECTION_ID_LIMIT = 2;
+constexpr uint64_t DEFAULT_MAX_STREAM_DATA_BIDI_LOCAL = 256 * 1024;
+constexpr uint64_t DEFAULT_MAX_STREAM_DATA_BIDI_REMOTE = 256 * 1024;
+constexpr uint64_t DEFAULT_MAX_STREAM_DATA_UNI = 256 * 1024;
+constexpr uint64_t DEFAULT_MAX_STREAMS_BIDI = 100;
+constexpr uint64_t DEFAULT_MAX_STREAMS_UNI = 3;
+constexpr uint64_t DEFAULT_MAX_DATA = 1 * 1024 * 1024;
+constexpr uint64_t DEFAULT_MAX_IDLE_TIMEOUT = 10;
 constexpr size_t DEFAULT_MAX_CONNECTIONS =
     std::min<size_t>(
         kMaxSizeT,
@@ -48,8 +56,19 @@ constexpr size_t DEFAULT_MAX_RETRY_LIMIT = 10;
 constexpr uint64_t DEFAULT_RETRYTOKEN_EXPIRATION = 10;
 constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
 
+inline bool is_ngtcp2_debug_enabled(Environment* env) {
+  return env->enabled_debug_list()->enabled(DebugCategory::NGTCP2_DEBUG);
+}
+
+inline size_t get_max_pkt_len(const SocketAddress& addr) {
+  return addr.family() == AF_INET6 ?
+      NGTCP2_MAX_PKTLEN_IPV6 :
+      NGTCP2_MAX_PKTLEN_IPV4;
+}
+
 #define QUIC_CONSTRUCTORS(V)                                                   \
   V(endpoint)                                                                  \
+  V(qlogstream)                                                                \
   V(send_wrap)                                                                 \
   V(session)                                                                   \
   V(stream)
@@ -66,7 +85,8 @@ constexpr uint64_t NGTCP2_APP_NOERROR = 0xff00;
   V(session_path_validation, onSessionPathValidation)                          \
   V(session_use_preferred_address, onSessionUsePreferredAddress)               \
   V(session_qlog, onSessionQlog)                                               \
-  V(session_status, onSessionStatus)                                           \
+  V(session_ocsp_request, onSessionOcspRequest)                                \
+  V(session_ocsp_response, onSessionOcspResponse)                              \
   V(session_ticket, onSessionTicket)                                           \
   V(session_version_negotiation, onSessionVersionNegotiation)                  \
   V(stream_close, onStreamClose)                                               \
@@ -81,6 +101,8 @@ class Stream;
 class BindingState final : public BaseObject,
                            public QuicMemoryManager {
  public:
+  static ngtcp2_mem GetAllocator(Environment* env);
+
   static constexpr FastStringKey binding_data_name { "quic" };
   BindingState(Environment* env, v8::Local<v8::Object> object);
 

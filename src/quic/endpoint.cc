@@ -495,6 +495,8 @@ BaseObjectPtr<Session> Endpoint::AcceptInitialPacket(
     return BaseObjectPtr<Session>();
   }
 
+  Session::Config config(this);
+
   // QUIC has address validation built in to the handshake but allows for
   // an additional explicit validation request using RETRY frames. If we
   // are using explicit validation, we check for the existence of a valid
@@ -508,7 +510,7 @@ BaseObjectPtr<Session> Endpoint::AcceptInitialPacket(
           Debug(this, "Performing explicit address validation");
           if (hd.token.len == 0) {
             Debug(this, "No retry token was detected. Generating one");
-            SendRetry(dcid, scid, local_addr, remote_addr);
+            SendRetry(version, dcid, scid, local_addr, remote_addr);
             return BaseObjectPtr<Session>();
           }
           if (InvalidRetryToken(
@@ -519,32 +521,36 @@ BaseObjectPtr<Session> Endpoint::AcceptInitialPacket(
                   config_.retry_token_expiration)) {
             Debug(this, "Invalid retry token was detected. Failing");
             ImmediateConnectionClose(
+                version,
                 CID(hd.scid),
                 CID(hd.dcid),
                 local_addr,
                 remote_addr);
             return BaseObjectPtr<Session>();
           }
+          set_validated_address(remote_addr);
+          config.token = hd.token;
         }
         break;
       case NGTCP2_PKT_0RTT:
-        SendRetry(dcid, scid, local_addr, remote_addr);
+        SendRetry(version, dcid, scid, local_addr, remote_addr);
         return {};
     }
   }
 
+  if (ocid && this->config().qlog)
+    config.EnableQLog(ocid);
+
   BaseObjectPtr<Session> session =
       Session::CreateServer(
           this,
-          server_config_.config,
           local_addr,
           remote_addr,
+          config,
           scid,
           dcid,
           ocid,
-          version,
-          server_config_.alpn,
-          config_.qlog);
+          version);
   CHECK(session);
 
   OnSessionReady(session);
@@ -686,11 +692,12 @@ bool Endpoint::SendStatelessReset(
         const_cast<uint8_t*>(token.data()),
         random,
         kRandlen);
-    if (nwrite >= static_cast<ssize_t>(kMinStatelessResetLen)) {
-      packet->set_length(nwrite);
-      IncrementStatelessResetCounter(remote_addr);
-      return SendPacket(local_addr, remote_addr, std::move(packet)) == 0;
-    }
+  if (nwrite >= static_cast<ssize_t>(kMinStatelessResetLen)) {
+    packet->set_length(nwrite);
+    IncrementStatelessResetCounter(remote_addr);
+    return SendPacket(local_addr, remote_addr, std::move(packet)) == 0;
+  }
+  return false;
 }
 
 bool Endpoint::SendRetry(
@@ -782,11 +789,11 @@ void Endpoint::ReceiveStop() {
   udp_->RecvStop();
 }
 
-void Endpoint::Listen(const ServerConfig& config) {
+void Endpoint::Listen(const Session::Options& options) {
   CHECK_NE(state_->listening, 1);
-  CHECK(config.context);
+  CHECK(options.context);
   Debug(this, "Starting to listen");
-  server_config_ = config;
+  server_options_ = options;
   state_->listening = 1;
   RecordTimestamp(&EndpointStats::listen_at);
   ReceiveStart();
@@ -824,7 +831,7 @@ SocketAddress Endpoint::local_address() const {
 }
 
 void Endpoint::WaitForPendingCallbacks() {
-  (!is_done_waiting_for_callbacks()) {
+  if (!is_done_waiting_for_callbacks()) {
     OnEndpointDone();
     return;
   }

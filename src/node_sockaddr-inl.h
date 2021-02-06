@@ -70,22 +70,24 @@ size_t SocketAddress::GetLength(const sockaddr_storage* addr) {
   return GetLength(reinterpret_cast<const sockaddr*>(addr));
 }
 
-SocketAddress::SocketAddress(const sockaddr* addr) {
+SocketAddress::SocketAddress(const sockaddr* addr) : set_(true) {
   memcpy(&address_, addr, GetLength(addr));
 }
 
-SocketAddress::SocketAddress(const SocketAddress& addr) {
+SocketAddress::SocketAddress(const SocketAddress& addr) : set_(true) {
   memcpy(&address_, &addr.address_, addr.length());
 }
 
 SocketAddress& SocketAddress::operator=(const sockaddr* addr) {
-  memcpy(&address_, addr, GetLength(addr));
-  return *this;
+  CHECK_NOT_NULL(addr);
+  this->~SocketAddress();
+  return *new(this) SocketAddress(addr);
 }
 
 SocketAddress& SocketAddress::operator=(const SocketAddress& addr) {
-  memcpy(&address_, &addr.address_, addr.length());
-  return *this;
+  if (this == &addr) return *this;
+  this->~SocketAddress();
+  return *new(this) SocketAddress(addr);
 }
 
 const sockaddr& SocketAddress::operator*() const {

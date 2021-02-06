@@ -3,15 +3,27 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
+#include "aliased_struct.h"
 #include "async_wrap.h"
 #include "base_object.h"
+#include "crypto/crypto_context.h"
 #include "env.h"
+#include "node_http_common.h"
+#include "node_sockaddr.h"
+#include "timer_wrap.h"
 #include "quic/quic.h"
 #include "quic/stats.h"
 #include "quic/stream.h"
+#include "quic/crypto.h"
 
 #include <ngtcp2/ngtcp2.h>
 #include <v8.h>
+#include <uv.h>
+
+#include <functional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace node {
 namespace quic {
@@ -47,6 +59,27 @@ namespace quic {
     "Path Validation Failure Count")                                           \
   V(MAX_BYTES_IN_FLIGHT, max_bytes_in_flight, "Max Bytes In Flight")           \
   V(BLOCK_COUNT, block_count, "Block Count")                                   \
+  V(BYTES_IN_FLIGHT, bytes_in_flight, "Bytes In Flight")                       \
+  V(CONGESTION_RECOVERY_START_TS,                                              \
+    congestion_recovery_start_ts,                                              \
+    "Congestion recovery start time")                                          \
+  V(CWND, cwnd, "Size of the congestion window")                               \
+  V(DELIVERY_RATE_SEC, delivery_rate_sec, "Delivery bytes/sec")                \
+  V(FIRST_RTT_SAMPLE_TS, first_rtt_sample_ts, "First RTT sample time")         \
+  V(INITIAL_RTT, initial_rtt, "Initial RTT")                                   \
+  V(LAST_TX_PKT_TS, last_tx_pkt_ts, "Last TX Packet time")                     \
+  V(LATEST_RTT, latest_rtt, "Latest RTT")                                      \
+  V(LOSS_DETECTION_TIMER,                                                      \
+    loss_detection_timer,                                                      \
+    "Loss detection timer deadline")                                           \
+  V(LOSS_TIME, loss_time, "Loss time")                                         \
+  V(MAX_UDP_PAYLOAD_SIZE, max_udp_payload_size, "Max UDP payload size")        \
+  V(MIN_RTT, min_rtt, "Minimum RTT so far")                                    \
+  V(PTO_COUNT, pto_count, "PTO count")                                         \
+  V(RTTVAR, rttvar, "Mean deviation of observed RTT")                          \
+  V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
+  V(SSTHRESH, ssthresh, "Slow start threshold")
+
   V(MIN_RTT, min_rtt, "Minimum RTT")                                           \
   V(LATEST_RTT, latest_rtt, "Latest RTT")                                      \
   V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
@@ -54,7 +87,50 @@ namespace quic {
   V(RECEIVE_RATE, receive_rate, "Receive Rate / Sec")                          \
   V(SEND_RATE, send_rate, "Send Rate  Sec")                                    \
 
+// Every QuicSession instance maintains an AliasedStruct that is used to quickly
+// toggle certain settings back and forth or to access various stats with low
+// cost.
+#define SESSION_STATE(V)                                                       \
+  V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
+  V(CLIENT_HELLO_ENABLED, client_hello_enabled, uint8_t)                       \
+  V(OCSP_ENABLED, ocsp_enabled, uint8_t)                                       \
+  V(PATH_VALIDATED_ENABLED, path_validated_enabled, uint8_t)                   \
+  V(USE_PREFERRED_ADDRESS_ENABLED, use_preferred_address_enabled, uint8_t)     \
+  V(HANDSHAKE_CONFIRMED, handshake_confirmed, uint8_t)                         \
+  V(IDLE_TIMEOUT, idle_timeout, uint8_t)                                       \
+  V(WRAPPED, wrapped, uint8_t)                                                 \
+  V(CLOSING, closing, uint8_t)                                                 \
+  V(GRACEFUL_CLOSING, graceful_closing, uint8_t)                               \
+  V(DESTROYED, destroyed, uint8_t)                                             \
+  V(TRANSPORT_PARAMS_SET, transport_params_set, uint8_t)                       \
+  V(NGTCP2_CALLBACK, in_ngtcp2_callback, uint8_t)                              \
+  V(CONNECTION_CLOSE_SCOPE, in_connection_close_scope, uint8_t)                \
+  V(SILENT_CLOSE, silent_close, uint8_t)                                       \
+  V(STATELESS_RESET, stateless_reset, uint8_t)                                 \
+  V(CLOSING_TIMER_ENABLED, closing_timer_enabled, uint8_t)                     \
+  V(MAX_STREAMS_BIDI, max_streams_bidi, uint64_t)                              \
+  V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)                                \
+  V(MAX_DATA_LEFT, max_data_left, uint64_t)                                    \
+  V(BYTES_IN_FLIGHT, bytes_in_flight, uint64_t)
+
+class Application;
+class Endpoint;
+class QLogStream;
 class Session;
+class Stream;
+
+using Header = NgHeaderBase<Application>;
+using HeaderList = std::vector<std::unique_ptr<Header>>;
+using StreamMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
+
+using ConnectionIDStrategy = void(*)(Session*, ngtcp2_cid*, size_t);
+using PreferredAddressStrategy = void(*)(Session*, const PreferredAddress&);
+
+enum class HeadersKind {
+  INFO,
+  INITIAL,
+  TRAILING,
+};
 
 #define V(name, _, __) IDX_STATS_SESSION_##name,
 enum class SessionStatsIdx : int {
@@ -81,20 +157,638 @@ using SessionStatsBase = StatsBase<SessionStatsTraits>;
 class Session final : public AsyncWrap,
                       public SessionStatsBase {
  public:
-  struct Config : public ngtcp2_settings {};
+  static void IgnorePreferredAddressStrategy(
+      Session* session,
+      const PreferredAddress& preferred_address);
+
+  static void UsePreferredAddressStrategy(
+      Session* session,
+      const PreferredAddress& preferred_address);
+
+  static void RandomConnectionIDStrategy(
+      Session* session,
+      ngtcp2_cid* cid,
+      size_t cidlen);
+
+  struct Config : public ngtcp2_settings {
+    explicit Config(Endpoint* endpoint);
+    void EnableQLog(const CID& ocid);
+  };
+
+  struct Options {
+    std::string alpn = NGHTTP3_ALPN_H3;
+    BaseObjectPtr<crypto::SecureContext> context;
+
+    // Options used for transport params:
+
+    SocketAddress preferred_address_ipv4;
+    SocketAddress preferred_address_ipv6;
+    uint64_t initial_max_stream_data_bidi_local =
+        DEFAULT_MAX_STREAM_DATA_BIDI_LOCAL;
+    uint64_t initial_max_stream_data_bidi_remote =
+        DEFAULT_MAX_STREAM_DATA_BIDI_REMOTE;
+    uint64_t initial_max_stream_data_uni =
+        DEFAULT_MAX_STREAM_DATA_UNI;
+    uint64_t initial_max_data =
+        DEFAULT_MAX_DATA;
+    uint64_t initial_max_streams_bidi =
+        DEFAULT_MAX_STREAMS_BIDI;
+    uint64_t initial_max_streams_uni =
+        DEFAULT_MAX_STREAMS_UNI;
+    uint64_t max_idle_timeout =
+        DEFAULT_MAX_DATA;
+    uint64_t active_connection_id_limit =
+        DEFAULT_ACTIVE_CONNECTION_ID_LIMIT;
+    uint64_t ack_delay_exponent =
+        NGTCP2_DEFAULT_ACK_DELAY_EXPONENT;
+    uint64_t max_ack_delay =
+        NGTCP2_DEFAULT_MAX_ACK_DELAY;
+    uint64_t max_datagram_frame_size =
+        NGTCP2_DEFAULT_MAX_PKTLEN;
+    bool disable_active_migration = false;
+
+    // When set, the peer certificate is verified against
+    // the list of supplied CAs. If verification fails, the
+    // connection will be refused.
+    bool reject_unauthorized = true;
+
+    // When set, enables TLS tracing for the session.
+    // This should only be used for debugging.
+    bool enable_tls_trace = false;
+
+    // Options only used by server sessions:
+
+    // When set, instructs the server session to request a
+    // client authentication certificate.
+    bool request_peer_certificate = false;
+
+    PreferredAddressStrategy preferred_address_strategy =
+        UsePreferredAddressStrategy;
+
+    // Options pnly used by client sessions:
+
+    // When set, instructs the client session to include an
+    // OCSP request in the initial TLS handshake.
+    bool request_ocsp = false;
+
+    // When set, instructs the client session to verify the
+    // hostname default. This is required by QUIC and enabled
+    // by default. We allow disabling it only for debugging.
+    bool verify_hostname_identity = true;
+
+    // When set, instructs the client session to perform
+    // additional checks on TLS session resumption.
+    bool resume = false;
+
+    std::string hostname = "";
+
+    CID dcid;
+
+    ngtcp2_transport_params* early_transport_params = nullptr;
+    SSLSessionPointer early_session_ticket;
+  };
+
+  #define V(_, name, type) type name;
+  struct State {
+    SESSION_STATE(V)
+  };
+  #undef V
+
+  struct TransportParams : public ngtcp2_transport_params {
+    TransportParams(
+        const Options& options,
+        const CID& scid = CID(),
+        const CID& ocid = CID());
+
+    void SetPreferredAddress(const SocketAddress& address);
+    void GenerateStatelessResetToken(Endpoint* endpoint, const CID& cid);
+    void GeneratePreferredAddressToken(
+        ConnectionIDStrategy connection_id_strategy,
+        Endpoint* endpoint,
+        CID* pscid);
+  };
+
+  class CryptoContext final : public MemoryRetainer {
+   public:
+    CryptoContext(
+        Session* session,
+        const Options& options,
+        ngtcp2_crypto_side side);
+    ~CryptoContext() override;
+
+    // Outgoing crypto data must be retained in memory until it is
+    // explicitly acknowledged. AcknowledgeCryptoData will be invoked
+    // when ngtcp2 determines that it has received an acknowledgement
+    // for crypto data at the specified level. This is our indication
+    // that the data for that level can be released.
+    void AcknowledgeCryptoData(ngtcp2_crypto_level level, size_t datalen);
+
+    // Cancels the TLS handshake and returns the number of unprocessed
+    // bytes that were still in the queue when canceled.
+    size_t Cancel();
+
+    void Initialize();
+
+    // Returns the server's prepared OCSP response for transmission
+    // (if available). The response will be empty only if there was
+    // an error. If the response is v8::Undefined then there is no
+    // response but no error occurred. This is only used on server sessions.
+    std::shared_ptr<v8::BackingStore> ocsp_response() const;
+
+    // Returns ngtcp2's understanding of the current inbound crypto level
+    ngtcp2_crypto_level read_crypto_level() const;
+
+    // Returns ngtcp2's understanding of the current outbound crypto level
+    ngtcp2_crypto_level write_crypto_level() const;
+
+    // TLS Keylogging is enabled per-Session by attaching an handler to the
+    // "keylog" event. Each keylog line is emitted to JavaScript where it can
+    // be routed to whatever destination makes sense. Typically, this will be
+    // to a keylog file that can be consumed by tools like Wireshark to
+    // intercept and decrypt QUIC network traffic.
+    void Keylog(const char* line);
+
+    int OnClientHello();
+
+    void OnClientHelloDone(BaseObjectPtr<crypto::SecureContext> context);
+
+    // The OnCert callback provides an opportunity to prompt the server to
+    // perform on OCSP request on behalf of the client (when the client
+    // requests it). If there is a listener for the 'OCSPRequest' event
+    // on the JavaScript side, the IDX_QUIC_SESSION_STATE_CERT_ENABLED
+    // session state slot will equal 1, which will cause the callback to
+    // be invoked. The callback will be given a reference to a JavaScript
+    // function that must be called in order for the TLS handshake to
+    // continue.
+    int OnOCSP();
+
+    // The OnOCSP function is called by the QuicSessionOnOCSPDone
+    // function when usercode is done handling the OCSP request
+    void OnOCSPDone(std::shared_ptr<v8::BackingStore> ocsp_response);
+
+    // At this point in time, the TLS handshake secrets have been
+    // generated by openssl for this end of the connection and are
+    // ready to be used. Within this function, we need to install
+    // the secrets into the ngtcp2 connection object, store the
+    // remote transport parameters, and begin initialization of
+    // the Application that was selected.
+    bool OnSecrets(
+        ngtcp2_crypto_level level,
+        const uint8_t* rx_secret,
+        const uint8_t* tx_secret,
+        size_t secretlen);
+
+    // When the client has requested OSCP, this function will be called to
+    // provide the OSCP response. The OnOSCP() callback should have already
+    // been called by this point if any data is to be provided. If it hasn't,
+    // and ocsp_response_ is empty, no OCSP response will be sent.
+    int OnTLSStatus();
+
+    // Called by ngtcp2 when a chunk of peer TLS handshake data is received.
+    // For every chunk, we move the TLS handshake further along until it
+    // is complete.
+    int Receive(
+        ngtcp2_crypto_level crypto_level,
+        uint64_t offset,
+        const uint8_t* data,
+        size_t datalen);
+
+    void ResumeHandshake();
+
+    v8::MaybeLocal<v8::Object> cert(Environment* env) const;
+    v8::MaybeLocal<v8::Object> peer_cert(Environment* env) const;
+    v8::MaybeLocal<v8::Value> cipher_name(Environment* env) const;
+    v8::MaybeLocal<v8::Value> cipher_version(Environment* env) const;
+    v8::MaybeLocal<v8::Object> ephemeral_key(Environment* env) const;
+    v8::MaybeLocal<v8::Array> hello_ciphers(Environment* env) const;
+    v8::MaybeLocal<v8::Value> hello_servername(Environment* env) const;
+    v8::MaybeLocal<v8::Value> hello_alpn(Environment* env) const;
+    std::string servername() const;
+
+    void set_tls_alert(int err);
+
+    // Write outbound TLS handshake data into the ngtcp2 connection
+    // to prepare it to be serialized. The outbound data must be
+    // stored in the handshake_ until it is acknowledged by the
+    // remote peer. It's important to keep in mind that there is
+    // a potential security risk here -- that is, a malicious peer
+    // can cause the local session to keep sent handshake data in
+    // memory by failing to acknowledge it or slowly acknowledging
+    // it. We currently do not track how much data is being buffered
+    // here but we do record statistics on how long the handshake
+    // data is foreced to be kept in memory.
+    void WriteHandshake(
+        ngtcp2_crypto_level level,
+        const uint8_t* data,
+        size_t datalen);
+
+    // Triggers key update to begin. This will fail and return false
+    // if either a previous key update is in progress and has not been
+    // confirmed or if the initial handshake has not yet been confirmed.
+    bool InitiateKeyUpdate();
+
+    int VerifyPeerIdentity();
+    void EnableTrace();
+
+    inline Session* session() const { return session_.get(); }
+    inline ngtcp2_crypto_side side() const { return side_; }
+
+    inline bool early_data() const;
+    inline bool enable_tls_trace() const { return enable_tls_trace_; }
+    inline bool reject_unauthorized() const { return reject_unauthorized_; }
+    inline bool request_ocsp() const { return request_ocsp_; }
+    inline bool request_peer_certificate() const {
+      return request_peer_certificate_;
+    }
+    inline bool verify_hostname_identity() const {
+      return verify_hostname_identity_;
+    }
+
+    void MemoryInfo(MemoryTracker* tracker) const override;
+    SET_MEMORY_INFO_NAME(CryptoContext)
+    SET_SELF_SIZE(CryptoContext)
+
+   private:
+    void MaybeSetEarlySession(const Options& options);
+    bool SetSecrets(
+        ngtcp2_crypto_level level,
+        const uint8_t* rx_secret,
+        const uint8_t* tx_secret,
+        size_t secretlen);
+
+    BaseObjectPtr<Session> session_;
+    BaseObjectPtr<crypto::SecureContext> secure_context_;
+    ngtcp2_crypto_side side_;
+    crypto::SSLPointer ssl_;
+    crypto::BIOPointer bio_trace_;
+
+    //TODO(@jasnell): QuicBuffer
+    //Buffer handshake_[3];
+
+    bool reject_unauthorized_ = true;
+    bool enable_tls_trace_ = false;
+    bool request_peer_certificate_ = false;
+    bool request_ocsp_ = false;
+    bool verify_hostname_identity_ = true;
+    bool in_tls_callback_ = false;
+    bool in_ocsp_request_ = false;
+    bool in_client_hello_ = false;
+    bool in_key_update_ = false;
+    bool early_data_ = false;
+
+    std::shared_ptr<v8::BackingStore> ocsp_response_;
+
+    struct CallbackScope final {
+      CryptoContext* context;
+
+      inline explicit CallbackScope(CryptoContext* context_)
+          : context(context_) {
+        context_->in_tls_callback_ = true;
+      }
+
+      inline ~CallbackScope() {
+        context_->in_tls_callback_ = false;
+      }
+
+      inline static bool is_in_callback(CryptoContext* context) {
+        return context->in_tls_callback_;
+      }
+    };
+
+    struct HandshakeScope final {
+      using DoneCB = std::function<void()>;
+      CryptoContext* context;
+      DoneCB done;
+
+      inline HandshakeScope(CryptoContext* context_, DoneCB done_)
+          : context(context_),
+            done(done_) {}
+
+      inline ~HandshakeScope() {
+        if (!is_handshake_suspended())
+          return;
+
+        done();
+
+        if (!CallbackScope::is_in_callback(context))
+          context->ResumeHandshake();
+      }
+
+      inline bool is_handshake_suspended() const {
+        return context->in_ocsp_request_ || context->in_client_hello_;
+      }
+    };
+
+    friend class Session;
+  };
+
+  class Application : public MemoryRetainer {
+   public:
+    explicit Application(Session* session);
+    virtual ~Application() = default;
+
+    // The session will call initialize as soon as the TLS secrets
+    // have been set.
+    virtual bool Initialize() = 0;
+
+    // Session will forward all received stream data immediately
+    // on to the Application. The only additional processing the
+    // Session does is to automatically adjust the session-level
+    // flow control window. It is up to the Application to do
+    // the same for the Stream-level flow control.
+    //
+    // flags are passed on directly from ngtcp2. The most important
+    // of which here is NGTCP2_STREAM_DATA_FLAG_FIN, which indicates
+    // that this is the final chunk of data that the peer will send
+    // for this stream.
+    //
+    // It is also possible for the NGTCP2_STREAM_DATA_FLAG_EARLY flag
+    // to be set, indicating that this chunk of data was received in
+    // a 0RTT packet before the TLS handshake completed. This would
+    // indicate that it is not as secure and could be replayed by
+    // an attacker. We're not currently making use of that flag.
+    virtual bool ReceiveStreamData(
+        uint32_t flags,
+        stream_id stream_id,
+        const uint8_t* data,
+        size_t datalen,
+        uint64_t offset) = 0;
+
+    virtual void AcknowledgeStreamData(
+        stream_id stream_id,
+        uint64_t offset,
+        size_t datalen) {
+      Acknowledge(stream_id, offset, datalen);
+    }
+
+    virtual bool BlockStream(stream_id id) { return true; }
+
+    virtual void ExtendMaxStreamsRemoteUni(uint64_t max_streams) {}
+
+    virtual void ExtendMaxStreamsRemoteBidi(uint64_t max_streams) {}
+
+    virtual void ExtendMaxStreamData(stream_id id, uint64_t max_data) {}
+
+    virtual void ResumeStream(stream_id id) {}
+
+    // Different Applications may wish to set some application data in
+    // the session ticket (e.g. http/3 would set server settings in the
+    // application data). By default, there's nothing to set.
+    virtual void SetSessionTicketAppData(
+        const SessionTicketAppData& app_data) {}
+
+    // Different Applications may set some application data in
+    // the session ticket (e.g. http/3 would set server settings in the
+    // application data). By default, there's nothing to get.
+    virtual SessionTicketAppData::Status GetSessionTicketAppData(
+        const SessionTicketAppData& app_data,
+        SessionTicketAppData::Flag flag) {
+      return flag == SessionTicketAppData::Flag::STATUS_RENEW ?
+        SessionTicketAppData::Status::TICKET_USE_RENEW :
+        SessionTicketAppData::Status::TICKET_USE;
+    }
+
+    virtual void StreamHeaders(
+        stream_id stream_id,
+        HeadersKind kind,
+        const HeaderList& headers);
+
+    virtual void StreamClose(
+        stream_id stream_id,
+        uint64_t app_error_code);
+
+    virtual void StreamReset(
+        stream_id stream_id,
+        uint64_t app_error_code);
+
+    virtual bool SubmitInformation(
+        stream_id stream_id,
+        v8::Local<v8::Array> headers) { return false; }
+
+    virtual bool SubmitHeaders(
+        stream_id stream_id,
+        v8::Local<v8::Array> headers,
+        uint32_t flags) { return false; }
+
+    virtual bool SubmitTrailers(
+        stream_id stream_id,
+        v8::Local<v8::Array> headers) { return false; }
+
+    Environment* env() const;
+    inline Session* session() const { return session_.get(); }
+
+    bool SendPendingData();
+    size_t max_header_pairs() const { return max_header_pairs_; }
+    size_t max_header_length() const { return max_header_length_; }
+
+   protected:
+    inline bool needs_init() const { return needs_init_; }
+    inline void set_init_done() { needs_init_ = false; }
+    inline void set_max_header_pairs(size_t max) { max_header_pairs_ = max; }
+    inline void set_max_header_length(size_t max) { max_header_length_ = max; }
+    void set_stream_fin(stream_id stream_id);
+    std::unique_ptr<Packet> CreateStreamDataPacket();
+
+    struct StreamData {
+      size_t count = 0;
+      size_t remaining = 0;
+      stream_id id = -1;
+      int fin = 0;
+      ngtcp2_vec data[kMaxVectorCount] {};
+      ngtcp2_vec* buf = nullptr;
+      BaseObjectPtr<Stream> stream;
+      StreamData() { buf = data; }
+    };
+
+    void Acknowledge(stream_id stream_id, uint64_t offset, size_t datalen);
+    virtual int GetStreamData(StreamData* data) = 0;
+    virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
+    virtual bool ShouldSetFin(const StreamData& data) = 0;
+
+    ssize_t WriteVStream(
+        PathStorage* path,
+        uint8_t* buf,
+        ssize_t* ndatalen,
+        const StreamData& stream_data);
+
+   private:
+    void MaybeSetFin(const StreamData& stream_data);
+    BaseObjectWeakPtr<Session> session_;
+    bool needs_init_ = true;
+    size_t max_header_pairs_ = 0;
+    size_t max_header_length_ = 0;
+  };
 
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
   static void Initialize(Environment* env);
-  static BaseObjectPtr<Session> Create(Environment* env);
 
-  Session(Environment* env, v8::Local<v8::Object> object);
+  static BaseObjectPtr<Session> CreateServer(
+      Endpoint* endpoint,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      const Config& config,
+      const CID& dcid,
+      const CID& scid,
+      const CID& ocid,
+      uint32_t version);
+
+  static BaseObjectPtr<Session> CreateClient(
+      Endpoint* endpoint,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      const Config& config,
+      const Options& options,
+      uint32_t version);
+
+  Session(
+      Endpoint* endpoint,
+      v8::Local<v8::Object> object,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      const Config& config,
+      const Options& options,
+      const CID& dcid,
+      const CID& scid,
+      const CID& ocid,
+      uint32_t version);
+
+  Session(
+      Endpoint* endpoint,
+      v8::Local<v8::Object> object,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      const Config& config,
+      const Options& options,
+      uint32_t version);
+
+  ~Session() override;
+
+  inline ngtcp2_conn* connection() const { return connection_.get(); }
+  inline CryptoContext* crypto_context() const {
+    return crypto_context_.get();
+  }
+  inline Endpoint* endpoint() const { return endpoint_.get(); }
+  inline const std::string& alpn() { return alpn_; }
+  inline const std::string& hostname() { return hostname_; }
+
+  BaseObjectPtr<QLogStream> qlogstream();
+
+  void ExtendMaxStreamsBidi(uint64_t max_streams);
+  void ExtendMaxStreamsUni(uint64_t max_streams);
+
+  inline bool is_destroyed() const { return state_->destroyed; }
+  inline bool is_server() const {
+    return crypto_context_->side() == NGTCP2_CRYPTO_SIDE_SERVER;
+  }
+
+  void Close();
 
   SET_NO_MEMORY_INFO()
   SET_MEMORY_INFO_NAME(Session)
   SET_SELF_SIZE(Session)
 
+  class CallbackScope {
+   public:
+    inline explicit CallbackScope(Session* session)
+        : session_(session),
+          private_(new InternalCallbackScope(
+              session->env(),
+              session->object(),
+              {
+                session->get_async_id(),
+                session->get_trigger_async_id()
+              })),
+          try_catch_(session->env()->isolate()) {
+      try_catch_.SetVerbose(true);
+    }
+
+    inline ~CallbackScope() {
+      Environment* env = session_->env();
+      if (UNLIKELY(try_catch_.HasCaught())) {
+        session_->crypto_context()->set_in_client_hello(false);
+        session_->crypto_context()->set_in_ocsp_request(false);
+        if (!try_catch_.HasTerminated() && env->can_call_into_js()) {
+          session_->set_last_error(NGTCP2_INTERNAL_ERROR);
+          session_->Close();
+          CHECK(session_->is_destroyed());
+        }
+        private_->MarkAsFailed();
+      }
+    }
+
+    void operator=(const CallbackScope&) = delete;
+    void operator=(CallbackScope&&) = delete;
+    CallbackScope(const CallbackScope&) = delete;
+    CallbackScope(CallbackScope&&) = delete;
+
+   private:
+    BaseObjectPtr<Session> session_;
+    std::unique_ptr<InternalCallbackScope> private_;
+    v8::TryCatch try_catch_;
+  };
+
  private:
+  Session(
+      Endpoint* endpoint,
+      v8::Local<v8::Object> object,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      const Options& options,
+      const CID& dcid = CID(),
+      ngtcp2_crypto_side side = NGTCP2_CRYPTO_SIDE_CLIENT);
+  void OnUsePreferredAddress(const PreferredAddress::Address& address);
+
+  void set_last_error(uint64_t error = NGTCP2_NO_ERROR ) {
+    last_error_ = error;
+  }
+
+  void set_remote_transport_params();
+
+  bool InitApplication();
+  void AttachToEndpoint();
+  void OnIdleTimeout();
+  void OnRetransmitTimeout();
+  void UpdateClosingTimer();
+  void UpdateDataStats();
+
+  // Updates the idle timer deadline. If the idle timer fires, the
+  // connection will be silently closed. It is important to update
+  // this as activity occurs to keep the idle timer from firing.
+  void UpdateIdleTimer();
+
+  static Application* SelectApplication(const std::string& alpn);
+
+  ngtcp2_mem allocator_;
+  QuicConnectionPointer connection_;
+  BaseObjectPtr<Endpoint> endpoint_;
+  AliasedStruct<State> state_;
+
+  SocketAddress local_address_;
+  SocketAddress remote_address_;
+
+  std::unique_ptr<Application> application_;
+  std::unique_ptr<CryptoContext> crypto_context_;
+  std::string alpn_;
+  std::string hostname_;
+
+  TimerWrapHandle idle_;
+  TimerWrapHandle retransmit_;
+
+  CID dcid_;
+  CID scid_;
+  CID pscid_;
+  ngtcp2_transport_params transport_params_;
+  bool transport_params_set_ = false;
+
+  size_t max_pkt_len_;
+  uint64_t last_error_ = NGTCP2_NO_ERROR;
+
+  ConnectionIDStrategy connection_id_strategy_ = RandomConnectionIDStrategy;
+  PreferredAddressStrategy preferred_address_strategy_ = nullptr;
+  BaseObjectPtr<QLogStream> qlogstream_;
+
+  static const ngtcp2_callbacks callbacks[2];
 };
 
 }  // namespace quic

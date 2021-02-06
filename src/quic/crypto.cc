@@ -578,7 +578,7 @@ void SetHostname(const crypto::SSLPointer& ssl, const std::string& hostname) {
 }  // namespace
 
 void InitializeTLS(Session* session, const crypto::SSLPointer& ssl) {
-  QuicCryptoContext* ctx = session->crypto_context();
+  Session::CryptoContext* ctx = session->crypto_context();
   Environment* env = session->env();
   BindingState* state = env->GetBindingData<BindingState>(env->context());
 
@@ -593,7 +593,7 @@ void InitializeTLS(Session* session, const crypto::SSLPointer& ssl) {
       crypto::VerifyCallback);
 
   // Enable tracing if the `--trace-tls` command line flag is used.
-  if (env->options()->trace_tls) {
+  if (env->options()->trace_tls || ctx->enable_tls_trace()) {
     ctx->EnableTrace();
     if (state->warn_trace_tls) {
       state->warn_trace_tls = false;
@@ -608,15 +608,15 @@ void InitializeTLS(Session* session, const crypto::SSLPointer& ssl) {
       SSL_set_connect_state(ssl.get());
       crypto::SetALPN(ssl, session->alpn());
       SetHostname(ssl, session->hostname());
-      if (ctx->is_option_set(QUICCLIENTSESSION_OPTION_REQUEST_OCSP))
+      if (ctx->request_ocsp())
         SSL_set_tlsext_status_type(ssl.get(), TLSEXT_STATUSTYPE_ocsp);
       break;
     }
     case NGTCP2_CRYPTO_SIDE_SERVER: {
       SSL_set_accept_state(ssl.get());
-      if (ctx->is_option_set(QUICSERVERSESSION_OPTION_REQUEST_CERT)) {
+      if (ctx->request_peer_certificate()) {
         int verify_mode = SSL_VERIFY_PEER;
-        if (ctx->is_option_set(QUICSERVERSESSION_OPTION_REJECT_UNAUTHORIZED))
+        if (ctx->reject_unauthorized())
           verify_mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
         SSL_set_verify(ssl.get(), verify_mode, crypto::VerifyCallback);
       }

@@ -126,17 +126,22 @@ class Endpoint final : public AsyncWrap,
 
   struct Config {
     uint64_t retry_token_expiration = DEFAULT_RETRYTOKEN_EXPIRATION;
+    uint64_t max_window_override = 0;
+    uint64_t max_stream_window_override = 0;
     size_t max_connections_per_host = DEFAULT_MAX_CONNECTIONS_PER_HOST;
     size_t max_connections_total = DEFAULT_MAX_CONNECTIONS;
     size_t max_stateless_resets = DEFAULT_MAX_STATELESS_RESETS;
     size_t address_lru_size = DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE;
     size_t retry_limit = DEFAULT_MAX_RETRY_LIMIT;
+    size_t max_payload_size = NGTCP2_DEFAULT_MAX_PKTLEN;
+    size_t unacknowledged_packet_threshold = 0;
     bool qlog = false;
     bool validate_address = true;
     bool disable_stateless_reset = false;
     double rx_loss = 0.0;
     double tx_loss = 0.0;
     uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
+    ngtcp2_cc_algo cc_algorithm = NGTCP2_CC_ALGO_CUBIC;
 
     Config() = default;
     inline Config(const Config& other)
@@ -154,6 +159,7 @@ class Endpoint final : public AsyncWrap,
           reset_token_secret,
           other.reset_token_secret,
           NGTCP2_STATELESS_RESET_TOKENLEN);
+      GenerateResetTokenSecret();
     }
 
     Config(Config&& other) = delete;
@@ -170,12 +176,6 @@ class Endpoint final : public AsyncWrap,
           reinterpret_cast<unsigned char*>(&reset_token_secret),
           NGTCP2_STATELESS_RESET_TOKENLEN);
     }
-  };
-
-  struct ServerConfig {
-    std::string alpn;
-    BaseObjectPtr<crypto::SecureContext> context;
-    Session::Config config;
   };
 
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
@@ -201,7 +201,7 @@ class Endpoint final : public AsyncWrap,
   Endpoint& operator=(const Endpoint&& other) = delete;
 
   const Config& config() const { return config_; }
-  const ServerConfig& server_config() const { return server_config_; }
+  const Session::Options& server_config() const { return server_options; }
   State* state() { return state_.Data(); }
 
   // Waits for any currently pending callbacks to be completed
@@ -221,7 +221,7 @@ class Endpoint final : public AsyncWrap,
 
   void DisassociateStatelessResetToken(const StatelessResetToken& token);
 
-  void Listen(const ServerConfig& config);
+  void Listen(const Session::Options& options);
 
   void ReceiveStart();
 
@@ -384,7 +384,7 @@ class Endpoint final : public AsyncWrap,
   bool is_diagnostic_packet_loss(double prob) const;
 
   Config config_;
-  ServerConfig server_config_;
+  Session::Options server_options_;
   AliasedStruct<State> state_;
   BaseObjectPtr<SocketAddressBlockListWrap> block_list_;
   UDPWrapBase* udp_;
