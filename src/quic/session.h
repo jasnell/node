@@ -1027,6 +1027,10 @@ class Session final : public AsyncWrap,
   bool StartClosingPeriod();
   void IncrementConnectionCloseAttempts();
   bool ShouldAttemptConnectionClose();
+  void Datagram(
+    uint32_t flags,
+    const uint8_t* data,
+    size_t datalen);
 
   // Updates the idle timer deadline. If the idle timer fires, the
   // connection will be silently closed. It is important to update
@@ -1059,6 +1063,7 @@ class Session final : public AsyncWrap,
   bool transport_params_set_ = false;
   bool in_ng_callback_ = false;
   bool in_connection_close_ = false;
+  bool stateless_reset_ = false;
 
   size_t max_pkt_len_;
   uint64_t last_error_ = NGTCP2_NO_ERROR;
@@ -1076,6 +1081,10 @@ class Session final : public AsyncWrap,
 
   static const ngtcp2_callbacks callbacks[2];
 
+  // Called by ngtcp2 for both client and server connections when
+  // TLS handshake data has been received and needs to be processed.
+  // This will be called multiple times during the TLS handshake
+  // process and may be called during key updates.
   static int OnReceiveCryptoData(
       ngtcp2_conn* conn,
       ngtcp2_crypto_level crypto_level,
@@ -1084,14 +1093,28 @@ class Session final : public AsyncWrap,
       size_t datalen,
       void* user_data);
 
+  // Called by ngtcp2 for both client and server connections
+  // when ngtcp2 has determined that the TLS handshake has
+  // been completed. It is important to understand that this
+  // is only an indication of the local peer's handshake state.
+  // The remote peer might not yet have completed its part
+  // of the handshake.
   static int OnHandshakeCompleted(
       ngtcp2_conn* conn,
       void* user_data);
 
+  // Called by ngtcp2 for clients when the handshake has been
+  // confirmed. Confirmation occurs *after* handshake completion.
   static int OnHandshakeConfirmed(
       ngtcp2_conn* conn,
       void* user_data);
 
+  // Called by ngtcp2 when a chunk of stream data has been received.
+  // Currently, ngtcp2 ensures that this callback is always called
+  // with an offset parameter strictly larger than the previous call's
+  // offset + datalen (that is, data will never be delivered out of
+  // order). That behavior may change in the future but only via a
+  // configuration option.
   static int OnReceiveStreamData(
       ngtcp2_conn* conn,
       uint32_t flags,
@@ -1102,6 +1125,11 @@ class Session final : public AsyncWrap,
       void* user_data,
       void* stream_user_data);
 
+  // Called by ngtcp2 when an acknowledgement for a chunk of
+  // TLS handshake data has been received by the remote peer.
+  // This is only an indication that data was received, not that
+  // it was successfully processed. Acknowledgements are a key
+  // part of the QUIC reliability mechanism.
   static int OnAckedCryptoOffset(
       ngtcp2_conn* conn,
       ngtcp2_crypto_level crypto_level,
@@ -1109,6 +1137,11 @@ class Session final : public AsyncWrap,
       uint64_t datalen,
       void* user_data);
 
+  // Called by ngtcp2 when an acknowledgement for a chunk of
+  // stream data has been received successfully by the remote peer.
+  // This is only an indication that data was received, not that
+  // it was successfully processed. Acknowledgements are a key
+  // part of the QUIC reliability mechanism.
   static int OnAckedStreamDataOffset(
       ngtcp2_conn* conn,
       stream_id id,
@@ -1117,6 +1150,13 @@ class Session final : public AsyncWrap,
       void* user_data,
       void* stream_user_data);
 
+  // Called by ngtcp2 for a client connection when the server
+  // has indicated a preferred address in the transport
+  // params.
+  // For now, there are two modes: we can accept the preferred address
+  // or we can reject it. Later, we may want to implement a callback
+  // to ask the user if they want to accept the preferred address or
+  // not.
   static int OnSelectPreferredAddress(
       ngtcp2_conn* conn,
       ngtcp2_addr* dest,
@@ -1135,6 +1175,12 @@ class Session final : public AsyncWrap,
       stream_id id,
       void* user_data);
 
+  // Stream reset means the remote peer will no longer send data
+  // on the identified stream. It is essentially a premature close.
+  // The final_size parameter is important here in that it identifies
+  // exactly how much data the *remote peer* is aware that it sent.
+  // If there are lost packets, then the local peer's idea of the final
+  // size might not match.
   static int OnStreamReset(
       ngtcp2_conn* conn,
       stream_id id,
@@ -1143,11 +1189,29 @@ class Session final : public AsyncWrap,
       void* user_data,
       void* stream_user_data);
 
+  // Called by ngtcp2 when it needs to generate some random data.
+  // We currently do not use it, but the ngtcp2_rand_ctx identifies
+  // why the random data is necessary. When ctx is equal to
+  // NGTCP2_RAND_CTX_NONE, it typically means the random data
+  // is being used during the TLS handshake. When ctx is equal to
+  // NGTCP2_RAND_CTX_PATH_CHALLENGE, the random data is being
+  // used to construct a PATH_CHALLENGE. These *might* need more
+  // secure and robust random number generation given the
+  // sensitivity of PATH_CHALLENGE operations (an attacker
+  // could use a compromised PATH_CHALLENGE to trick an endpoint
+  // into redirecting traffic).
+  //
+  // The ngtcp2_rand_ctx tells us what the random data is used for.
+  // Currently, there is only one use. In the future, we'll want to
+  // explore whether we want to handle the different cases uses.
   static int OnRand(
-      uint8_t* dest,
+      uint8_t *dest,
       size_t destlen,
-      ngtcp2_rand_ctx ctx);
+      const ngtcp2_rand_ctx *rand_ctx,
+      ngtcp2_rand_usage usage);
 
+  // When a new client connection is established, ngtcp2 will call
+  // this multiple times to generate a pool of connection IDs to use.
   static int OnGetNewConnectionID(
       ngtcp2_conn* conn,
       ngtcp2_cid* cid,
@@ -1155,27 +1219,54 @@ class Session final : public AsyncWrap,
       size_t cidlen,
       void* user_data);
 
+  // When a connection is closed, ngtcp2 will call this multiple
+  // times to retire connection IDs. It's also possible for this
+  // to be called at times throughout the lifecycle of the connection
+  // to remove a CID from the availability pool.
   static int OnRemoveConnectionID(
       ngtcp2_conn* conn,
       const ngtcp2_cid* cid,
       void* user_data);
 
+  // Called by ngtcp2 to perform path validation. Path validation
+  // is necessary to ensure that a packet is originating from the
+  // expected source. If the res parameter indicates success, it
+  // means that the path specified has been verified as being
+  // valid.
+  //
+  // Validity here means only that there has been a successful
+  // exchange of PATH_CHALLENGE information between the peers.
+  // It's critical to understand that the validity of a path
+  // can change at any timee so this is only an indication of
+  // validity at a specific point in time.
   static int OnPathValidation(
       ngtcp2_conn* conn,
       const ngtcp2_path* path,
       ngtcp2_path_validation_result res,
       void* user_data);
 
+  // Called by ngtcp2 for both client and server connections
+  // when a request to extend the maximum number of unidirectional
+  // streams has been received
   static int OnExtendMaxStreamsUni(
       ngtcp2_conn* conn,
       uint64_t max_streams,
       void* user_data);
 
+  // Called by ngtcp2 for both client and server connections
+  // when a request to extend the maximum number of bidirectional
+  // streams has been received.
   static int OnExtendMaxStreamsBidi(
       ngtcp2_conn* conn,
       uint64_t max_streams,
       void* user_data);
 
+  // Triggered by ngtcp2 when the local peer has received a flow
+  // control signal from the remote peer indicating that additional
+  // data can be sent. The max_data parameter identifies the maximum
+  // data offset that may be sent. That is, a value of 99 means that
+  // out of a stream of 1000 bytes, only the first 100 may be sent.
+  // (offsets 0 through 99).
   static int OnExtendMaxStreamData(
       ngtcp2_conn* conn,
       stream_id id,
@@ -1183,6 +1274,13 @@ class Session final : public AsyncWrap,
       void* user_data,
       void* stream_user_data);
 
+  // Triggered by ngtcp2 when a version negotiation is received.
+  // What this means is that the remote peer does not support the
+  // QUIC version requested. The only thing we can do here (per
+  // the QUIC specification) is silently discard the connection
+  // and notify the JavaScript side that a different version of
+  // QUIC should be used. The sv parameter does list the QUIC
+  // versions advertised as supported by the remote peer.
   static int OnVersionNegotiation(
       ngtcp2_conn* conn,
       const ngtcp2_pkt_hd* hd,
@@ -1190,16 +1288,35 @@ class Session final : public AsyncWrap,
       size_t nsv,
       void* user_data);
 
+  // Triggered by ngtcp2 when a stateless reset is received. What this
+  // means is that the remote peer might recognize the CID but has lost
+  // all state necessary to successfully process it. The only thing we
+  // can do is silently close the connection. For server sessions, this
+  // means all session state is shut down and discarded, even on the
+  // JavaScript side. For client sessions, we discard session state at
+  // the C++ layer but -- at least in the future -- we can retain some
+  // state at the JavaScript level to allow for automatic session
+  // resumption.
   static int OnStatelessReset(
       ngtcp2_conn* conn,
       const ngtcp2_pkt_stateless_reset* sr,
       void* user_data);
 
+  // Triggered by ngtcp2 when the local peer has received an
+  // indication from the remote peer indicating that additional
+  // unidirectional streams may be sent. The max_streams parameter
+  // identifies the highest unidirectional stream ID that may be
+  // opened.
   static int OnExtendMaxStreamsRemoteUni(
       ngtcp2_conn* conn,
       uint64_t max_streams,
       void* user_data);
 
+  // Triggered by ngtcp2 when the local peer has received an
+  // indication from the remote peer indicating that additional
+  // bidirectional streams may be sent. The max_streams parameter
+  // identifies the highest bidirectional stream ID that may be
+  // opened.
   static int OnExtendMaxStreamsRemoteBidi(
       ngtcp2_conn* conn,
       uint64_t max_streams,
@@ -1218,6 +1335,13 @@ class Session final : public AsyncWrap,
       uint32_t flags,
       const void* data,
       size_t len);
+
+  static int OnDatagram(
+      ngtcp2_conn* conn,
+      uint32_t flags,
+      const uint8_t* data,
+      size_t datalen,
+      void* user_data);
 
   friend class Session::CallbackScope;
   friend class Session::NgCallbackScope;

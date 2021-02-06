@@ -1255,6 +1255,7 @@ const ngtcp2_callbacks Session::callbacks[2] = {
     nullptr,  // recv_new_token
     ngtcp2_crypto_delete_crypto_aead_ctx_cb,
     ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
+    OnDatagram
   },
   // NGTCP2_CRYPTO_SIDE_SERVER
   {
@@ -1290,8 +1291,373 @@ const ngtcp2_callbacks Session::callbacks[2] = {
     nullptr,  // recv_new_token
     ngtcp2_crypto_delete_crypto_aead_ctx_cb,
     ngtcp2_crypto_delete_crypto_cipher_ctx_cb,
+    OnDatagram
   }
 };
+
+int Session::OnReceiveCryptoData(
+    ngtcp2_conn* conn,
+    ngtcp2_crypto_level crypto_level,
+    uint64_t offset,
+    const uint8_t* data,
+    size_t datalen,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  int ret = session->crypto_context()->Receive(
+      crypto_level,
+      offset,
+      data,
+      datalen);
+
+  return ret == 0 ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+}
+
+int Session::OnExtendMaxStreamsBidi(
+    ngtcp2_conn* conn,
+    uint64_t max_streams,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->ExtendMaxStreamsBidi(max_streams);
+  return 0;
+}
+
+int Session::OnExtendMaxStreamsUni(
+    ngtcp2_conn* conn,
+    uint64_t max_streams,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->ExtendMaxStreamsUni(max_streams);
+  return 0;
+}
+
+int Session::OnExtendMaxStreamsRemoteUni(
+    ngtcp2_conn* conn,
+    uint64_t max_streams,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->ExtendMaxStreamsRemoteUni(max_streams);
+  return 0;
+}
+
+int Session::OnExtendMaxStreamsRemoteBidi(
+    ngtcp2_conn* conn,
+    uint64_t max_streams,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->ExtendMaxStreamsRemoteUni(max_streams);
+  return 0;
+}
+
+int Session::OnExtendMaxStreamData(
+    ngtcp2_conn* conn,
+    stream_id id,
+    uint64_t max_data,
+    void* user_data,
+    void* stream_user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->ExtendMaxStreamData(id, max_data);
+  return 0;
+}
+
+int Session::OnConnectionIDStatus(
+    ngtcp2_conn* conn,
+    int type,
+    uint64_t seq,
+    const ngtcp2_cid* cid,
+    const uint8_t* token,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  if (token != nullptr) {
+    CID qcid(cid);
+    Debug(session, "Updating connection ID %s with reset token", qcid);
+    session->UpdateConnectionID(type, qcid, StatelessResetToken(token));
+  }
+  return 0;
+}
+
+int Session::OnHandshakeCompleted(
+    ngtcp2_conn* conn,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->HandshakeCompleted();
+  return 0;
+}
+
+int Session::OnHandshakeConfirmed(
+    ngtcp2_conn* conn,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->HandshakeConfirmed();
+  return 0;
+}
+
+int Session::OnReceiveStreamData(
+    ngtcp2_conn* conn,
+    uint32_t flags,
+    stream_id id,
+    uint64_t offset,
+    const uint8_t* data,
+    size_t datalen,
+    void* user_data,
+    void* stream_user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  return session->ReceiveStreamData(
+      flags,
+      id,
+      data,
+      datalen,
+      offset) ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+}
+
+int Session::OnStreamOpen(
+    ngtcp2_conn* conn,
+    stream_id id,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  // We currently do not do anything with this callback.
+  // QuicStream instances are created implicitly once the
+  // first chunk of stream data is received.
+
+  return 0;
+}
+
+int Session::OnAckedCryptoOffset(
+    ngtcp2_conn* conn,
+    ngtcp2_crypto_level crypto_level,
+    uint64_t offset,
+    uint64_t datalen,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->crypto_context()->AcknowledgeCryptoData(crypto_level, datalen);
+  return 0;
+}
+
+int Session::OnAckedStreamDataOffset(
+    ngtcp2_conn* conn,
+    stream_id id,
+    uint64_t offset,
+    uint64_t datalen,
+    void* user_data,
+    void* stream_user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->AckedStreamDataOffset(id, offset, datalen);
+  return 0;
+}
+
+int Session::OnSelectPreferredAddress(
+    ngtcp2_conn* conn,
+    ngtcp2_addr* dest,
+    const ngtcp2_preferred_addr* paddr,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+
+  // The paddr parameter contains the server advertised preferred
+  // address. The dest parameter contains the address that is
+  // actually being used. If the preferred address is selected,
+  // then the contents of paddr are copied over to dest.
+  session->SelectPreferredAddress(
+      PreferredAddress(session->env(), dest, paddr));
+  return 0;
+}
+
+int Session::OnStreamClose(
+    ngtcp2_conn* conn,
+    stream_id id,
+    uint64_t app_error_code,
+    void* user_data,
+    void* stream_user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->StreamClose(id, app_error_code);
+  return 0;
+}
+
+int Session::OnStreamReset(
+    ngtcp2_conn* conn,
+    stream_id id,
+    uint64_t final_size,
+    uint64_t app_error_code,
+    void* user_data,
+    void* stream_user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->StreamReset(id, final_size, app_error_code);
+  return 0;
+}
+
+int Session::OnRand(
+    uint8_t *dest,
+    size_t destlen,
+    const ngtcp2_rand_ctx *rand_ctx,
+    ngtcp2_rand_usage usage) {
+  crypto::EntropySource(dest, destlen);
+  return 0;
+}
+
+int Session::OnGetNewConnectionID(
+    ngtcp2_conn* conn,
+    ngtcp2_cid* cid,
+    uint8_t* token,
+    size_t cidlen,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope scope(session);
+  session->GetNewConnectionID(cid, token, cidlen);
+  return 0;
+}
+
+int Session::OnRemoveConnectionID(
+    ngtcp2_conn* conn,
+    const ngtcp2_cid* cid,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  if (session->is_server())
+    session->endpoint()->DisassociateCID(CID(cid));
+  return 0;
+}
+
+int Session::OnPathValidation(
+    ngtcp2_conn* conn,
+    const ngtcp2_path* path,
+    ngtcp2_path_validation_result res,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->PathValidation(path, res);
+  return 0;
+}
+
+int Session::OnVersionNegotiation(
+    ngtcp2_conn* conn,
+    const ngtcp2_pkt_hd* hd,
+    const uint32_t* sv,
+    size_t nsv,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  NgCallbackScope callback_scope(session);
+  session->VersionNegotiation(sv, nsv);
+  return 0;
+}
+
+int Session::OnStatelessReset(
+    ngtcp2_conn* conn,
+    const ngtcp2_pkt_stateless_reset* sr,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  session->stateless_reset_ = true;
+  return 0;
+}
+
+int Session::OnDatagram(
+    ngtcp2_conn* conn,
+    uint32_t flags,
+    const uint8_t* data,
+    size_t datalen,
+    void* user_data) {
+  Session* session = static_cast<Session*>(user_data);
+
+  if (UNLIKELY(session->is_destroyed()))
+    return NGTCP2_ERR_CALLBACK_FAILURE;
+
+  session->Datagram(flags, data, datalen);
+  return 0;
+}
 
 }  // namespace quic
 }  // namespace node
