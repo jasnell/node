@@ -1145,6 +1145,81 @@ void Session::set_remote_transport_params() {
   transport_params_set_ = true;
 }
 
+bool Session::is_in_closing_period() const {
+  return ngtcp2_conn_is_in_closing_period(connection());
+}
+
+bool Session::is_in_draining_period() const {
+  return ngtcp2_conn_is_in_draining_period(connection());
+}
+
+void Session::StartGracefulClose() {
+  state_->graceful_closing = 1;
+  RecordTimestamp(&SessionStats::closing_at);
+}
+
+// Gets the QUIC version negotiated for this QuicSession
+uint32_t Session::version() const {
+  CHECK(!is_destroyed());
+  return ngtcp2_conn_get_negotiated_version(connection());
+}
+
+// A client QuicSession can be migrated to a different QuicSocket instance.
+bool Session::AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding) {
+  CHECK(!is_server());
+  CHECK(!is_destroyed());
+
+  if (state_->graceful_closing)
+    return false;
+
+  if (endpoint == nullptr || endpoint == endpoint_.get())
+    return true;
+
+  Debug(this, "Migrating to %s", endpoint_->diagnostic_name());
+
+  // Ensure that we maintain a reference to keep this from being
+  // destroyed while we are starting the migration.
+  BaseObjectPtr<Session> ptr(this);
+
+  // Step 1: Remove the session from the current socket
+  DetachFromEndpoint();
+
+  endpoint_.reset(endpoint);
+  // Step 2: Add this Session to the given Socket
+  AttachToEndpoint();
+
+  auto local_address = endpoint->local_address();
+  endpoint_->ReceiveStart();
+
+  // The nat_rebinding option here should rarely, if ever
+  // be used in a real application. It is intended to serve
+  // as a way of simulating a silent local address change,
+  // such as when the NAT binding changes. Currently, Node.js
+  // does not really have an effective way of detecting that.
+  // Manual user code intervention to handle the migration
+  // to the new QuicSocket is required, which should always
+  // trigger path validation using the ngtcp2_conn_initiate_migration.
+  if (LIKELY(!nat_rebinding)) {
+    SendSessionScope send(this);
+    Path path(local_address, remote_address_);
+    return ngtcp2_conn_initiate_migration(
+        connection(),
+        &path,
+        uv_hrtime()) == 0;
+  } else {
+    ngtcp2_addr addr;
+    ngtcp2_conn_set_local_addr(
+        connection(),
+        ngtcp2_addr_init(
+            &addr,
+            local_address.data(),
+            local_address.length(),
+            nullptr));
+  }
+
+  return true;
+}
+
 const ngtcp2_callbacks Session::callbacks[2] = {
   // NGTCP2_CRYPTO_SIDE_CLIENT
   {

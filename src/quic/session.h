@@ -121,10 +121,12 @@ class Stream;
 
 using Header = NgHeaderBase<Application>;
 using HeaderList = std::vector<std::unique_ptr<Header>>;
-using StreamMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
+using StreamsMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
 
 using ConnectionIDStrategy = void(*)(Session*, ngtcp2_cid*, size_t);
 using PreferredAddressStrategy = void(*)(Session*, const PreferredAddress&);
+
+static const int kInitialClientBufferLength = 4096;
 
 enum class HeadersKind {
   INFO,
@@ -567,8 +569,7 @@ class Session final : public AsyncWrap,
 
     virtual bool SubmitHeaders(
         stream_id stream_id,
-        v8::Local<v8::Array> headers,
-        uint32_t flags) { return false; }
+        v8::Local<v8::Array> headers) { return false; }
 
     virtual bool SubmitTrailers(
         stream_id stream_id,
@@ -668,9 +669,14 @@ class Session final : public AsyncWrap,
   inline CryptoContext* crypto_context() const {
     return crypto_context_.get();
   }
+  inline CID dcid() const { return dcid_; }
+  inline Application* application() const { return application_.get(); }
   inline Endpoint* endpoint() const { return endpoint_.get(); }
   inline const std::string& alpn() { return alpn_; }
   inline const std::string& hostname() { return hostname_; }
+
+  inline const SocketAddress& remote_address() const { return remote_address_; }
+  inline const SocketAddress& local_address() const { return local_address_; }
 
   BaseObjectPtr<QLogStream> qlogstream();
 
@@ -682,7 +688,151 @@ class Session final : public AsyncWrap,
     return crypto_context_->side() == NGTCP2_CRYPTO_SIDE_SERVER;
   }
 
-  void Close();
+  v8::Maybe<stream_id> OpenStream(Stream::Direction direction);
+  BaseObjectPtr<Stream> CreateStream(stream_id id);
+  BaseObjectPtr<Stream> FindStream(stream_id id);
+  void AddStream(const BaseObjectPtr<Stream>& stream);
+  void RemoveStream(stream_id id);
+  void ResumeStream(stream_id id);
+  bool HasStream(stream_id id);
+  void StreamDataBlocked(stream_id id);
+  void ShutdownStream(stream_id stream_id, uint64_t code = NGTCP2_NO_ERROR);
+  const StreamsMap& streams() const { return streams_; }
+
+  // Submits headers to the QUIC Application If headers are not supported,
+  // false will be returned. Otherwise, returns true
+  bool SubmitHeaders(
+      HeadersKind kind,
+      stream_id id,
+      v8::Local<v8::Array> headers);
+
+  // Receive and process a QUIC packet received from the peer
+  bool Receive(
+      ssize_t nread,
+      const uint8_t* data,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      unsigned int flags);
+
+  // Receive a chunk of QUIC stream data received from the peer
+  bool ReceiveStreamData(
+      uint32_t flags,
+      stream_id stream_id,
+      const uint8_t* data,
+      size_t datalen,
+      uint64_t offset);
+
+  // Causes pending ngtcp2 frames to be serialized and sent
+  void SendPendingData();
+
+  bool SendPacket(
+      std::unique_ptr<Packet> packet,
+      const ngtcp2_path_storage& path);
+
+  uint64_t max_data_left() const;
+
+  uint64_t max_local_streams_uni() const;
+
+  inline bool allow_early_data() const {
+    // TODO(@jasnell): For now, we always allow early data.
+    // Later there will be reasons we do not want to allow
+    // it, such as lack of available system resources.
+    return true;
+  }
+
+  // Returns true if the Session has entered the
+  // closing period after sending a CONNECTION_CLOSE.
+  // While true, the QuicSession is only permitted to
+  // transmit CONNECTION_CLOSE frames until either the
+  // idle timeout period elapses or until the QuicSession
+  // is explicitly destroyed.
+  bool is_in_closing_period() const;
+
+  // Returns true if the Session has received a
+  // CONNECTION_CLOSE frame from the peer. Once in
+  // the draining period, the QuicSession is not
+  // permitted to send any frames to the peer. The
+  // QuicSession will be silently closed after either
+  // the idle timeout period elapses or until the
+  // QuicSession is explicitly destroyed.
+  bool is_in_draining_period() const;
+
+  // Starting a GracefulClose disables the ability to open or accept
+  // new streams for this session. Existing streams are allowed to
+  // close naturally on their own. Once called, the QuicSession will
+  // be immediately closed once there are no remaining streams. Note
+  // that no notification is given to the connecting peer that we're
+  // in a graceful closing state. A CONNECTION_CLOSE will be sent only
+  // once Close() is called.
+  void StartGracefulClose();
+
+  bool AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding = false);
+
+  // Error handling for the Session. client and server
+  // instances will do different things here, but ultimately
+  // an error means that the Session
+  // should be torn down.
+  void HandleError();
+
+  bool SendConnectionClose();
+
+  enum class SessionCloseFlags {
+    SESSION_CLOSE_FLAG_NONE,
+    SESSION_CLOSE_FLAG_SILENT,
+    SESSION_CLOSE_FLAG_STATELESS_RESET
+  };
+
+  // Initiate closing of the QuicSession. This will round trip
+  // through JavaScript, causing all currently opened streams
+  // to be closed. If the SESSION_CLOSE_FLAG_SILENT flag is
+  // set, the connected peer will not be notified, otherwise
+  // an attempt will be made to send a CONNECTION_CLOSE frame
+  // to the peer. If Close is called while within the ngtcp2
+  // callback scope, sending the CONNECTION_CLOSE will be
+  // deferred until the ngtcp2 callback scope exits.
+  void Close(
+      SessionCloseFlags close_flags =
+          SessionCloseFlags::SESSION_CLOSE_FLAG_NONE);
+
+  bool IsResetToken(const CID& cid, const uint8_t* data, size_t datalen);
+
+  // Immediately discards the state of the QuicSession
+  // and renders the QuicSession instance completely
+  // unusable.
+  void Destroy();
+
+  // Extends the QUIC stream flow control window. This is
+  // called after received data has been consumed and we
+  // want to allow the peer to send more data.
+  void ExtendStreamOffset(int64_t stream_id, size_t amount);
+
+  // Extends the QUIC session flow control window
+  void ExtendOffset(size_t amount);
+
+  // Retrieve the local transport parameters established for
+  // this ngtcp2_conn
+  void GetLocalTransportParams(ngtcp2_transport_params* params);
+
+  uint32_t version() const;
+
+  inline uint64_t last_error() const { return last_error_; }
+
+  inline size_t max_packet_length() const { return max_pktlen_; }
+
+  int set_session(SSL_SESSION* session);
+
+  // True only if ngtcp2 considers the TLS handshake to be completed
+  bool is_handshake_completed() const;
+
+  bool is_unable_to_send_packets();
+
+  void SetSessionTicketAppData(const SessionTicketAppData& app_data);
+
+  SessionTicketAppData::Status GetSessionTicketAppData(
+      const SessionTicketAppData& app_data,
+      SessionTicketAppData::Flag flag);
+
+  void SelectPreferredAddress(const PreferredAddress& preferred_address);
 
   SET_NO_MEMORY_INFO()
   SET_MEMORY_INFO_NAME(Session)
@@ -728,6 +878,92 @@ class Session final : public AsyncWrap,
     v8::TryCatch try_catch_;
   };
 
+  // ConnectionCloseScope triggers sending a CONNECTION_CLOSE
+  // when not executing within the context of an ngtcp2 callback
+  // and the session is in the correct state.
+  class ConnectionCloseScope final {
+   public:
+    inline ConnectionCloseScope(Session* session, bool silent = false)
+        : session_(session),
+          silent_(silent) {
+      CHECK(session_);
+      // If we are already in a ConnectionCloseScope, ignore.
+      if (session_->in_connection_close_)
+        silent_ = true;
+      else
+        session_->in_connection_close_ = true;
+    }
+
+    ConnectionCloseScope(const ConnectionCloseScope& other) = delete;
+
+    inline ~ConnectionCloseScope() {
+      if (silent_ ||
+          NgCallbackScope::InNgCallbackScope(session_.get()) ||
+          session_->is_in_closing_period() ||
+          session_->is_in_draining_period()) {
+        return;
+      }
+      session_->in_connection_close_ = false;
+      session_->SendConnectionClose();
+    }
+
+   private:
+    BaseObjectPtr<Session> session_;
+    bool silent_ = false;
+  };
+
+  // Tracks whether or not we are currently within an ngtcp2 callback
+  // function. Certain ngtcp2 APIs are not supposed to be called when
+  // within a callback. We use this as a gate to check.
+  class NgCallbackScope final {
+   public:
+    inline explicit NgCallbackScope(Session* session)
+        : session_(session) {
+      CHECK(session_);
+      CHECK(!InNgCallbackScope(session));
+      session_->in_ng_callback_ = true;
+    }
+
+    NgCallbackScope(const NgCallbackScope& other) = delete;
+
+    inline ~NgCallbackScope() {
+      session_->in_ng_callback_ = false;
+    }
+
+    static inline bool InNgCallbackScope(Session* session) {
+      return session->in_ng_callback_;
+    }
+
+   private:
+    BaseObjectPtr<Session> session_;
+  };
+
+  // SendSessionScope triggers SendPendingData() when not executing
+  // within the context of an ngtcp2 callback. When within an ngtcp2
+  // callback, SendPendingData will always be called when the callbacks
+  // complete.
+  class SendSessionScope final {
+   public:
+    inline explicit SendSessionScope(Session* session)
+        : session_(session) {
+      CHECK(session_);
+    }
+
+    SendSessionScope(const SendSessionScope& other) = delete;
+
+    inline ~SendSessionScope() {
+      if (NgCallbackScope::InNgCallbackScope(session_.get()) ||
+          session_->is_in_closing_period() ||
+          session_->is_in_draining_period()) {
+        return;
+      }
+      session_->SendPendingData();
+    }
+
+   private:
+    BaseObjectPtr<Session> session_;
+  };
+
  private:
   Session(
       Endpoint* endpoint,
@@ -747,10 +983,50 @@ class Session final : public AsyncWrap,
 
   bool InitApplication();
   void AttachToEndpoint();
+  void DetachFromEndpoint();
   void OnIdleTimeout();
   void OnRetransmitTimeout();
   void UpdateClosingTimer();
   void UpdateDataStats();
+  void AckedStreamDataOffset(
+      stream_id id,
+      uint64_t offset,
+      uint64_t datalen);
+  void ExtendMaxStreamData(stream_id id, uint64_t max_data);
+  void ExtendMaxStreams(bool bidi, uint64_t max_streams);
+  void ExtendMaxStreamsUni(uint64_t max_streams);
+  void ExtendMaxStreamsBidi(uint64_t max_streams);
+  void ExtendMaxStreamsRemoteUni(uint64_t max_streams);
+  void ExtendMaxStreamsRemoteBidi(uint64_t max_streams);
+  void GetNewConnectionID(ngtcp2_cid* cid, uint8_t* token, size_t cidlen);
+  void GetConnectionCloseInfo();
+  void HandshakeCompleted();
+  void HandshakeConfirmed();
+  void PathValidation(
+      const ngtcp2_path* path,
+      ngtcp2_path_validation_result res);
+  bool ReceivePacket(ngtcp2_path* path, const uint8_t* data, ssize_t nread);
+  void ScheduleRetransmit();
+  bool SendPacket(std::unique_ptr<Packet> packet);
+  void StreamClose(stream_id id, uint64_t app_error_code);
+  void StreamReset(
+      stream_id id,
+      uint64_t final_size,
+      uint64_t app_error_code);
+  bool WritePackets(const char* diagnostic_label = nullptr);
+  void UpdateConnectionID(
+      int type,
+      const CID& cid,
+      const StatelessResetToken& token);
+  void UpdateDataStats();
+  void UpdateEndpoint(const ngtcp2_path& path);
+  void VersionNegotiation(const uint32_t* sv, size_t nsv);
+  void UpdateIdleTimer();
+  void UpdateClosingTimer();
+  void UpdateRetransmitTimer(uint64_t timeout);
+  bool StartClosingPeriod();
+  void IncrementConnectionCloseAttempts();
+  bool ShouldAttemptConnectionClose();
 
   // Updates the idle timer deadline. If the idle timer fires, the
   // connection will be silently closed. It is important to update
@@ -763,6 +1039,7 @@ class Session final : public AsyncWrap,
   QuicConnectionPointer connection_;
   BaseObjectPtr<Endpoint> endpoint_;
   AliasedStruct<State> state_;
+  StreamsMap streams_;
 
   SocketAddress local_address_;
   SocketAddress remote_address_;
@@ -780,6 +1057,8 @@ class Session final : public AsyncWrap,
   CID pscid_;
   ngtcp2_transport_params transport_params_;
   bool transport_params_set_ = false;
+  bool in_ng_callback_ = false;
+  bool in_connection_close_ = false;
 
   size_t max_pkt_len_;
   uint64_t last_error_ = NGTCP2_NO_ERROR;
@@ -788,7 +1067,162 @@ class Session final : public AsyncWrap,
   PreferredAddressStrategy preferred_address_strategy_ = nullptr;
   BaseObjectPtr<QLogStream> qlogstream_;
 
+  struct RemoteTransportParamsDebug {
+    Session* session;
+    inline explicit RemoteTransportParamsDebug(Session* session_)
+        : session(session_) {}
+    std::string ToString() const;
+  };
+
   static const ngtcp2_callbacks callbacks[2];
+
+  static int OnReceiveCryptoData(
+      ngtcp2_conn* conn,
+      ngtcp2_crypto_level crypto_level,
+      uint64_t offset,
+      const uint8_t* data,
+      size_t datalen,
+      void* user_data);
+
+  static int OnHandshakeCompleted(
+      ngtcp2_conn* conn,
+      void* user_data);
+
+  static int OnHandshakeConfirmed(
+      ngtcp2_conn* conn,
+      void* user_data);
+
+  static int OnReceiveStreamData(
+      ngtcp2_conn* conn,
+      uint32_t flags,
+      stream_id id,
+      uint64_t offset,
+      const uint8_t* data,
+      size_t datalen,
+      void* user_data,
+      void* stream_user_data);
+
+  static int OnAckedCryptoOffset(
+      ngtcp2_conn* conn,
+      ngtcp2_crypto_level crypto_level,
+      uint64_t offset,
+      uint64_t datalen,
+      void* user_data);
+
+  static int OnAckedStreamDataOffset(
+      ngtcp2_conn* conn,
+      stream_id id,
+      uint64_t offset,
+      uint64_t datalen,
+      void* user_data,
+      void* stream_user_data);
+
+  static int OnSelectPreferredAddress(
+      ngtcp2_conn* conn,
+      ngtcp2_addr* dest,
+      const ngtcp2_preferred_addr* paddr,
+      void* user_data);
+
+  static int OnStreamClose(
+      ngtcp2_conn* conn,
+      stream_id id,
+      uint64_t app_error_code,
+      void* user_data,
+      void* stream_user_data);
+
+  static int OnStreamOpen(
+      ngtcp2_conn* conn,
+      stream_id id,
+      void* user_data);
+
+  static int OnStreamReset(
+      ngtcp2_conn* conn,
+      stream_id id,
+      uint64_t final_size,
+      uint64_t app_error_code,
+      void* user_data,
+      void* stream_user_data);
+
+  static int OnRand(
+      uint8_t* dest,
+      size_t destlen,
+      ngtcp2_rand_ctx ctx);
+
+  static int OnGetNewConnectionID(
+      ngtcp2_conn* conn,
+      ngtcp2_cid* cid,
+      uint8_t* token,
+      size_t cidlen,
+      void* user_data);
+
+  static int OnRemoveConnectionID(
+      ngtcp2_conn* conn,
+      const ngtcp2_cid* cid,
+      void* user_data);
+
+  static int OnPathValidation(
+      ngtcp2_conn* conn,
+      const ngtcp2_path* path,
+      ngtcp2_path_validation_result res,
+      void* user_data);
+
+  static int OnExtendMaxStreamsUni(
+      ngtcp2_conn* conn,
+      uint64_t max_streams,
+      void* user_data);
+
+  static int OnExtendMaxStreamsBidi(
+      ngtcp2_conn* conn,
+      uint64_t max_streams,
+      void* user_data);
+
+  static int OnExtendMaxStreamData(
+      ngtcp2_conn* conn,
+      stream_id id,
+      uint64_t max_data,
+      void* user_data,
+      void* stream_user_data);
+
+  static int OnVersionNegotiation(
+      ngtcp2_conn* conn,
+      const ngtcp2_pkt_hd* hd,
+      const uint32_t* sv,
+      size_t nsv,
+      void* user_data);
+
+  static int OnStatelessReset(
+      ngtcp2_conn* conn,
+      const ngtcp2_pkt_stateless_reset* sr,
+      void* user_data);
+
+  static int OnExtendMaxStreamsRemoteUni(
+      ngtcp2_conn* conn,
+      uint64_t max_streams,
+      void* user_data);
+
+  static int OnExtendMaxStreamsRemoteBidi(
+      ngtcp2_conn* conn,
+      uint64_t max_streams,
+      void* user_data);
+
+  static int OnConnectionIDStatus(
+      ngtcp2_conn* conn,
+      int type,
+      uint64_t seq,
+      const ngtcp2_cid* cid,
+      const uint8_t* token,
+      void* user_data);
+
+  static void OnQlogWrite(
+      void* user_data,
+      uint32_t flags,
+      const void* data,
+      size_t len);
+
+  friend class Session::CallbackScope;
+  friend class Session::NgCallbackScope;
+  friend class Session::SendSessionScope;
+  friend class Session::CryptoContext;
 };
 
 }  // namespace quic
