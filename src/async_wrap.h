@@ -98,11 +98,14 @@ namespace node {
 
 #ifndef OPENSSL_NO_QUIC
 #define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)                                     \
+  V(JSQUICBUFFERCONSUMER)                                                     \
   V(QLOGSTREAM)                                                               \
   V(QUICENDPOINT)                                                             \
   V(QUICSENDWRAP)                                                             \
   V(QUICSESSION)                                                              \
-  V(QUICSTREAM)
+  V(QUICSTREAM)                                                               \
+  V(STREAMSOURCE)                                                             \
+  V(STREAMBASESOURCE)
 #else
 #define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)
 #endif  // OPENSSL_NO_QUIC

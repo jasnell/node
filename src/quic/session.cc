@@ -1240,7 +1240,7 @@ BaseObjectPtr<Stream> Session::CreateStream(stream_id id) {
   CHECK_EQ(state_->graceful_closing, 0);
   CHECK_EQ(state_->closing, 0);
 
-  BaseObjectPtr<Stream> stream = Stream::New(this, id);
+  BaseObjectPtr<Stream> stream = Stream::Create(env(), this, id);
   CHECK(stream);
 
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());

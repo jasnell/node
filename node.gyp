@@ -994,6 +994,7 @@
         [
           'no_quic=="false"', {
           'sources': [
+            'src/quic/buffer.cc',
             'src/quic/crypto.cc',
             'src/quic/endpoint.cc',
             'src/quic/session.cc',
