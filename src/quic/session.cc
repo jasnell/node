@@ -24,11 +24,17 @@ using v8::BackingStore;
 using v8::Context;
 using v8::FunctionTemplate;
 using v8::HandleScope;
+using v8::Integer;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
 using v8::MaybeLocal;
+using v8::Nothing;
+using v8::Number;
 using v8::Object;
 using v8::PropertyAttribute;
 using v8::String;
+using v8::Undefined;
 using v8::Value;
 
 namespace quic {
@@ -71,6 +77,16 @@ void OnQlogWrite(
     ptr->Emit(buffer.data(), buffer.size(), flags);
   });
 }
+
+ConnectionCloseFn SelectCloseFn(QuicError error) {
+  switch (error.type) {
+    case QuicError::Type::TRANSPORT:
+      return ngtcp2_conn_write_connection_close;
+    case QuicError::Type::APPLICATION:
+      return ngtcp2_conn_write_application_close;
+    default:
+      UNREACHABLE();
+  }
 }  // namespace
 
 Session::Config::Config(
@@ -189,13 +205,6 @@ void Session::TransportParams::GeneratePreferredAddressToken(
     preferred_address.stateless_reset_token,
     endpoint->config().reset_token_secret,
     *pscid);
-}
-
-template <typename Fn>
-void SessionStatsTraits::ToString(const Session& ptr, Fn&& add_field) {
-#define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
-  SESSION_STATS(V)
-#undef V
 }
 
 Session::CryptoContext::CryptoContext(
@@ -331,7 +340,7 @@ void Session::CryptoContext::Keylog(const char* line) {
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
   BaseObjectPtr<Session> ptr(session_);
-  USE(state->session_keylog_callback()->Call(
+  USE(state->session_keylog_callback(env)->Call(
       env->context(),
       session()->object(),
       1,
@@ -614,7 +623,10 @@ std::string Session::CryptoContext::servername() const {
 
 void Session::CryptoContext::set_tls_alert(int err) {
   Debug(session(), "TLS Alert [%d]: %s", err, SSL_alert_type_string_long(err));
-  session_->set_last_error(static_cast<uint64_t>(NGTCP2_CRYPTO_ERROR | err));
+  session_->set_last_error({
+      QuicError::Type::TRANSPORT,
+      static_cast<uint64_t>(NGTCP2_CRYPTO_ERROR | err)
+    });
 }
 
 void Session::CryptoContext::WriteHandshake(
@@ -828,6 +840,31 @@ void Session::Initialize(Environment* env) {
   state->set_session_constructor_template(env, GetConstructorTemplate(env));
 }
 
+BaseObjectPtr<Session> Session::CreateClient(
+    Endpoint* endpoint,
+    const SocketAddress& local_addr,
+    const SocketAddress& remote_addr,
+    const Config& config,
+    const Options& options,
+    uint32_t version) {
+  Local<Object> obj;
+  Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
+  CHECK(!tmpl.IsEmpty());
+  if (!tmpl->InstanceTemplate()->NewInstance(endpoint->env()->context())
+          .ToLocal(&obj)) {
+    return BaseObjectPtr<Session>();
+  }
+
+  return MakeDetachedBaseObject<Session>(
+      endpoint,
+      obj,
+      local_addr,
+      remote_addr,
+      config,
+      options,
+      version);
+}
+
 // Static function to create a new server QuicSession instance
 BaseObjectPtr<Session> Session::CreateServer(
     Endpoint* endpoint,
@@ -856,31 +893,6 @@ BaseObjectPtr<Session> Session::CreateServer(
       dcid,
       scid,
       ocid,
-      version);
-}
-
-BaseObjectPtr<Session> Session::CreateClient(
-    Endpoint* endpoint,
-    const SocketAddress& local_addr,
-    const SocketAddress& remote_addr,
-    const Config& config,
-    const Options& options,
-    uint32_t version) {
-  Local<Object> obj;
-  Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
-  CHECK(!tmpl.IsEmpty());
-  if (!tmpl->InstanceTemplate()->NewInstance(endpoint->env()->context())
-          .ToLocal(&obj)) {
-    return BaseObjectPtr<Session>();
-  }
-
-  return MakeDetachedBaseObject<Session>(
-      endpoint,
-      obj,
-      local_addr,
-      remote_addr,
-      config,
-      options,
       version);
 }
 
@@ -1026,12 +1038,50 @@ Session::~Session() {
   DebugStats();
 }
 
-void Session::ExtendMaxStreamsBidi(uint64_t max_streams) {
-  state_->max_streams_bidi = max_streams;
+void Session::AckedStreamDataOffset(
+    stream_id id,
+    uint64_t offset,
+    uint64_t datalen) {
+  Debug(this,
+        "Received acknowledgement for %" PRIu64
+        " bytes of stream %" PRId64 " data",
+        datalen, id);
+
+  application_->AcknowledgeStreamData(
+      id,
+      offset,
+      static_cast<size_t>(datalen));
 }
 
-void Session::ExtendMaxStreamsUni(uint64_t max_streams) {
-  state_->max_streams_uni = max_streams;
+void Session::AddStream(const BaseObjectPtr<Stream>& stream) {
+  Debug(this, "Adding stream %" PRId64 " to session", stream->id());
+  streams_.emplace(stream->id(), stream);
+  stream->Resume();
+
+  // Update tracking statistics for the number of streams associated with
+  // this session.
+  switch (stream->origin()) {
+    case Stream::Origin::CLIENT:
+      if (is_server())
+        IncrementStat(&SessionStats::streams_in_count);
+      else
+        IncrementStat(&SessionStats::streams_out_count);
+      break;
+    case Stream::Origin::SERVER:
+      if (is_server())
+        IncrementStat(&SessionStats::streams_out_count);
+      else
+        IncrementStat(&SessionStats::streams_in_count);
+  }
+  IncrementStat(&SessionStats::streams_out_count);
+  switch (stream->direction()) {
+    case Stream::Direction::BIDIRECTIONAL:
+      IncrementStat(&SessionStats::bidi_stream_count);
+      break;
+    case Stream::Direction::UNIDIRECTIONAL:
+      IncrementStat(&SessionStats::uni_stream_count);
+      break;
+  }
 }
 
 void Session::AttachToEndpoint() {
@@ -1067,108 +1117,13 @@ void Session::AttachToEndpoint() {
   }
 }
 
-BaseObjectPtr<QLogStream> Session::qlogstream() {
-  if (!qlogstream_)
-    qlogstream_ = QLogStream::Create(env());
-  return qlogstream_;
-}
-
-void Session::UpdateIdleTimer() {
-  if (state_->closing_timer_enabled)
-    return;
-  uint64_t now = uv_hrtime();
-  uint64_t expiry = ngtcp2_conn_get_idle_expiry(connection());
-  // nano to millis
-  uint64_t timeout = expiry > now ? (expiry - now) / 1000000ULL : 1;
-  if (timeout == 0) timeout = 1;
-  Debug(this, "Updating idle timeout to %" PRIu64, timeout);
-  idle_.Update(timeout, timeout);
-}
-
-void Session::UpdateClosingTimer() {
-  if (state_->closing_timer_enabled)
-    return;
-  state_->closing_timer_enabled = 1;
-  uint64_t timeout =
-      is_server() ? (ngtcp2_conn_get_pto(connection()) / 1000000ULL) * 3 : 0;
-  Debug(this, "Setting closing timeout to %" PRIu64, timeout);
-  retransmit_.Stop();
-  idle_.Update(timeout, 0);
-  idle_.Ref();
-}
-
-void Session::UpdateDataStats() {
-  if (state_->destroyed)
-    return;
-  state_->max_data_left = ngtcp2_conn_get_max_data_left(connection());
-
-  ngtcp2_conn_stat stat;
-  ngtcp2_conn_get_conn_stat(connection(), &stat);
-
-  SetStat(
-      &SessionStats::bytes_in_flight,
-      stat.bytes_in_flight);
-  SetStat(
-      &SessionStats::congestion_recovery_start_ts,
-      stat.congestion_recovery_start_ts);
-  SetStat(&SessionStats::cwnd, stat.cwnd);
-  SetStat(&SessionStats::delivery_rate_sec, stat.delivery_rate_sec);
-  SetStat(&SessionStats::first_rtt_sample_ts, stat.first_rtt_sample_ts);
-  SetStat(&SessionStats::initial_rtt, stat.initial_rtt);
-  SetStat(&SessionStats::last_tx_pkt_ts, stat.last_tx_pkt_ts);
-  SetStat(&SessionStats::latest_rtt, stat.latest_rtt);
-  SetStat(&SessionStats::loss_detection_timer, stat.loss_detection_timer);
-  SetStat(&SessionStats::loss_time, stat.loss_time);
-  SetStat(&SessionStats::max_udp_payload_size, stat.max_udp_payload_size);
-  SetStat(&SessionStats::min_rtt, stat.min_rtt);
-  SetStat(&SessionStats::pto_count, stat.pto_count);
-  SetStat(&SessionStats::rttvar, stat.rttvar);
-  SetStat(&SessionStats::smoothed_rtt, stat.smoothed_rtt);
-  SetStat(&SessionStats::ssthresh, stat.ssthresh);
-
-  // The max_bytes_in_flight is a highwater mark that can be used
-  // in performance analysis operations.
-  if (stat.bytes_in_flight > GetStat(&SessionStats::max_bytes_in_flight))
-    SetStat(&SessionStats::max_bytes_in_flight, stat.bytes_in_flight);
-}
-
-bool Session::InitApplication() {
-  Debug(this, "Initializing application handler for ALPN %s",
-      alpn_.c_str() + 1);
-  return application_->Initialize();
-}
-
-// Set the transport parameters received from the remote peer
-void Session::set_remote_transport_params() {
-  DCHECK(!is_destroyed());
-  ngtcp2_conn_get_remote_transport_params(connection(), &transport_params_);
-  transport_params_set_ = true;
-}
-
-bool Session::is_in_closing_period() const {
-  return ngtcp2_conn_is_in_closing_period(connection());
-}
-
-bool Session::is_in_draining_period() const {
-  return ngtcp2_conn_is_in_draining_period(connection());
-}
-
-void Session::StartGracefulClose() {
-  state_->graceful_closing = 1;
-  RecordTimestamp(&SessionStats::closing_at);
-}
-
-// Gets the QUIC version negotiated for this QuicSession
-uint32_t Session::version() const {
-  CHECK(!is_destroyed());
-  return ngtcp2_conn_get_negotiated_version(connection());
-}
-
 // A client QuicSession can be migrated to a different QuicSocket instance.
 bool Session::AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding) {
   CHECK(!is_server());
   CHECK(!is_destroyed());
 
+  // If we're in the process of gracefully closing, attaching the session
+  // to a new endpoint is not allowed.
   if (state_->graceful_closing)
     return false;
 
@@ -1218,6 +1173,1063 @@ bool Session::AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding) {
   }
 
   return true;
+}
+
+void Session::Close(SessionCloseFlags close_flags) {
+  if (is_destroyed())
+    return;
+  bool silent = close_flags == SessionCloseFlags::SILENT;
+  bool stateless_reset = silent && state_->stateless_reset;
+
+  // If we're not running within a ngtcp2 callback scope, schedule
+  // a CONNECTION_CLOSE to be sent when Close exits. If we are
+  // within a ngtcp2 callback scope, sending the CONNECTION_CLOSE
+  // will be deferred.
+  ConnectionCloseScope close_scope(this, silent);
+
+  // Once Close has been called, we cannot re-enter
+  if (UNLIKELY(state_->closing))
+    return;
+
+  state_->closing = 1;
+  state_->silent_close = silent ? 1 : 0;
+
+  QuicError error = last_error();
+  Debug(this, "Closing with code %" PRIu64
+              " (family: %s, silent: %s, stateless reset: %s)",
+        error.code,
+        QuicError::TypeName(error),
+        silent ? "Y" : "N",
+        stateless_reset ? "Y" : "N");
+
+  if (!state_->wrapped)
+    return Destroy();
+
+  // If the Session has been wrapped by a JS object, we have to
+  // notify the JavaScript side that the session is being closed.
+  // If it hasn't yet been wrapped, we can skip the call and and
+  // go straight to destroy.
+  BaseObjectPtr<Session> ptr(this);
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env() ->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+    Number::New(env()->isolate(), static_cast<double>(error.code)),
+    Integer::New(env()->isolate(), static_cast<int32_t>(error.type)),
+    silent
+        ? v8::True(env()->isolate())
+        : v8::False(env()->isolate()),
+    stateless_reset
+        ? v8::True(env()->isolate())
+        : v8::False(env()->isolate())
+  };
+
+  USE(state->session_close_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+}
+
+BaseObjectPtr<Stream> Session::CreateStream(stream_id id) {
+  CHECK(!is_destroyed());
+  CHECK_EQ(state_->graceful_closing, 0);
+  CHECK_EQ(state_->closing, 0);
+
+  BaseObjectPtr<Stream> stream = Stream::New(this, id);
+  CHECK(stream);
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+    stream->object(),
+    Number::New(env()->isolate(), static_cast<double>(stream->id()))
+  };
+
+  // Grab a shared pointer to this to prevent the QuicSession
+  // from being freed while the MakeCallback is running.
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->stream_ready_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+
+  return stream;
+}
+
+void Session::Destroy() {
+  if (is_destroyed())
+    return;
+
+  Debug(this, "Destroying the QuicSession");
+
+  // Mark the session destroyed.
+  state_->destroyed = 1;
+  state_->closing = 0;
+  state_->graceful_closing = 0;
+
+  // TODO(@jasnell): Allow overriding the close code
+
+  // If we're not already in a ConnectionCloseScope, schedule
+  // sending a CONNECTION_CLOSE when destroy exits. If we are
+  // running within an ngtcp2 callback scope, sending the
+  // CONNECTION_CLOSE will be deferred.
+  ConnectionCloseScope close_scope(this, state_->silent_close);
+
+  // All existing streams should have already been destroyed
+  CHECK(streams_.empty());
+
+  // Stop and free the idle and retransmission timers if they are active.
+  idle_.Stop();
+  retransmit_.Stop();
+
+  // The Session instances are kept alive usingBaseObjectPtr. The
+  // only persistent BaseObjectPtr is the map in the associated
+  // Endpoint. Removing the Session from the Endpoint will free
+  // that pointer, allowing the Session to be deconstructed once
+  // the stack unwinds and any remaining BaseObjectPtr<Session>
+  // instances fall out of scope.
+  DetachFromEndpoint();
+}
+
+void Session::DetachFromEndpoint() {
+  CHECK(endpoint_);
+  Debug(this, "Removing Session from %s", endpoint_->diagnostic_name());
+  if (is_server()) {
+    endpoint_->DisassociateCID(dcid_);
+    endpoint_->DisassociateCID(pscid_);
+  }
+
+  std::vector<ngtcp2_cid> cids(ngtcp2_conn_get_num_scid(connection()));
+  std::vector<ngtcp2_cid_token> tokens(
+      ngtcp2_conn_get_num_active_dcid(connection()));
+  ngtcp2_conn_get_scid(connection(), cids.data());
+  ngtcp2_conn_get_active_dcid(connection(), tokens.data());
+
+  for (const ngtcp2_cid& cid : cids)
+    endpoint_->DisassociateCID(CID(&cid));
+
+  for (const ngtcp2_cid_token& token : tokens) {
+    if (token.token_present) {
+      endpoint_->DisassociateStatelessResetToken(
+          StatelessResetToken(token.token));
+    }
+  }
+
+  Debug(this, "Removed from the endpoint");
+  BaseObjectPtr<Endpoint> endpoint = std::move(endpoint_);
+  endpoint->RemoveSession(scid_, remote_address_);
+}
+
+void Session::ExtendMaxStreamData(stream_id id, uint64_t max_data) {
+  Debug(this,
+        "Extending max stream %" PRId64 " data to %" PRIu64, id, max_data);
+  application_->ExtendMaxStreamData(id, max_data);
+}
+
+void Session::ExtendMaxStreamsBidi(uint64_t max_streams) {
+  state_->max_streams_bidi = max_streams;
+}
+
+void Session::ExtendMaxStreamsRemoteUni(uint64_t max_streams) {
+  Debug(this, "Extend remote max unidirectional streams: %" PRIu64,
+        max_streams);
+  application_->ExtendMaxStreamsRemoteUni(max_streams);
+}
+
+void Session::ExtendMaxStreamsRemoteBidi(uint64_t max_streams) {
+  Debug(this, "Extend remote max bidirectional streams: %" PRIu64, max_streams);
+  application_->ExtendMaxStreamsRemoteBidi(max_streams);
+}
+
+void Session::ExtendMaxStreamsUni(uint64_t max_streams) {
+  state_->max_streams_uni = max_streams;
+}
+
+void Session::ExtendOffset(size_t amount) {
+  Debug(this, "Extending session offset by %" PRId64 " bytes", amount);
+  ngtcp2_conn_extend_max_offset(connection(), amount);
+}
+
+void Session::ExtendStreamOffset(stream_id id, size_t amount) {
+  Debug(this, "Extending max stream %" PRId64 " offset by %" PRId64 " bytes",
+        id, amount);
+  ngtcp2_conn_extend_max_stream_offset(connection(), id, amount);
+}
+
+BaseObjectPtr<Stream> Session::FindStream(stream_id id) const {
+  auto it = streams_.find(id);
+  return it == std::end(streams_) ? BaseObjectPtr<Stream>() : it->second;
+}
+
+void Session::GetConnectionCloseInfo() {
+  ngtcp2_connection_close_error_code close_code;
+  ngtcp2_conn_get_connection_close_error_code(connection(), &close_code);
+  set_last_error(QuicError::FromNgtcp2(close_code));
+}
+
+void Session::GetLocalTransportParams(ngtcp2_transport_params* params) {
+  CHECK(!is_destroyed());
+  ngtcp2_conn_get_local_transport_params(connection(), params);
+}
+
+void Session::GetNewConnectionID(
+    ngtcp2_cid* cid,
+    uint8_t* token,
+    size_t cidlen) {
+  CHECK_NOT_NULL(connection_id_strategy_);
+  connection_id_strategy_(this, cid, cidlen);
+  CID cid_(cid);
+  StatelessResetToken(
+      token,
+      endpoint_->config().reset_token_secret,
+      cid_);
+  endpoint_->AssociateCID(cid_, scid_);
+}
+
+SessionTicketAppData::Status Session::GetSessionTicketAppData(
+    const SessionTicketAppData& app_data,
+    SessionTicketAppData::Flag flag) {
+  return application_->GetSessionTicketAppData(app_data, flag);
+}
+
+void Session::HandleError() {
+  if (is_destroyed())
+    return;
+
+  // If the Session is a server, send a CONNECTION_CLOSE. In either
+  // case, the closing timer will be set and the QuicSession will be
+  // destroyed.
+  if (is_server())
+    SendConnectionClose();
+  else
+    UpdateClosingTimer();
+}
+
+void Session::HandshakeCompleted() {
+  RemoteTransportParamsDebug transport_params(this);
+  Debug(this, "Handshake is completed. %s", transport_params);
+  RecordTimestamp(&SessionStats::handshake_completed_at);
+  if (is_server()) HandshakeConfirmed();
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+    Undefined(env()->isolate()),                   // Server name
+    GetALPNProtocol(*this),                        // ALPN
+    Undefined(env()->isolate()),                   // Cipher name
+    Undefined(env()->isolate()),                   // Cipher version
+    Integer::New(env()->isolate(), max_pkt_len_),  // Max packet length
+    Undefined(env()->isolate()),                   // Validation error reason
+    Undefined(env()->isolate()),                   // Validation error code
+    crypto_context_->early_data() ?
+        v8::True(env()->isolate()) :
+        v8::False(env()->isolate())
+  };
+
+  std::string hostname = crypto_context_->servername();
+  if (!ToV8Value(env()->context(), hostname).ToLocal(&argv[0]))
+    return;
+
+  if (!crypto_context_->cipher_name(env()).ToLocal(&argv[2]) ||
+      !crypto_context_->cipher_version(env()).ToLocal(&argv[3])) {
+    return;
+  }
+
+  int err = crypto_context_->VerifyPeerIdentity();
+  if (err != X509_V_OK &&
+      (!crypto::GetValidationErrorReason(env(), err).ToLocal(&argv[5]) ||
+       !crypto::GetValidationErrorCode(env(), err).ToLocal(&argv[6]))) {
+      return;
+  }
+
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->session_handshake_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+}
+
+void Session::HandshakeConfirmed() {
+  Debug(this, "Handshake is confirmed");
+  RecordTimestamp(&SessionStats::handshake_confirmed_at);
+  state_->handshake_confirmed = 1;
+}
+
+bool Session::HasStream(stream_id id) const {
+  return streams_.find(id) != std::end(streams_);
+}
+
+bool Session::InitApplication() {
+  Debug(this, "Initializing application handler for ALPN %s",
+      alpn_.c_str() + 1);
+  return application_->Initialize();
+}
+
+void Session::OnIdleTimeout() {
+  if (!is_destroyed()) {
+    if (state_->idle_timeout == 1) {
+      Debug(this, "Idle timeout");
+      Close(SessionCloseFlags::SILENT);
+      return;
+    }
+    state_->idle_timeout = 1;
+    UpdateClosingTimer();
+  }
+}
+
+void Session::OnRetransmitTimeout() {
+  if (is_destroyed()) return;
+  uint64_t now = uv_hrtime();
+
+  if (ngtcp2_conn_get_expiry(connection()) <= now) {
+    Debug(this, "Retransmitting due to loss detection");
+    IncrementStat(&SessionStats::loss_retransmit_count);
+  }
+
+  if (ngtcp2_conn_handle_expiry(connection(), now) != 0) {
+    Debug(this, "Handling retransmission failed");
+    HandleError();
+  }
+
+  SendPendingData();
+}
+
+Maybe<stream_id> Session::OpenStream(Stream::Direction direction) {
+  DCHECK(!is_destroyed());
+  DCHECK(!is_closing());
+  DCHECK(!is_graceful_closing());
+  int64_t stream_id;
+  switch (direction) {
+    case Stream::Direction::BIDIRECTIONAL:
+      if (ngtcp2_conn_open_bidi_stream(
+              connection(),
+              &stream_id,
+              nullptr) == 0) {
+        return Just(stream_id);
+      }
+    case Stream::Direction::UNIDIRECTIONAL:
+      if (ngtcp2_conn_open_uni_stream(
+              connection(),
+              &stream_id,
+              nullptr) == 0) {
+        return Just(stream_id);
+      }
+  }
+  return Nothing<stream_id>();
+}
+
+void Session::PathValidation(
+    const ngtcp2_path* path,
+    ngtcp2_path_validation_result res) {
+  if (res == NGTCP2_PATH_VALIDATION_RESULT_SUCCESS) {
+    IncrementStat(&SessionStats::path_validation_success_count);
+  } else {
+    IncrementStat(&SessionStats::path_validation_failure_count);
+  }
+
+  if (LIKELY(state_->path_validated_enabled == 0))
+    return;
+
+  // This is a fairly expensive operation because both the local and
+  // remote addresses have to converted into JavaScript objects. We
+  // only do this if a pathValidation handler is registered.
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+    Integer::New(env()->isolate(), res),
+    AddressToJS(env(), reinterpret_cast<const sockaddr*>(path->local.addr)),
+    AddressToJS(env(), reinterpret_cast<const sockaddr*>(path->remote.addr))
+  };
+
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->session_path_validation_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+  }
+}
+
+bool Session::Receive(
+    ssize_t nread,
+    const uint8_t* data,
+    const SocketAddress& local_addr,
+    const SocketAddress& remote_addr,
+    unsigned int flags) {
+
+  CHECK(!is_destroyed());
+
+  Debug(this, "Receiving QUIC packet");
+  IncrementStat(&SessionStats::bytes_received, nread);
+
+  if (is_in_closing_period() && is_server()) {
+    Debug(this, "Packet received while in closing period");
+    IncrementConnectionCloseAttempts();
+    // For server QuicSession instances, we serialize the connection close
+    // packet once but may sent it multiple times. If the client keeps
+    // transmitting, then the connection close may have gotten lost.
+    // We don't want to send the connection close in response to
+    // every received packet, however, so we use an exponential
+    // backoff, increasing the ratio of packets received to connection
+    // close frame sent with every one we send.
+    if (UNLIKELY(ShouldAttemptConnectionClose() &&
+                 !SendConnectionClose())) {
+      Debug(this, "Failure sending another connection close");
+      return false;
+    }
+  }
+
+  {
+    // These are within a scope to ensure that the InternalCallbackScope
+    // and HandleScope are both exited before continuing on with the
+    // function. This allows any nextTicks and queued tasks to be processed
+    // before we continue.
+    auto update_stats = OnScopeLeave([&](){
+      UpdateDataStats();
+    });
+    HandleScope handle_scope(env()->isolate());
+    InternalCallbackScope callback_scope(this);
+    remote_address_ = remote_addr;
+    Path path(local_addr, remote_address_);
+    if (!ReceivePacket(&path, data, nread)) {
+      HandleError();
+      return false;
+    }
+  }
+
+  // Only send pending data if we haven't entered draining mode.
+  // We enter the draining period when a CONNECTION_CLOSE has been
+  // received from the remote peer.
+  if (is_in_draining_period()) {
+    Debug(this, "In draining period after processing packet");
+    // If processing the packet puts us into draining period, there's
+    // absolutely nothing left for us to do except silently close
+    // and destroy this QuicSession, which we do by updating the
+    // closing timer.
+    GetConnectionCloseInfo();
+    UpdateClosingTimer();
+    return true;
+  }
+
+  if (!is_destroyed())
+    UpdateIdleTimer();
+  SendPendingData();
+  Debug(this, "Successfully processed received packet");
+  return true;
+}
+
+bool Session::ReceivePacket(
+    ngtcp2_path* path,
+    const uint8_t* data,
+    ssize_t nread) {
+  CHECK(!is_destroyed());
+
+  uint64_t now = uv_hrtime();
+  SetStat(&SessionStats::received_at, now);
+  int err = ngtcp2_conn_read_pkt(connection(), path, nullptr, data, nread, now);
+  if (err < 0) {
+    switch (err) {
+      case NGTCP2_ERR_CALLBACK_FAILURE:
+      case NGTCP2_ERR_DRAINING:
+      case NGTCP2_ERR_RECV_VERSION_NEGOTIATION:
+        break;
+      case NGTCP2_ERR_RETRY:
+        // This should only ever happen on the server
+        CHECK(is_server());
+        socket()->SendRetry(scid_, dcid_, local_address_, remote_address_);
+        // Fall through
+      case NGTCP2_ERR_DROP_CONN:
+        Close(SessionCloseFlags::SILENT);
+        break;
+      default:
+        set_last_error({
+          QuicError::Type::APPLICATION,
+          ngtcp2_err_infer_quic_transport_error_code(err)
+        });
+        return false;
+    }
+  }
+
+  // If the QuicSession has been destroyed but it is not
+  // in the closing period, a CONNECTION_CLOSE has not yet
+  // been sent to the peer. Let's attempt to send one. This
+  // will have the effect of setting the idle timer to the
+  // closing/draining period, after which the QuicSession
+  // will be destroyed.
+  if (is_destroyed() && !is_in_closing_period()) {
+    Debug(this, "Session was destroyed while processing the packet");
+    return SendConnectionClose();
+  }
+
+  return true;
+}
+
+bool Session::ReceiveStreamData(
+    uint32_t flags,
+    stream_id id,
+    const uint8_t* data,
+    size_t datalen,
+    uint64_t offset) {
+  auto leave = OnScopeLeave([&]() {
+    // Unconditionally extend the flow control window for the entire
+    // session but not for the individual Stream.
+    ExtendOffset(datalen);
+  });
+
+  return application_->ReceiveStreamData(
+      flags,
+      id,
+      data,
+      datalen,
+      offset);
+}
+
+void Session::ResumeStream(stream_id id) {
+  application()->ResumeStream(id);
+}
+
+void Session::SelectPreferredAddress(
+    const PreferredAddress& preferred_address) {
+  CHECK(!is_server());
+  preferred_address_strategy_(this, preferred_address);
+}
+
+bool Session::SendConnectionClose() {
+  CHECK(!NgCallbackScope::InNgCallbackScope(this));
+
+  // Do not send any frames at all if we're in the draining period
+  // or in the middle of a silent close
+  if (is_in_draining_period() || state_->silent_close)
+    return true;
+
+  // The specific handling of connection close varies for client
+  // and server QuicSession instances. For servers, we will
+  // serialize the connection close once but may end up transmitting
+  // it multiple times; whereas for clients, we will serialize it
+  // once and send once only.
+  QuicError error = last_error();
+  Debug(this, "Sending connection close with code: %" PRIu64 " (family: %s)",
+        error.code, QuicError::TypeName(error));
+
+  UpdateClosingTimer();
+
+  // If initial keys have not yet been installed, use the alternative
+  // ImmediateConnectionClose to send a stateless connection close to
+  // the peer.
+  if (crypto_context()->write_crypto_level() ==
+        NGTCP2_CRYPTO_LEVEL_INITIAL) {
+    endpoint_->ImmediateConnectionClose(
+        version(),
+        dcid(),
+        scid_,
+        local_address_,
+        remote_address_,
+        error.code);
+    return true;
+  }
+
+  switch (crypto_context_->side()) {
+    case NGTCP2_CRYPTO_SIDE_SERVER: {
+      if (!is_in_closing_period() && !StartClosingPeriod()) {
+        Close(SessionCloseFlags::SILENT);
+        return false;
+      }
+      CHECK_GT(conn_closebuf_->length(), 0);
+      return SendPacket(Packet::Copy(conn_closebuf_));
+    }
+    case NGTCP2_CRYPTO_SIDE_CLIENT: {
+      std::unique_ptr<Packet> packet =
+          std::make_unique<Packet>("client connection close");
+      ssize_t nwrite =
+          SelectCloseFn(error)(
+            connection(),
+            nullptr,
+            nullptr,
+            packet->data(),
+            max_pkt_len_,
+            error.code,
+            uv_hrtime());
+      if (UNLIKELY(nwrite < 0)) {
+        Debug(this, "Error writing connection close: %d", nwrite);
+        set_last_error(kQuicInternalError);
+        Close(SessionCloseFlags::SILENT);
+        return false;
+      }
+      packet->set_length(nwrite);
+      return SendPacket(std::move(packet));
+    }
+    default:
+      UNREACHABLE();
+  }
+}
+
+bool Session::SendPacket(std::unique_ptr<Packet> packet) {
+  CHECK(!is_in_draining_period());
+
+  // There's nothing to send.
+  if (!packet || packet->length() == 0)
+    return true;
+
+  IncrementStat(&SessionStats::bytes_sent, packet->length());
+  RecordTimestamp(&SessionStats::sent_at);
+  ScheduleRetransmit();
+
+  Debug(this, "Sending %" PRIu64 " bytes to %s from %s",
+        packet->length(),
+        remote_address_,
+        local_address_);
+
+  if (endpoint_->SendPacket(
+      local_address_,
+      remote_address_,
+      std::move(packet),
+      BaseObjectPtr<Session>(this)) != 0) {
+    set_last_error(kQuicInternalError);
+    return false;
+  }
+
+  return true;
+}
+
+bool Session::SendPacket(
+    std::unique_ptr<Packet> packet,
+    const ngtcp2_path_storage& path) {
+  UpdateEndpoint(path.path);
+  return SendPacket(std::move(packet));
+}
+
+void Session::SendPendingData() {
+  if (is_unable_to_send_packets())
+    return;
+
+  Debug(this, "Sending pending data");
+  if (!application_->SendPendingData()) {
+    Debug(this, "Error sending pending application data");
+    HandleError();
+  }
+  ScheduleRetransmit();
+}
+
+void Session::SetSessionTicketAppData(const SessionTicketAppData& app_data) {
+  application_->SetSessionTicketAppData(app_data);
+}
+
+void Session::StreamDataBlocked(stream_id id) {
+  IncrementStat(&SessionStats::block_count);
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+
+  HandleScope handle_scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  BaseObjectPtr<Stream> stream = FindStream(id);
+  USE(state->stream_blocked_callback(env())->Call(
+      env()->context(),
+      object(),
+      0, nullptr));
+}
+
+void Session::IncrementConnectionCloseAttempts() {
+  if (connection_close_attempts_ < kMaxSizeT)
+    connection_close_attempts_++;
+}
+
+void Session::RemoveStream(stream_id id) {
+  Debug(this, "Removing stream %" PRId64, id);
+
+  // ngtcp2 does not extend the max streams count automatically
+  // except in very specific conditions, none of which apply
+  // once we've gotten this far. We need to manually extend when
+  // a remote peer initiated stream is removed.
+  if (!is_in_draining_period() &&
+      !is_in_closing_period() &&
+      !state_->silent_close &&
+      !ngtcp2_conn_is_local_stream(connection_.get(), id)) {
+    if (ngtcp2_is_bidi_stream(id))
+      ngtcp2_conn_extend_max_streams_bidi(connection_.get(), 1);
+    else
+      ngtcp2_conn_extend_max_streams_uni(connection_.get(), 1);
+  }
+
+  // Frees the persistent reference to the QuicStream object,
+  // allowing it to be gc'd any time after the JS side releases
+  // it's own reference.
+  streams_.erase(id);
+}
+
+void Session::ScheduleRetransmit() {
+  uint64_t now = uv_hrtime();
+  uint64_t expiry = ngtcp2_conn_get_expiry(connection());
+  // now and expiry are in nanoseconds, interval is milliseconds
+  uint64_t interval = (expiry < now) ? 1 : (expiry - now) / 1000000UL;
+  // If interval ends up being 0, the repeating timer won't be
+  // scheduled, so set it to 1 instead.
+  if (interval == 0) interval = 1;
+  Debug(this, "Scheduling the retransmit timer for %" PRIu64, interval);
+  UpdateRetransmitTimer(interval);
+}
+
+bool Session::ShouldAttemptConnectionClose() {
+  if (connection_close_attempts_ == connection_close_limit_) {
+    if (connection_close_limit_ * 2 <= kMaxSizeT)
+      connection_close_limit_ *= 2;
+    else
+      connection_close_limit_ = kMaxSizeT;
+    return true;
+  }
+  return false;
+}
+
+void Session::ShutdownStream(stream_id id, uint64_t code) {
+  if (is_in_closing_period() ||
+      is_in_draining_period() ||
+      state_->silent_close == 1) {
+    return;  // Nothing to do because we can't send any frames.
+  }
+  SendSessionScope send_scope(this);
+  ngtcp2_conn_shutdown_stream(connection(), id, 0);
+}
+
+bool Session::StartClosingPeriod() {
+  if (is_destroyed())
+    return false;
+  if (is_in_closing_period())
+    return true;
+
+  QuicError error = last_error();
+  Debug(this, "Closing period has started. Error %d", error);
+
+  conn_closebuf_ = std::make_unique<Packet>("server connection close");
+
+  ssize_t nwrite =
+      SelectCloseFn(error)(
+          connection(),
+          nullptr,
+          nullptr,
+          conn_closebuf_->data(),
+          max_pkt_len_,
+          error.code,
+          uv_hrtime());
+  if (nwrite < 0) {
+    set_last_error({
+      QuicError::Type::TRANSPORT,
+      static_cast<int>(nwrite)
+    });
+    return false;
+  }
+  conn_closebuf_->set_length(nwrite);
+  return true;
+}
+
+void Session::StartGracefulClose() {
+  state_->graceful_closing = 1;
+  RecordTimestamp(&SessionStats::closing_at);
+}
+
+void Session::StreamClose(stream_id id, uint64_t app_error_code) {
+  Debug(this, "Closing stream %" PRId64 " with code %" PRIu64,
+        id,
+        app_error_code);
+
+  application_->StreamClose(id, app_error_code);
+}
+
+void Session::StreamReset(
+    stream_id id,
+    uint64_t final_size,
+    uint64_t app_error_code) {
+  Debug(this,
+        "Reset stream %" PRId64 " with code %" PRIu64
+        " and final size %" PRIu64,
+        id,
+        app_error_code,
+        final_size);
+
+  BaseObjectPtr<Stream> stream = FindStream(id);
+
+  if (stream) {
+    stream->set_final_size(final_size);
+    application_->StreamReset(id, app_error_code);
+  }
+}
+
+bool Session::SubmitHeaders(
+    HeadersKind kind,
+    stream_id id,
+    v8::Local<v8::Array> headers) {
+  switch (kind) {
+    case HeadersKind::INFO:
+      return application_->SubmitInformation(id, headers);
+    case HeadersKind::INITIAL:
+      return application_->SubmitHeaders(id, headers);
+    case HeadersKind::TRAILING:
+      return application_->SubmitTrailers(id, headers);
+    default:
+      UNREACHABLE();
+  }
+}
+
+void Session::UpdateClosingTimer() {
+  if (state_->closing_timer_enabled)
+    return;
+  state_->closing_timer_enabled = 1;
+  uint64_t timeout =
+      is_server() ? (ngtcp2_conn_get_pto(connection()) / 1000000ULL) * 3 : 0;
+  Debug(this, "Setting closing timeout to %" PRIu64, timeout);
+  retransmit_.Stop();
+  idle_.Update(timeout, 0);
+  idle_.Ref();
+}
+
+void Session::UpdateConnectionID(
+    int type,
+    const CID& cid,
+    const StatelessResetToken& token) {
+  switch (type) {
+    case NGTCP2_CONNECTION_ID_STATUS_TYPE_ACTIVATE:
+      endpoint_->AssociateStatelessResetToken(
+          token,
+          BaseObjectPtr<Session>(this));
+      break;
+    case NGTCP2_CONNECTION_ID_STATUS_TYPE_DEACTIVATE:
+      endpoint_->DisassociateStatelessResetToken(token);
+      break;
+  }
+}
+
+void Session::UpdateDataStats() {
+  if (state_->destroyed)
+    return;
+  state_->max_data_left = ngtcp2_conn_get_max_data_left(connection());
+
+  ngtcp2_conn_stat stat;
+  ngtcp2_conn_get_conn_stat(connection(), &stat);
+
+  SetStat(
+      &SessionStats::bytes_in_flight,
+      stat.bytes_in_flight);
+  SetStat(
+      &SessionStats::congestion_recovery_start_ts,
+      stat.congestion_recovery_start_ts);
+  SetStat(&SessionStats::cwnd, stat.cwnd);
+  SetStat(&SessionStats::delivery_rate_sec, stat.delivery_rate_sec);
+  SetStat(&SessionStats::first_rtt_sample_ts, stat.first_rtt_sample_ts);
+  SetStat(&SessionStats::initial_rtt, stat.initial_rtt);
+  SetStat(&SessionStats::last_tx_pkt_ts, stat.last_tx_pkt_ts);
+  SetStat(&SessionStats::latest_rtt, stat.latest_rtt);
+  SetStat(&SessionStats::loss_detection_timer, stat.loss_detection_timer);
+  SetStat(&SessionStats::loss_time, stat.loss_time);
+  SetStat(&SessionStats::max_udp_payload_size, stat.max_udp_payload_size);
+  SetStat(&SessionStats::min_rtt, stat.min_rtt);
+  SetStat(&SessionStats::pto_count, stat.pto_count);
+  SetStat(&SessionStats::rttvar, stat.rttvar);
+  SetStat(&SessionStats::smoothed_rtt, stat.smoothed_rtt);
+  SetStat(&SessionStats::ssthresh, stat.ssthresh);
+
+  // The max_bytes_in_flight is a highwater mark that can be used
+  // in performance analysis operations.
+  if (stat.bytes_in_flight > GetStat(&SessionStats::max_bytes_in_flight))
+    SetStat(&SessionStats::max_bytes_in_flight, stat.bytes_in_flight);
+}
+
+void Session::UpdateEndpoint(const ngtcp2_path& path) {
+  remote_address_.Update(path.remote.addr, path.remote.addrlen);
+  local_address_.Update(path.local.addr, path.local.addrlen);
+
+  // If the updated remote address is IPv6, set the flow label
+  if (remote_address_.family() == AF_INET6) {
+    // TODO(@jasnell): Currently, this reuses the session reset secret.
+    // That may or may not be a good idea, we need to verify and may
+    // need to have a distinct secret for flow labels.
+    uint32_t flow_label =
+        GenerateFlowLabel(
+            local_address_,
+            remote_address_,
+            scid_,
+            socket()->session_reset_secret(),
+            NGTCP2_STATELESS_RESET_TOKENLEN);
+    remote_address_.set_flow_label(flow_label);
+  }
+}
+
+void Session::UpdateIdleTimer() {
+  if (state_->closing_timer_enabled)
+    return;
+  uint64_t now = uv_hrtime();
+  uint64_t expiry = ngtcp2_conn_get_idle_expiry(connection());
+  // nano to millis
+  uint64_t timeout = expiry > now ? (expiry - now) / 1000000ULL : 1;
+  if (timeout == 0) timeout = 1;
+  Debug(this, "Updating idle timeout to %" PRIu64, timeout);
+  idle_.Update(timeout, timeout);
+}
+
+void Session::UpdateRetransmitTimer(uint64_t timeout) {
+  retransmit_.Update(timeout, timeout);
+}
+
+void Session::VersionNegotiation(const uint32_t* sv, size_t nsv) {
+  CHECK(!is_server());
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  std::vector<Local<Value>> versions(nsv);
+
+  for (size_t n = 0; n < nsv; n++)
+    versions.emplace_back(Integer::New(env()->isolate(), sv[n]));
+
+  // Currently, we only support one version of QUIC but in
+  // the future that may change. The callback below passes
+  // an array back to the JavaScript side to future-proof.
+  Local<Value> supported = Integer::New(env()->isolate(), NGTCP2_PROTO_VER_MAX);
+
+  Local<Value> argv[] = {
+    Integer::New(env()->isolate(), NGTCP2_PROTO_VER_MAX),
+    Array::New(env()->isolate(), versions.data(), nsv),
+    Array::New(env()->isolate(), &supported, 1)
+  };
+
+  // Grab a shared pointer to this to prevent the QuicSession
+  // from being freed while the MakeCallback is running.
+  BaseObjectPtr<Session> ptr(this);
+  USE(state->session_version_negotiation_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+}
+
+bool Session::allow_early_data() const {
+  // TODO(@jasnell): For now, we always allow early data.
+  // Later there will be reasons we do not want to allow
+  // it, such as lack of available system resources.
+  return true;
+}
+
+bool Session::is_handshake_completed() const {
+  DCHECK(!is_destroyed());
+  return ngtcp2_conn_get_handshake_completed(connection());
+}
+
+bool Session::is_in_closing_period() const {
+  return ngtcp2_conn_is_in_closing_period(connection());
+}
+
+bool Session::is_in_draining_period() const {
+  return ngtcp2_conn_is_in_draining_period(connection());
+}
+
+bool Session::is_unable_to_send_packets() {
+  return NgCallbackScope::InNgCallbackScope(this) ||
+      is_destroyed() ||
+      is_in_draining_period() ||
+      (is_server() && is_in_closing_period()) ||
+      !endpoint_;
+}
+
+uint64_t Session::max_data_left() const {
+  return ngtcp2_conn_get_max_data_left(connection());
+}
+
+uint64_t Session::max_local_streams_uni() const {
+  return ngtcp2_conn_get_max_local_streams_uni(connection());
+}
+
+void Session::set_remote_transport_params() {
+  DCHECK(!is_destroyed());
+  ngtcp2_conn_get_remote_transport_params(connection(), &transport_params_);
+  transport_params_set_ = true;
+}
+
+int Session::set_session(SSL_SESSION* session) {
+  CHECK(!is_server());
+  CHECK(!is_destroyed());
+  int size = i2d_SSL_SESSION(session, nullptr);
+  if (size > crypto::SecureContext::kMaxSessionSize)
+    return 0;
+
+  BindingState* state = env->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+    v8::Undefined(env()->isolate()),
+    v8::Undefined(env()->isolate())
+  };
+
+  if (size > 0) {
+    std::shared_ptr<BackingStore> session_ticket =
+        ArrayBuffer::NewBackingStore(env()->isolate(), size);
+    unsigned char* session_data =
+        reinterpret_cast<unsigned char*>(session_ticket->Data());
+    memset(session_data, 0, size);
+    if (i2d_SSL_SESSION(session, &session_data) <= 0)
+      return;
+    argv[0] = ArrayBuffer::New(env()->isolate(), session_ticket);
+  }
+
+  if (transport_params_set_) {
+    std::shared_ptr<BackingStore> transport_params =
+        ArrayBuffer::NewBackingStore(env()->isolate(),
+        sizeof(ngtcp2_transport_params));
+    memcpy(
+      transport_params->Data(),
+      &transport_params_,
+      sizeof(ngtcp2_transport_params));
+    argv[1] = ArrayBuffer::New(env()->isolate(), transport_params);
+  }
+
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->session_ticket_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
+
+  return 0;
+}
+
+BaseObjectPtr<QLogStream> Session::qlogstream() {
+  if (!qlogstream_)
+    qlogstream_ = QLogStream::Create(env());
+  return qlogstream_;
+}
+
+// Gets the QUIC version negotiated for this QuicSession
+uint32_t Session::version() const {
+  CHECK(!is_destroyed());
+  return ngtcp2_conn_get_negotiated_version(connection());
 }
 
 const ngtcp2_callbacks Session::callbacks[2] = {
@@ -1308,13 +2320,11 @@ int Session::OnReceiveCryptoData(
     return NGTCP2_ERR_CALLBACK_FAILURE;
 
   NgCallbackScope callback_scope(session);
-  int ret = session->crypto_context()->Receive(
+  return session->crypto_context()->Receive(
       crypto_level,
       offset,
       data,
-      datalen);
-
-  return ret == 0 ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+      datalen) == 0 ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
 }
 
 int Session::OnExtendMaxStreamsBidi(
@@ -1402,6 +2412,7 @@ int Session::OnConnectionIDStatus(
     return NGTCP2_ERR_CALLBACK_FAILURE;
 
   if (token != nullptr) {
+    NgCallbackScope scope(session);
     CID qcid(cid);
     Debug(session, "Updating connection ID %s with reset token", qcid);
     session->UpdateConnectionID(type, qcid, StatelessResetToken(token));
@@ -1468,7 +2479,7 @@ int Session::OnStreamOpen(
     return NGTCP2_ERR_CALLBACK_FAILURE;
 
   // We currently do not do anything with this callback.
-  // QuicStream instances are created implicitly once the
+  // Stream instances are created implicitly only once the
   // first chunk of stream data is received.
 
   return 0;
@@ -1566,6 +2577,11 @@ int Session::OnRand(
     size_t destlen,
     const ngtcp2_rand_ctx *rand_ctx,
     ngtcp2_rand_usage usage) {
+  // For now, we ignore both rand_ctx and usage. The rand_ctx allows
+  // a custom entropy source to be passed in to the ngtcp2 configuration.
+  // We don't make use of that mechanism. The usage differentiates what
+  // the random data is for, in case an implementation wishes to apply
+  // a different mechanism based on purpose. We don't, at least for now.
   crypto::EntropySource(dest, destlen);
   return 0;
 }
@@ -1595,8 +2611,10 @@ int Session::OnRemoveConnectionID(
   if (UNLIKELY(session->is_destroyed()))
     return NGTCP2_ERR_CALLBACK_FAILURE;
 
-  if (session->is_server())
+  if (session->is_server()) {
+    NgCallbackScope callback_scope(session);
     session->endpoint()->DisassociateCID(CID(cid));
+  }
   return 0;
 }
 

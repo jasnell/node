@@ -96,6 +96,43 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(stream_headers, onStreamHeaders)                                           \
   V(stream_blocked, onStreamBlocked)
 
+struct QuicError {
+  enum class Type {
+    TRANSPORT,
+    APPLICATION
+  };
+  Type type;
+  uint64_t code;
+
+  static QuicError FromNgtcp2(ngtcp2_connection_close_error_code close_code) {
+    switch (close_code.type) {
+      case NGTCP2_CONNECTION_CLOSE_ERROR_CODE_TYPE_TRANSPORT:
+        return { Type::TRANSPORT, close_code.error_code };
+      case NGTCP2_CONNECTION_CLOSE_ERROR_CODE_TYPE_APPLICATION:
+        return { Type::APPLICATION, close_code.error_code };
+      default:
+        UNREACHABLE();
+    }
+  }
+
+  static const char* TypeName(QuicError error) {
+    switch (error.type) {
+      case Type::TRANSPORT: return "transport";
+      case Type::APPLICATION: return "application";
+      default: UNREACHABLE();
+    }
+  }
+};
+
+static constexpr QuicError kQuicNoError =
+  { QuicError::Type::TRANSPORT, NGTCP2_NO_ERROR };
+
+static constexpr QuicError kQuicInternalError =
+  { QuicError::Type::TRANSPORT, NGTCP2_INTERNAL_ERROR };
+
+static constexpr QuicError kQuicAppNoError =
+  { QuicError::Type::APPLICATION, NGTCP2_NO_ERROR };
+
 class Session;
 class Stream;
 class BindingState final : public BaseObject,
@@ -253,6 +290,12 @@ class CID final : public MemoryRetainer {
 // the packet is sent, it is freed.
 class Packet final : public MemoryRetainer {
  public:
+  inline static std::unique_ptr<Packet> Copy(
+      const std::unique_ptr<Packet>& other) {
+    const auto other_pkt = *other.get();
+    return std::make_unique<Packet>(other_pkt);
+  }
+
   inline Packet(const char* diagnostic_label = nullptr)
       : ptr_(data_),
         diagnostic_label_(diagnostic_label) { }
