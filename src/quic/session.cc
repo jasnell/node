@@ -196,14 +196,14 @@ void Session::TransportParams::GenerateStatelessResetToken(
 
 void Session::TransportParams::GeneratePreferredAddressToken(
     ConnectionIDStrategy connection_id_strategy,
-    Endpoint* endpoint,
+    Session* session,
     CID* pscid) {
   CHECK(pscid);
-  connection_id_strategy(endpoint, pscid->cid(), NGTCP2_MAX_CIDLEN);
+  connection_id_strategy(session, pscid->cid(), NGTCP2_MAX_CIDLEN);
   preferred_address.cid = **pscid;
   StatelessResetToken(
     preferred_address.stateless_reset_token,
-    endpoint->config().reset_token_secret,
+    session->endpoint()->config().reset_token_secret,
     *pscid);
 }
 
@@ -266,21 +266,18 @@ void Session::CryptoContext::AcknowledgeCryptoData(
         crypto_level_name(level));
 
   // Consumes (frees) the given number of bytes in the handshake buffer.
-  // TODO(@jasnell)
-  // handshake_[level].Acknowledge(static_cast<size_t>(datalen));
+  handshake_[level].Acknowledge(static_cast<size_t>(datalen));
 }
 
 size_t Session::CryptoContext::Cancel() {
-  return 0;
-  // TODO(@jasnell)
-  // size_t len =
-  //     handshake_[0].remaining() +
-  //     handshake_[1].remaining() +
-  //     handshake_[2].remaining();
-  // handshake_[0].Clear();
-  // handshake_[1].Clear();
-  // handshake_[2].Clear();
-  // return len;
+  size_t len =
+      handshake_[0].remaining() +
+      handshake_[1].remaining() +
+      handshake_[2].remaining();
+  handshake_[0].Clear();
+  handshake_[1].Clear();
+  handshake_[2].Clear();
+  return len;
 }
 
 void Session::CryptoContext::Initialize() {
@@ -330,12 +327,15 @@ void Session::CryptoContext::Keylog(const char* line) {
 
   Session::CallbackScope cb_scope(session());
 
-  Local<Value> line_buf;
-  if (!Buffer::Copy(env, line, 1 + strlen(line)).ToLocal(&line_buf))
-    return;
+  size_t len = strlen(line);
+  if (len == 0) return;
 
-  char* data = Buffer::Data(line_buf);
-  data[strlen(line)] = '\n';
+  std::shared_ptr<BackingStore> buf =
+      ArrayBuffer::NewBackingStore(env->isolate(), 1 + strlen(line));
+  memcpy(buf->Data(), line, len);
+  (reinterpret_cast<char*>(buf->Data()))[len] = '\n';
+
+  Local<Value> ab = ArrayBuffer::New(env->isolate(), buf);
 
   // Grab a shared pointer to this to prevent the QuicSession
   // from being freed while the MakeCallback is running.
@@ -343,8 +343,7 @@ void Session::CryptoContext::Keylog(const char* line) {
   USE(state->session_keylog_callback(env)->Call(
       env->context(),
       session()->object(),
-      1,
-      &line_buf));
+      1, &ab));
 }
 
 int Session::CryptoContext::OnClientHello() {
@@ -653,8 +652,7 @@ void Session::CryptoContext::WriteHandshake(
           static_cast<uint8_t*>(store->Data()),
           datalen), 0);
 
-  // TODO(@jasnell)
-  // handshake_[level].Push(std::move(store), datalen);
+  handshake_[level].Push(std::move(store), datalen);
 }
 
 bool Session::CryptoContext::InitiateKeyUpdate() {
@@ -685,10 +683,9 @@ bool Session::CryptoContext::early_data() const {
 }
 
 void Session::CryptoContext::MemoryInfo(MemoryTracker* tracker) const {
-  // TODO(@jasnell)
-  // tracker->TrackField("initial_crypto", handshake_[0]);
-  // tracker->TrackField("handshake_crypto", handshake_[1]);
-  // tracker->TrackField("app_crypto", handshake_[2]);
+  tracker->TrackField("initial_crypto", handshake_[0]);
+  tracker->TrackField("handshake_crypto", handshake_[1]);
+  tracker->TrackField("app_crypto", handshake_[2]);
   tracker->TrackFieldWithSize(
       "ocsp_response",
       ocsp_response_ ? ocsp_response_->ByteLength() : 0);
@@ -965,7 +962,7 @@ Session::Session(
   transport_params.GenerateStatelessResetToken(endpoint, scid_);
   if (transport_params.preferred_address_present) {
     transport_params.GeneratePreferredAddressToken(
-        connection_id_strategy_, endpoint, &pscid_);
+        connection_id_strategy_, this, &pscid_);
   }
 
   Path path(local_addr, remote_addr);
@@ -1515,22 +1512,18 @@ Maybe<stream_id> Session::OpenStream(Stream::Direction direction) {
   DCHECK(!is_destroyed());
   DCHECK(!is_closing());
   DCHECK(!is_graceful_closing());
-  int64_t stream_id;
+  stream_id id;
   switch (direction) {
     case Stream::Direction::BIDIRECTIONAL:
-      if (ngtcp2_conn_open_bidi_stream(
-              connection(),
-              &stream_id,
-              nullptr) == 0) {
-        return Just(stream_id);
-      }
+      if (ngtcp2_conn_open_bidi_stream(connection(), &id, nullptr) == 0)
+        return Just(id);
+      break;
     case Stream::Direction::UNIDIRECTIONAL:
-      if (ngtcp2_conn_open_uni_stream(
-              connection(),
-              &stream_id,
-              nullptr) == 0) {
-        return Just(stream_id);
-      }
+      if (ngtcp2_conn_open_uni_stream(connection(), &id, nullptr) == 0)
+        return Just(id);
+      break;
+    default:
+      UNREACHABLE();
   }
   return Nothing<stream_id>();
 }
@@ -1658,7 +1651,12 @@ bool Session::ReceivePacket(
       case NGTCP2_ERR_RETRY:
         // This should only ever happen on the server
         CHECK(is_server());
-        socket()->SendRetry(scid_, dcid_, local_address_, remote_address_);
+        endpoint_->SendRetry(
+            version(),
+            scid_,
+            dcid_,
+            local_address_,
+            remote_address_);
         // Fall through
       case NGTCP2_ERR_DROP_CONN:
         Close(SessionCloseFlags::SILENT);
@@ -2039,10 +2037,12 @@ void Session::UpdateDataStats() {
   SetStat(&SessionStats::delivery_rate_sec, stat.delivery_rate_sec);
   SetStat(&SessionStats::first_rtt_sample_ts, stat.first_rtt_sample_ts);
   SetStat(&SessionStats::initial_rtt, stat.initial_rtt);
-  SetStat(&SessionStats::last_tx_pkt_ts, stat.last_tx_pkt_ts);
+  SetStat(&SessionStats::last_tx_pkt_ts,
+          reinterpret_cast<uint64_t>(stat.last_tx_pkt_ts));
   SetStat(&SessionStats::latest_rtt, stat.latest_rtt);
   SetStat(&SessionStats::loss_detection_timer, stat.loss_detection_timer);
-  SetStat(&SessionStats::loss_time, stat.loss_time);
+  SetStat(&SessionStats::loss_time,
+          reinterpret_cast<uint64_t>(stat.loss_time));
   SetStat(&SessionStats::max_udp_payload_size, stat.max_udp_payload_size);
   SetStat(&SessionStats::min_rtt, stat.min_rtt);
   SetStat(&SessionStats::pto_count, stat.pto_count);
@@ -2059,20 +2059,12 @@ void Session::UpdateDataStats() {
 void Session::UpdateEndpoint(const ngtcp2_path& path) {
   remote_address_.Update(path.remote.addr, path.remote.addrlen);
   local_address_.Update(path.local.addr, path.local.addrlen);
-
-  // If the updated remote address is IPv6, set the flow label
   if (remote_address_.family() == AF_INET6) {
-    // TODO(@jasnell): Currently, this reuses the session reset secret.
-    // That may or may not be a good idea, we need to verify and may
-    // need to have a distinct secret for flow labels.
-    uint32_t flow_label =
-        GenerateFlowLabel(
+    remote_address_.set_flow_label(
+        endpoint_->GetFlowLabel(
             local_address_,
             remote_address_,
-            scid_,
-            socket()->session_reset_secret(),
-            NGTCP2_STATELESS_RESET_TOKENLEN);
-    remote_address_.set_flow_label(flow_label);
+            scid_));
   }
 }
 
@@ -2127,13 +2119,6 @@ void Session::VersionNegotiation(const uint32_t* sv, size_t nsv) {
       argv));
 }
 
-bool Session::allow_early_data() const {
-  // TODO(@jasnell): For now, we always allow early data.
-  // Later there will be reasons we do not want to allow
-  // it, such as lack of available system resources.
-  return true;
-}
-
 bool Session::is_handshake_completed() const {
   DCHECK(!is_destroyed());
   return ngtcp2_conn_get_handshake_completed(connection());
@@ -2176,7 +2161,7 @@ int Session::set_session(SSL_SESSION* session) {
   if (size > crypto::SecureContext::kMaxSessionSize)
     return 0;
 
-  BindingState* state = env->GetBindingData<BindingState>(env()->context());
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   HandleScope scope(env()->isolate());
   Context::Scope context_scope(env()->context());
 
@@ -2676,6 +2661,12 @@ int Session::OnDatagram(
   session->Datagram(flags, data, datalen);
   return 0;
 }
+
+void SessionStatsTraits::ToString(const Session& ptr, AddField add_field) {
+#define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
+    SESSION_STATS(V)
+#undef V
+  }
 
 }  // namespace quic
 }  // namespace node

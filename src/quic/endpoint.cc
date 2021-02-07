@@ -106,14 +106,6 @@ void SendWrap::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("packet", packet_);
 }
 
-template <typename Fn>
-void EndpointStatsTraits::ToString(const Endpoint& ptr, Fn&& add_field) {
-#define V(_n, name, label)                                                     \
-  add_field(label, ptr.GetStat(&EndpointStats::name));
-  ENDPOINT_STATS(V)
-#undef V
-}
-
 Local<FunctionTemplate> Endpoint::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
@@ -430,6 +422,18 @@ UdpSendWrap* Endpoint::CreateSendWrap(size_t msg_size) {
   HandleScope handle_scope(env()->isolate());
   last_created_send_wrap_ = SendWrap::Create(env(), msg_size);
   return last_created_send_wrap_;
+}
+
+uint32_t Endpoint::GetFlowLabel(
+    const SocketAddress& local_address,
+    const SocketAddress& remote_address,
+    const CID& cid) {
+  return GenerateFlowLabel(
+      local_address,
+      remote_address,
+      cid,
+      token_secret_,
+      NGTCP2_STATELESS_RESET_TOKENLEN);
 }
 
 void Endpoint::OnAfterBind() {
@@ -913,6 +917,12 @@ void Endpoint::SocketAddressInfoTraits::Touch(
     const SocketAddress& address,
     Type* type) {
   type->timestamp = uv_hrtime();
+}
+
+void EndpointStatsTraits::ToString(const Endpoint& ptr, AddField add_field) {
+#define V(_n, name, label) add_field(label, ptr.GetStat(&EndpointStats::name));
+  ENDPOINT_STATS(V)
+#undef V
 }
 
 }  // namespace quic

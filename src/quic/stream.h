@@ -54,12 +54,9 @@ struct StreamStatsTraits {
   using Stats = StreamStats;
   using Base = Stream;
 
-  template <typename Fn>
-  void ToString(const Stream& ptr, Fn&& add_field) {
-#define V(_, name, label) add_field(label, ptr.GetStat(&StreamStats::name));
-    STREAM_STATS(V)
-#undef V
-  }
+  using AddField = void(*)(const char*, uint64_t);
+
+  void ToString(const Stream& ptr, AddField add_field);
 };
 
 using StreamStatsBase = StatsBase<StreamStatsTraits>;
@@ -167,7 +164,7 @@ class Stream final : public AsyncWrap,
   // Returns false if the header cannot be added. This will
   // typically only happen if a maximimum number of headers,
   // or the maximum total header length is received.
-  bool AddHeader(std::unique_ptr<Header> header);
+  bool AddHeader(std::unique_ptr<Session::Header> header);
 
   // Attaches the given Buffer::Consumer to this Stream to consume
   // and inbound data.

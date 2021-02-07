@@ -12,6 +12,7 @@
 #include "node_sockaddr.h"
 #include "timer_wrap.h"
 #include "quic/quic.h"
+#include "quic/buffer.h"
 #include "quic/stats.h"
 #include "quic/stream.h"
 #include "quic/crypto.h"
@@ -79,7 +80,6 @@ namespace quic {
   V(RTTVAR, rttvar, "Mean deviation of observed RTT")                          \
   V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
   V(SSTHRESH, ssthresh, "Slow start threshold")
-
   V(MIN_RTT, min_rtt, "Minimum RTT")                                           \
   V(LATEST_RTT, latest_rtt, "Latest RTT")                                      \
   V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
@@ -113,14 +113,11 @@ namespace quic {
   V(MAX_DATA_LEFT, max_data_left, uint64_t)                                    \
   V(BYTES_IN_FLIGHT, bytes_in_flight, uint64_t)
 
-class Application;
 class Endpoint;
 class QLogStream;
 class Session;
 class Stream;
 
-using Header = NgHeaderBase<Application>;
-using HeaderList = std::vector<std::unique_ptr<Header>>;
 using StreamsMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
 
 using ConnectionIDStrategy = void(*)(Session*, ngtcp2_cid*, size_t);
@@ -161,18 +158,20 @@ struct SessionStatsTraits {
   using Stats = SessionStats;
   using Base = Session;
 
-  template <typename Fn>
-  void ToString(const Session& ptr, Fn&& add_field) {
-#define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
-    SESSION_STATS(V)
-#undef V
-  }
+  using AddField = void(*)(const char*, uint64_t);
+
+  void ToString(const Session& ptr, AddField add_field);
 };
 
 using SessionStatsBase = StatsBase<SessionStatsTraits>;
 class Session final : public AsyncWrap,
                       public SessionStatsBase {
  public:
+  class Application;
+
+  using Header = NgHeaderBase<Application>;
+  using HeaderList = std::vector<std::unique_ptr<Header>>;
+
   static void IgnorePreferredAddressStrategy(
       Session* session,
       const PreferredAddress& preferred_address);
@@ -280,7 +279,7 @@ class Session final : public AsyncWrap,
     void GenerateStatelessResetToken(Endpoint* endpoint, const CID& cid);
     void GeneratePreferredAddressToken(
         ConnectionIDStrategy connection_id_strategy,
-        Endpoint* endpoint,
+        Session* session,
         CID* pscid);
   };
 
@@ -438,8 +437,11 @@ class Session final : public AsyncWrap,
     crypto::SSLPointer ssl_;
     crypto::BIOPointer bio_trace_;
 
-    //TODO(@jasnell): QuicBuffer
-    //Buffer handshake_[3];
+    // There are three distinct levels of crypto data
+    // involved in the TLS handshake. We use the handshake_
+    // buffer to temporarily store the outbound crypto
+    // data until it is acknowledged.
+    Buffer handshake_[3];
 
     bool reject_unauthorized_ = true;
     bool enable_tls_trace_ = false;
@@ -852,6 +854,8 @@ class Session final : public AsyncWrap,
   bool is_handshake_completed() const;
 
   bool is_unable_to_send_packets();
+
+  inline void set_wrapped() { state_->wrapped = 1; }
 
   void SetSessionTicketAppData(const SessionTicketAppData& app_data);
 

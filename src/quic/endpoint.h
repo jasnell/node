@@ -64,8 +64,9 @@ struct EndpointStatsTraits {
   using Stats = EndpointStats;
   using Base = Endpoint;
 
-  template <typename Fn>
-  static void ToString(const Base& ptr, Fn&& add_field);
+  using AddField = void(*)(const char*, uint64_t);
+
+  static void ToString(const Base& ptr, AddField add_field);
 };
 
 using EndpointStatsBase = StatsBase<EndpointStatsTraits>;
@@ -201,7 +202,7 @@ class Endpoint final : public AsyncWrap,
   Endpoint& operator=(const Endpoint&& other) = delete;
 
   const Config& config() const { return config_; }
-  const Session::Options& server_config() const { return server_options; }
+  const Session::Options& server_config() const { return server_options_; }
   State* state() { return state_.Data(); }
 
   // Waits for any currently pending callbacks to be completed
@@ -296,6 +297,11 @@ class Endpoint final : public AsyncWrap,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       int64_t reason = NGTCP2_INVALID_TOKEN);
+
+  uint32_t GetFlowLabel(
+    const SocketAddress& local_address,
+    const SocketAddress& remote_address,
+    const CID& cid);
 
   SET_NO_MEMORY_INFO()
   SET_MEMORY_INFO_NAME(Endpoint)
