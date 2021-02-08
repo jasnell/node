@@ -162,6 +162,8 @@ class BindingState final : public BaseObject,
   void IncreaseAllocatedSize(size_t size);
   void DecreaseAllocatedSize(size_t size);
 
+  v8::Local<v8::String> http3_alpn(Environment* env);
+
 #define V(name)                                                               \
   void set_ ## name ## _constructor_template(                                 \
       Environment* env,                                                       \
@@ -188,6 +190,8 @@ class BindingState final : public BaseObject,
 #define V(name, _) v8::Global<v8::Function> name ## _callback_;
   QUIC_JS_CALLBACKS(V)
 #undef V
+
+  v8::Eternal<v8::String> http3_alpn_;
 
   bool initialized_ = false;
   size_t current_ngtcp2_memory_ = 0;

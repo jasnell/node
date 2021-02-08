@@ -382,21 +382,20 @@ bool InvalidRetryToken(
 }
 
 // Get the ALPN protocol identifier that was negotiated for the session
-// Local<Value> GetALPNProtocol(const QuicSession& session) {
-//   Session::CryptoContext* ctx = session.crypto_context();
-//   Environment* env = session.env();
-//   std::string alpn = ctx->selected_alpn();
-//   // This supposed to be `NGHTTP3_ALPN_H3 + 1`
-//   // Details see https://github.com/nodejs/node/issues/33959
-//   if (alpn == &NGHTTP3_ALPN_H3[1]) {
-//     return env->http3_alpn_string();
-//   } else {
-//     return ToV8Value(
-//       env->context(),
-//       alpn,
-//       env->isolate()).FromMaybe(Local<Value>());
-//   }
-// }
+Local<Value> GetALPNProtocol(const Session& session) {
+  Session::CryptoContext* ctx = session.crypto_context();
+  Environment* env = session.env();
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  std::string alpn = ctx->selected_alpn();
+  if (alpn == &NGHTTP3_ALPN_H3[1]) {
+    return state->http3_alpn(env);
+  } else {
+    return ToV8Value(
+      env->context(),
+      alpn,
+      env->isolate()).FromMaybe(Local<Value>());
+  }
+}
 
 namespace {
 int CertCB(SSL* ssl, void* arg) {

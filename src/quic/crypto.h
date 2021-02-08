@@ -100,7 +100,8 @@ bool InvalidRetryToken(
     CID* ocid,
     const uint8_t* token_secret,
     uint64_t verification_expiration,
-    const ngtcp2_crypto_aead& aead);
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md);
 
 // Get the ALPN protocol identifier that was negotiated for the session
 v8::Local<v8::Value> GetALPNProtocol(const Session& session);

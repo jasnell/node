@@ -166,9 +166,9 @@ Endpoint::Endpoint(
       EndpointStatsBase(env, object),
       config_(config),
       state_(env),
+      block_list_(SocketAddressBlockListWrap::New(env)),
       token_aead_(CryptoAeadAes128GCM()),
       token_md_(CryptoMDSha256()),
-      block_list_(SocketAddressBlockListWrap::New(env)),
       addrLRU_(config.address_lru_size) {
   MakeWeak();
 
@@ -543,7 +543,8 @@ BaseObjectPtr<Session> Endpoint::AcceptInitialPacket(
                   &ocid,
                   token_secret_,
                   config_.retry_token_expiration,
-                  token_aead_)) {
+                  token_aead_,
+                  token_md_)) {
             Debug(this, "Invalid retry token was detected. Failing");
             ImmediateConnectionClose(
                 version,

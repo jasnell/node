@@ -364,6 +364,8 @@ class Session final : public AsyncWrap,
     v8::MaybeLocal<v8::Value> hello_alpn(Environment* env) const;
     std::string servername() const;
 
+    std::string selected_alpn() const;
+
     void set_tls_alert(int err);
 
     // Write outbound TLS handshake data into the ngtcp2 connection
@@ -579,6 +581,9 @@ class Session final : public AsyncWrap,
     inline Session* session() const { return session_.get(); }
 
     bool SendPendingData();
+
+    Environment* env() { return session_->env(); }
+
     size_t max_header_pairs() const { return max_header_pairs_; }
     size_t max_header_length() const { return max_header_length_; }
 
@@ -1121,7 +1126,7 @@ class Session final : public AsyncWrap,
   // this as activity occurs to keep the idle timer from firing.
   void UpdateIdleTimer();
 
-  static Application* SelectApplication(const std::string& alpn);
+  Application* SelectApplication();
 
   ngtcp2_mem allocator_;
   QuicConnectionPointer connection_;
@@ -1132,9 +1137,9 @@ class Session final : public AsyncWrap,
   SocketAddress local_address_;
   SocketAddress remote_address_;
 
+  std::string alpn_;
   std::unique_ptr<Application> application_;
   std::unique_ptr<CryptoContext> crypto_context_;
-  std::string alpn_;
   std::string hostname_;
 
   TimerWrapHandle idle_;

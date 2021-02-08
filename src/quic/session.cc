@@ -318,6 +318,15 @@ Session::CryptoContext::ocsp_response() const {
   return ocsp_response_;
 }
 
+std::string Session::CryptoContext::selected_alpn() const {
+  const unsigned char* alpn_buf = nullptr;
+  unsigned int alpnlen;
+  SSL_get0_alpn_selected(ssl_.get(), &alpn_buf, &alpnlen);
+  return alpnlen ?
+      std::string(reinterpret_cast<const char*>(alpn_buf), alpnlen) :
+      std::string();
+}
+
 ngtcp2_crypto_level Session::CryptoContext::read_crypto_level() const {
   return from_ossl_level(SSL_quic_read_level(ssl_.get()));
 }
@@ -580,6 +589,11 @@ int Session::CryptoContext::Receive(
     default:
       return ret;
   }
+}
+
+void Session::CryptoContext::ResumeHandshake() {
+  Receive(read_crypto_level(), 0, nullptr, 0);
+  session_->SendPendingData();
 }
 
 MaybeLocal<Object> Session::CryptoContext::cert(Environment* env) const {
@@ -914,9 +928,9 @@ Session::Session(
       state_(endpoint->env()),
       local_address_(local_addr),
       remote_address_(remote_addr),
-      application_(SelectApplication(options.alpn)),
-      crypto_context_(std::make_unique<CryptoContext>(this, options, side)),
       alpn_(options.alpn),
+      application_(SelectApplication()),
+      crypto_context_(std::make_unique<CryptoContext>(this, options, side)),
       hostname_(options.hostname),
       idle_(endpoint->env(), [this]() { OnIdleTimeout(); }),
       retransmit_(endpoint->env(), [this]() { OnRetransmitTimeout(); }),
@@ -2700,6 +2714,335 @@ void SessionStatsTraits::ToString(const Session& ptr, AddStatsField add_field) {
     SESSION_STATS(V)
 #undef V
   }
+
+// Determines which Application variant the Session will be using
+// based on the alpn configured for the application. For now, this is
+// determined through configuration when tghe QuicSession is created
+// and is not negotiable. In the future, we may allow it to be negotiated.
+Session::Application* Session::SelectApplication() {
+  // if (alpn == NGHTTP3_ALPN_H3) {
+  //   Debug(this, "Selecting HTTP/3 Application");
+  //   return new Http3Application(this);
+  // }
+
+  // // In the future, we may end up supporting additional
+  // // QUIC protocols. As they are added, extend the cases
+  // // here to create and return them.
+
+  // Debug(this, "Selecting Default Application");
+  // return new DefaultApplication(this);
+  // TODO(@jasnell): Implement
+  return nullptr;
+}
+
+Session::Application::Application(Session* session) : session_(session) {}
+
+void Session::Application::Acknowledge(
+    stream_id id,
+    uint64_t offset,
+    size_t datalen) {
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  if (LIKELY(stream)) {
+    stream->Acknowledge(offset, datalen);
+    ResumeStream(id);
+  }
+}
+
+std::unique_ptr<Packet> Session::Application::CreateStreamDataPacket() {
+  return std::make_unique<Packet>(
+      session()->max_packet_length(),
+      "stream data");
+}
+
+void Session::Application::MaybeSetFin(const StreamData& stream_data) {
+  if (ShouldSetFin(stream_data))
+    set_stream_fin(stream_data.id);
+}
+
+bool Session::Application::SendPendingData() {
+  // The maximum number of packets to send per call
+  static constexpr size_t kMaxPackets = 16;
+  PathStorage path;
+  std::unique_ptr<Packet> packet;
+  uint8_t* pos = nullptr;
+  size_t packets_sent = 0;
+  int err;
+
+  for (;;) {
+    ssize_t ndatalen;
+    StreamData stream_data;
+    err = GetStreamData(&stream_data);
+    if (err < 0) {
+      session()->set_last_error(kQuicInternalError);
+      return false;
+    }
+
+    // If stream_data.id is -1, then we're not serializing any data for any
+    // specific stream. We still need to process QUIC session packets tho.
+    if (stream_data.id > -1)
+      Debug(session(), "Serializing packets for stream id %" PRId64,
+            stream_data.id);
+    else
+      Debug(session(), "Serializing session packets");
+
+    // If the packet was sent previously, then packet will have been reset.
+    if (!packet) {
+      packet = CreateStreamDataPacket();
+      pos = packet->data();
+    }
+
+    ssize_t nwrite = WriteVStream(&path, pos, &ndatalen, stream_data);
+
+    if (nwrite <= 0) {
+      switch (nwrite) {
+        case 0:
+          goto congestion_limited;
+        case NGTCP2_ERR_PKT_NUM_EXHAUSTED:
+          // There is a finite number of packets that can be sent
+          // per connection. Once those are exhausted, there's
+          // absolutely nothing we can do except immediately
+          // and silently tear down the QuicSession. This has
+          // to be silent because we can't even send a
+          // CONNECTION_CLOSE since even those require a
+          // packet number.
+          session()->Close(Session::SessionCloseFlags::SILENT);
+          return false;
+        case NGTCP2_ERR_STREAM_DATA_BLOCKED:
+          session()->StreamDataBlocked(stream_data.id);
+          if (session()->max_data_left() == 0)
+            goto congestion_limited;
+          // Fall through
+        case NGTCP2_ERR_STREAM_SHUT_WR:
+          if (UNLIKELY(!BlockStream(stream_data.id)))
+            return false;
+          continue;
+        case NGTCP2_ERR_STREAM_NOT_FOUND:
+          continue;
+        case NGTCP2_ERR_WRITE_MORE:
+          CHECK_GT(ndatalen, 0);
+          CHECK(StreamCommit(&stream_data, ndatalen));
+          pos += ndatalen;
+          continue;
+      }
+      session()->set_last_error(kQuicInternalError);
+      return false;
+    }
+
+    pos += nwrite;
+
+    if (ndatalen >= 0)
+      CHECK(StreamCommit(&stream_data, ndatalen));
+
+    Debug(session(), "Sending %" PRIu64 " bytes in serialized packet", nwrite);
+    packet->set_length(nwrite);
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+    packet.reset();
+    pos = nullptr;
+    MaybeSetFin(stream_data);
+    if (++packets_sent == kMaxPackets)
+      break;
+  }
+  return true;
+
+congestion_limited:
+  // We are either congestion limited or done.
+  if (pos - packet->data()) {
+    // Some data was serialized into the packet. We need to send it.
+    packet->set_length(pos - packet->data());
+    Debug(session(), "Congestion limited, but %" PRIu64 " bytes pending",
+          packet->length());
+    if (!session()->SendPacket(std::move(packet), path))
+      return false;
+  }
+  return true;
+}
+
+void Session::Application::StreamClose(
+    stream_id id,
+    uint64_t app_error_code) {
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  if (stream) {
+    // Calling stream->OnClose() frees up the internal state and
+    // disconnects the stream from the session. The subsequent
+    // call to OnStreamClose notifies the JavaScript side (or
+    // whichever listener is attached) so that any references and
+    // state on that side can be freed up.
+
+    BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+    HandleScope scope(env()->isolate());
+    Context::Scope context_scope(env()->context());
+
+    CallbackScope cb_scope(session());
+
+    Local<Value> argv[] = {
+      Number::New(env()->isolate(), static_cast<double>(id)),
+      Number::New(env()->isolate(), static_cast<double>(app_error_code))
+    };
+
+    // Grab a shared pointer to this to prevent the QuicSession
+    // from being freed while the MakeCallback is running.
+    BaseObjectPtr<Session> ptr(session());
+
+    USE(state->stream_close_callback(env())->Call(
+        env()->context(),
+        session()->object(),
+        arraysize(argv),
+        argv));
+
+    stream->OnClose();
+  }
+}
+
+void Session::Application::StreamHeaders(
+    stream_id id,
+    Stream::HeadersKind kind,
+    const Stream::HeaderList& headers) {
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+
+  CallbackScope cb_scope(session());
+
+  std::vector<Local<Value>> head(headers.size());
+  for (const auto& header : headers) {
+    Local<Value> pair[2];
+    if (UNLIKELY(!header->GetName(state).ToLocal(&pair[0])) ||
+        UNLIKELY(!header->GetValue(state).ToLocal(&pair[1]))) {
+      return;
+    }
+
+    head.emplace_back(Array::New(env()->isolate(), pair, 2));
+  }
+
+  Local<Value> argv[] = {
+    Number::New(env()->isolate(), static_cast<double>(id)),
+    Array::New(env()->isolate(), head.data(), head.size()),
+    Integer::NewFromUnsigned(env()->isolate(), static_cast<uint32_t>(kind)),
+  };
+
+  BaseObjectPtr<Session> ptr(session());
+
+  USE(state->stream_headers_callback(env())->Call(
+      env()->context(),
+      session()->object(),
+      arraysize(argv),
+      argv));
+}
+
+void Session::Application::StreamReset(
+    stream_id id,
+    uint64_t app_error_code) {
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(session());
+
+  Local<Value> argv[] = {
+    Number::New(env()->isolate(), static_cast<double>(id)),
+    Number::New(env()->isolate(), static_cast<double>(app_error_code))
+  };
+
+  // Grab a shared pointer to this to prevent the QuicSession
+  // from being freed while the MakeCallback is running.
+  BaseObjectPtr<Session> ptr(session());
+
+  USE(state->stream_reset_callback(env())->Call(
+      env()->context(),
+      session()->object(),
+      arraysize(argv),
+      argv));
+}
+
+ssize_t Session::Application::WriteVStream(
+    PathStorage* path,
+    uint8_t* buf,
+    ssize_t* ndatalen,
+    const StreamData& stream_data) {
+  CHECK_LE(stream_data.count, kMaxVectorCount);
+
+  uint32_t flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+  if (stream_data.remaining > 0)
+    flags |= NGTCP2_WRITE_STREAM_FLAG_MORE;
+  if (stream_data.fin)
+    flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+
+  return ngtcp2_conn_writev_stream(
+    session()->connection(),
+    &path->path,
+    nullptr,
+    buf,
+    session()->max_packet_length(),
+    ndatalen,
+    flags,
+    stream_data.id,
+    stream_data.buf,
+    stream_data.count,
+    uv_hrtime());
+}
+
+void Session::Application::set_stream_fin(stream_id id) {
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  CHECK(stream);
+  stream->set_fin_sent();
+}
+
+std::string Session::RemoteTransportParamsDebug::ToString() const {
+  ngtcp2_transport_params params;
+  ngtcp2_conn_get_remote_transport_params(session->connection(), &params);
+  std::string out = "Remote Transport Params:\n";
+  out += "  Ack Delay Exponent: " +
+         std::to_string(params.ack_delay_exponent) + "\n";
+  out += "  Active Connection ID Limit: " +
+         std::to_string(params.active_connection_id_limit) + "\n";
+  out += "  Disable Active Migration: " +
+         std::string(params.disable_active_migration ? "Yes" : "No") + "\n";
+  out += "  Initial Max Data: " +
+         std::to_string(params.initial_max_data) + "\n";
+  out += "  Initial Max Stream Data Bidi Local: " +
+         std::to_string(params.initial_max_stream_data_bidi_local) + "\n";
+  out += "  Initial Max Stream Data Bidi Remote: " +
+         std::to_string(params.initial_max_stream_data_bidi_remote) + "\n";
+  out += "  Initial Max Stream Data Uni: " +
+         std::to_string(params.initial_max_stream_data_uni) + "\n";
+  out += "  Initial Max Streams Bidi: " +
+         std::to_string(params.initial_max_streams_bidi) + "\n";
+  out += "  Initial Max Streams Uni: " +
+         std::to_string(params.initial_max_streams_uni) + "\n";
+  out += "  Max Ack Delay: " +
+         std::to_string(params.max_ack_delay) + "\n";
+  out += "  Max Idle Timeout: " +
+         std::to_string(params.max_idle_timeout) + "\n";
+  out += "  Max Packet Size: " +
+         std::to_string(params.max_udp_payload_size) + "\n";
+
+  if (!session->is_server()) {
+    if (params.retry_scid_present) {
+      CID cid(params.original_dcid);
+      CID retry(params.retry_scid);
+      out += "  Original Connection ID: " + cid.ToString() + "\n";
+      out += "  Retry SCID: " + retry.ToString() + "\n";
+    } else {
+      out += "  Original Connection ID: N/A \n";
+    }
+
+    if (params.preferred_address_present) {
+      out += "  Preferred Address Present: Yes\n";
+      // TODO(@jasnell): Serialize the IPv4 and IPv6 address options
+    } else {
+      out += "  Preferred Address Present: No\n";
+    }
+
+    if (params.stateless_reset_token_present) {
+      StatelessResetToken token(params.stateless_reset_token);
+      out += "  Stateless Reset Token: " + token.ToString() + "\n";
+    } else {
+      out += " Stateless Reset Token: N/A";
+    }
+  }
+  return out;
+}
 
 }  // namespace quic
 }  // namespace node

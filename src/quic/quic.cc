@@ -22,6 +22,8 @@
 #include "node_sockaddr-inl.h"
 #include "util-inl.h"
 
+#include <nghttp3/nghttp3.h>
+
 #include <v8.h>
 
 namespace node {
@@ -32,6 +34,7 @@ using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::Local;
 using v8::Object;
+using v8::String;
 using v8::Value;
 
 namespace quic {
@@ -39,7 +42,16 @@ namespace quic {
 constexpr FastStringKey BindingState::binding_data_name;
 
 BindingState::BindingState(Environment* env, Local<Object> object)
-    : BaseObject(env, object) {}
+    : BaseObject(env, object) {
+
+  http3_alpn_.Set(
+      env->isolate(),
+      OneByteString(env->isolate(), &NGHTTP3_ALPN_H3[1]));
+}
+
+Local<String> BindingState::http3_alpn(Environment* env) {
+  return http3_alpn_.Get(env->isolate());
+}
 
 ngtcp2_mem BindingState::GetAllocator(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
