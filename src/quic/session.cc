@@ -1288,7 +1288,37 @@ void Session::Datagram(
     uint32_t flags,
     const uint8_t* data,
     size_t datalen) {
-  // TODO(@jasnell): Implement
+  if (LIKELY(state_->datagram_enabled == 0) || UNLIKELY(datalen == 0))
+    return;
+
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  std::shared_ptr<BackingStore> store =
+      ArrayBuffer::NewBackingStore(env()->isolate(), datalen);
+  if (!store)
+    return;
+  memcpy(store->Data(), data, datalen);
+
+  Local<Value> argv[] = {
+    ArrayBuffer::New(env()->isolate(), store),
+    flags & NGTCP2_DATAGRAM_FLAG_EARLY
+       ? v8::True(env()->isolate())
+       : v8::False(env()->isolate())
+  };
+
+  // Grab a shared pointer to this to prevent the QuicSession
+  // from being freed while the MakeCallback is running.
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->session_datagram_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
 }
 
 void Session::Destroy() {

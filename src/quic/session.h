@@ -87,27 +87,28 @@ namespace quic {
 // toggle certain settings back and forth or to access various stats with low
 // cost.
 #define SESSION_STATE(V)                                                       \
-  V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
   V(CLIENT_HELLO_ENABLED, client_hello_enabled, uint8_t)                       \
-  V(OCSP_ENABLED, ocsp_enabled, uint8_t)                                       \
-  V(PATH_VALIDATED_ENABLED, path_validated_enabled, uint8_t)                   \
-  V(USE_PREFERRED_ADDRESS_ENABLED, use_preferred_address_enabled, uint8_t)     \
+  V(CLOSING, closing, uint8_t)                                                 \
+  V(CLOSING_TIMER_ENABLED, closing_timer_enabled, uint8_t)                     \
+  V(CONNECTION_CLOSE_SCOPE, in_connection_close_scope, uint8_t)                \
+  V(DATAGRAM_ENABLED, datagram_enabled, uint8_t)                               \
+  V(DESTROYED, destroyed, uint8_t)                                             \
+  V(GRACEFUL_CLOSING, graceful_closing, uint8_t)                               \
   V(HANDSHAKE_CONFIRMED, handshake_confirmed, uint8_t)                         \
   V(IDLE_TIMEOUT, idle_timeout, uint8_t)                                       \
-  V(WRAPPED, wrapped, uint8_t)                                                 \
-  V(CLOSING, closing, uint8_t)                                                 \
-  V(GRACEFUL_CLOSING, graceful_closing, uint8_t)                               \
-  V(DESTROYED, destroyed, uint8_t)                                             \
-  V(TRANSPORT_PARAMS_SET, transport_params_set, uint8_t)                       \
+  V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
   V(NGTCP2_CALLBACK, in_ngtcp2_callback, uint8_t)                              \
-  V(CONNECTION_CLOSE_SCOPE, in_connection_close_scope, uint8_t)                \
+  V(OCSP_ENABLED, ocsp_enabled, uint8_t)                                       \
+  V(PATH_VALIDATED_ENABLED, path_validated_enabled, uint8_t)                   \
   V(SILENT_CLOSE, silent_close, uint8_t)                                       \
   V(STATELESS_RESET, stateless_reset, uint8_t)                                 \
-  V(CLOSING_TIMER_ENABLED, closing_timer_enabled, uint8_t)                     \
-  V(MAX_STREAMS_BIDI, max_streams_bidi, uint64_t)                              \
-  V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)                                \
+  V(TRANSPORT_PARAMS_SET, transport_params_set, uint8_t)                       \
+  V(USE_PREFERRED_ADDRESS_ENABLED, use_preferred_address_enabled, uint8_t)     \
+  V(WRAPPED, wrapped, uint8_t)                                                 \
+  V(BYTES_IN_FLIGHT, bytes_in_flight, uint64_t)                                \
   V(MAX_DATA_LEFT, max_data_left, uint64_t)                                    \
-  V(BYTES_IN_FLIGHT, bytes_in_flight, uint64_t)
+  V(MAX_STREAMS_BIDI, max_streams_bidi, uint64_t)                              \
+  V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)
 
 class Endpoint;
 class QLogStream;

@@ -82,6 +82,7 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(session_cert, onSessionCert)                                               \
   V(session_client_hello, onSessionClientHello)                                \
   V(session_close, onSessionClose)                                             \
+  V(session_datagram, onSessionDatagram)                                       \
   V(session_handshake, onSessionHandshake)                                     \
   V(session_keylog, onSessionKeylog)                                           \
   V(session_path_validation, onSessionPathValidation)                          \
@@ -538,14 +539,12 @@ class StatelessResetToken final : public MemoryRetainer {
       uint8_t* token,
       const uint8_t* secret,
       const CID& cid) {
-    // TODO(@jasnell): Uncomment when crypto added
-    // GenerateResetToken(token, secret, cid);
-    // memcpy(buf_, token, sizeof(buf_));
+    GenerateResetToken(token, secret, cid);
+    memcpy(buf_, token, sizeof(buf_));
   }
 
   inline StatelessResetToken(const uint8_t* secret, const CID& cid) {
-    // TODO(@jasnell): Uncomment when crypto added
-    // GenerateResetToken(buf_, secret, cid);
+    GenerateResetToken(buf_, secret, cid);
   }
 
   explicit inline StatelessResetToken(const uint8_t* token) {
