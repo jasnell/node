@@ -95,6 +95,37 @@ ConnectionCloseFn SelectCloseFn(QuicError error) {
   }
 }
 
+void Consume(ngtcp2_vec** pvec, size_t* pcnt, size_t len) {
+  ngtcp2_vec* v = *pvec;
+  size_t cnt = *pcnt;
+
+  for (; cnt > 0; --cnt, ++v) {
+    if (v->len > len) {
+      v->len -= len;
+      v->base += len;
+      break;
+    }
+    len -= v->len;
+  }
+
+  *pvec = v;
+  *pcnt = cnt;
+}
+
+int IsEmpty(const ngtcp2_vec* vec, size_t cnt) {
+  size_t i;
+  for (i = 0; i < cnt && vec[i].len == 0; ++i) {}
+  return i == cnt;
+}
+
+template <typename T>
+size_t get_length(const T* vec, size_t count) {
+  CHECK_NOT_NULL(vec);
+  size_t len = 0;
+  for (size_t n = 0; n < count; n++)
+    len += vec[n].len;
+  return len;
+}
 }  // namespace
 
 Session::Config::Config(Endpoint* endpoint) {
@@ -2755,14 +2786,11 @@ Session::Application* Session::SelectApplication() {
   //   return new Http3Application(this);
   // }
 
-  // // In the future, we may end up supporting additional
-  // // QUIC protocols. As they are added, extend the cases
-  // // here to create and return them.
+  // In the future, we may end up supporting additional
+  // QUIC protocols. As they are added, extend the cases
+  // here to create and return them.
 
-  // Debug(this, "Selecting Default Application");
-  // return new DefaultApplication(this);
-  // TODO(@jasnell): Implement
-  return nullptr;
+  return new DefaultApplication(this);
 }
 
 Session::Application::Application(Session* session) : session_(session) {}
@@ -2782,6 +2810,11 @@ std::unique_ptr<Packet> Session::Application::CreateStreamDataPacket() {
   return std::make_unique<Packet>(
       session()->max_packet_length(),
       "stream data");
+}
+
+bool Session::Application::Initialize() {
+  if (needs_init_) needs_init_ = false;
+  return !needs_init_;
 }
 
 void Session::Application::MaybeSetFin(const StreamData& stream_data) {
@@ -3072,6 +3105,138 @@ std::string Session::RemoteTransportParamsDebug::ToString() const {
     }
   }
   return out;
+}
+
+DefaultApplication::DefaultApplication(Session* session)
+    : Session::Application(session) {
+  Debug(session, "Using default application");
+}
+
+void DefaultApplication::ScheduleStream(stream_id id) {
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  if (LIKELY(stream && !stream->is_destroyed())) {
+    Debug(session(), "Scheduling stream %" PRIu64, id);
+    stream->Schedule(&stream_queue_);
+  }
+}
+
+void DefaultApplication::UnscheduleStream(stream_id id) {
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  if (LIKELY(stream)) {
+    Debug(session(), "Unscheduling stream %" PRIu64, id);
+    stream->Unschedule();
+  }
+}
+
+void DefaultApplication::ResumeStream(stream_id id) {
+  ScheduleStream(id);
+}
+
+bool DefaultApplication::ReceiveStreamData(
+    uint32_t flags,
+    stream_id id,
+    const uint8_t* data,
+    size_t datalen,
+    uint64_t offset) {
+
+  // One potential DOS attack vector is to send a bunch of
+  // empty stream frames to commit resources. Check that
+  // here. Essentially, we only want to create a new stream
+  // if the datalen is greater than 0, otherwise, we ignore
+  // the packet. ngtcp2 should be handling this for us,
+  // but we handle it just to be safe.
+  if (UNLIKELY(datalen == 0))
+    return true;
+
+  // Ensure that the QuicStream exists.
+  Debug(session(), "Receiving stream data for %" PRIu64, id);
+  BaseObjectPtr<Stream> stream = session()->FindStream(id);
+  if (!stream) {
+    // Because we are closing gracefully, we are not allowing
+    // new streams to be created. Shut it down immediately
+    // and commit no further resources.
+    if (session()->is_graceful_closing()) {
+      session()->ShutdownStream(id, NGTCP2_ERR_CLOSING);
+      return true;
+    }
+
+    stream = session()->CreateStream(id);
+  }
+  CHECK(stream);
+
+  // If the stream ended up being destroyed immediately after
+  // creation, just skip the data processing and return.
+  if (UNLIKELY(stream->is_destroyed()))
+    return true;
+
+  stream->ReceiveData(flags, data, datalen, offset);
+  return true;
+}
+
+int DefaultApplication::GetStreamData(StreamData* stream_data) {
+  Stream* stream = stream_queue_.PopFront();
+  // If stream is nullptr, there are no streams with data pending.
+  if (stream == nullptr)
+    return 0;
+
+  stream_data->stream.reset(stream);
+  stream_data->id = stream->id();
+
+  auto next = [&](
+      int status,
+      const ngtcp2_vec* data,
+      size_t count,
+      bob::Done done) {
+    switch (status) {
+      case bob::Status::STATUS_BLOCK:
+        // Fall through
+      case bob::Status::STATUS_WAIT:
+        // Fall through
+      case bob::Status::STATUS_EOS:
+        return;
+      case bob::Status::STATUS_END:
+        stream_data->fin = 1;
+    }
+
+    stream_data->count = count;
+
+    if (count > 0) {
+      stream->Schedule(&stream_queue_);
+      stream_data->remaining = get_length(data, count);
+    } else {
+      stream_data->remaining = 0;
+    }
+  };
+
+  if (LIKELY(!stream->is_eos())) {
+    CHECK_GE(stream->Pull(
+        std::move(next),
+        bob::Options::OPTIONS_SYNC,
+        stream_data->data,
+        arraysize(stream_data->data),
+        kMaxVectorCount), 0);
+  }
+
+  return 0;
+}
+
+bool DefaultApplication::StreamCommit(
+    StreamData* stream_data,
+    size_t datalen) {
+  CHECK(stream_data->stream);
+  stream_data->remaining -= datalen;
+  Consume(&stream_data->buf, &stream_data->count, datalen);
+  stream_data->stream->Commit(datalen);
+  return true;
+}
+
+bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
+  if (!stream_data.stream ||
+      !IsEmpty(stream_data.buf, stream_data.count))
+    return false;
+  // TODO(@jasnell): Revisit this?
+  //return !stream_data.stream->is_writable();
+  return true;
 }
 
 }  // namespace quic

@@ -494,7 +494,7 @@ class Session final : public AsyncWrap,
 
     // The session will call initialize as soon as the TLS secrets
     // have been set.
-    virtual bool Initialize() = 0;
+    virtual bool Initialize();
 
     // Session will forward all received stream data immediately
     // on to the Application. The only additional processing the
@@ -686,7 +686,9 @@ class Session final : public AsyncWrap,
 
   BaseObjectPtr<QLogStream> qlogstream();
 
+  inline bool is_closing() const { return state_->closing; }
   inline bool is_destroyed() const { return state_->destroyed; }
+  inline bool is_graceful_closing() const { return state_->graceful_closing; }
   inline bool is_server() const {
     return crypto_context_->side() == NGTCP2_CRYPTO_SIDE_SERVER;
   }
@@ -1437,6 +1439,34 @@ class Session final : public AsyncWrap,
   friend class Session::NgCallbackScope;
   friend class Session::SendSessionScope;
   friend class Session::CryptoContext;
+};
+
+class DefaultApplication final : public Session::Application {
+ public:
+  explicit DefaultApplication(Session* session);
+
+  bool ReceiveStreamData(
+      uint32_t flags,
+      stream_id id,
+      const uint8_t* data,
+      size_t datalen,
+      uint64_t offset) override;
+
+  int GetStreamData(StreamData* stream_data) override;
+
+  void ResumeStream(stream_id id) override;
+  bool ShouldSetFin(const StreamData& stream_data) override;
+  bool StreamCommit(StreamData* stream_data, size_t datalen) override;
+
+  SET_SELF_SIZE(DefaultApplication)
+  SET_MEMORY_INFO_NAME(DefaultApplication)
+  SET_NO_MEMORY_INFO()
+
+ private:
+  void ScheduleStream(stream_id id);
+  void UnscheduleStream(stream_id id);
+
+  Stream::Queue stream_queue_;
 };
 
 }  // namespace quic
