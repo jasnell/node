@@ -176,8 +176,14 @@ class Session final : public AsyncWrap,
   };
 
   struct Options {
-    std::string alpn = NGHTTP3_ALPN_H3;
+    std::string alpn;
+    std::string hostname = "";
     BaseObjectPtr<crypto::SecureContext> context;
+
+    CID dcid {};
+
+    PreferredAddressStrategy preferred_address_strategy =
+        UsePreferredAddressStrategy;
 
     // Options used for transport params:
 
@@ -222,9 +228,6 @@ class Session final : public AsyncWrap,
     // client authentication certificate.
     bool request_peer_certificate = false;
 
-    PreferredAddressStrategy preferred_address_strategy =
-        UsePreferredAddressStrategy;
-
     // Options pnly used by client sessions:
 
     // When set, instructs the client session to include an
@@ -239,11 +242,6 @@ class Session final : public AsyncWrap,
     // When set, instructs the client session to perform
     // additional checks on TLS session resumption.
     bool resume = false;
-
-    std::string hostname = "";
-
-    CID dcid;
-
     ngtcp2_transport_params* early_transport_params = nullptr;
     SSL_SESSION* early_session_ticket = nullptr;
   };
@@ -1467,6 +1465,48 @@ class DefaultApplication final : public Session::Application {
   void UnscheduleStream(stream_id id);
 
   Stream::Queue stream_queue_;
+};
+
+class OptionsObject : public BaseObject {
+ public:
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SetPreferredAddress(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SetTransportParams(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SetTLSOptions(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SetSessionResume(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  Session::Options* data() { return options_.get(); }
+
+  // TODO(@jasnell): This is a lie
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(OptionsObject)
+  SET_SELF_SIZE(OptionsObject)
+
+ private:
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      uint64_t Session::Options::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      bool Session::Options::*member);
+
+  OptionsObject(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::shared_ptr<Session::Options> options =
+          std::make_shared<Session::Options>());
+
+  std::shared_ptr<Session::Options> options_;
 };
 
 }  // namespace quic

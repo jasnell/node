@@ -25,13 +25,20 @@
 
 namespace node {
 
+using v8::BigInt;
 using v8::Context;
+using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
+using v8::Int32;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
+using v8::Nothing;
 using v8::Number;
 using v8::Object;
 using v8::PropertyAttribute;
+using v8::String;
 using v8::Value;
 
 namespace quic {
@@ -949,6 +956,234 @@ void EndpointStatsTraits::ToString(
 #define V(_n, name, label) add_field(label, ptr.GetStat(&EndpointStats::name));
   ENDPOINT_STATS(V)
 #undef V
+}
+
+bool ConfigObject::HasInstance(Environment* env, Local<Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
+Local<FunctionTemplate> ConfigObject::GetConstructorTemplate(
+    Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  Local<FunctionTemplate> tmpl =
+      state->endpoint_config_constructor_template(env);
+  if (tmpl.IsEmpty()) {
+    tmpl = env->NewFunctionTemplate(New);
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        ConfigObject::kInternalFieldCount);
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "ConfigObject"));
+    env->SetProtoMethod(
+        tmpl,
+        "generateResetTokenSecret",
+        GenerateResetTokenSecret);
+    env->SetProtoMethod(
+        tmpl,
+        "setResetTokenSecret",
+        SetResetTokenSecret);
+    state->set_endpoint_config_constructor_template(env, tmpl);
+  }
+  return tmpl;
+}
+
+void ConfigObject::Initialize(Environment* env, Local<Object> target) {
+  env->SetConstructorFunction(
+      target,
+      "ConfigObject",
+      GetConstructorTemplate(env));
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    uint64_t Endpoint::Config::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK_IMPLIES(!value->IsBigInt(), value->IsNumber());
+
+  uint64_t val = 0;
+  if (value->IsBigInt()) {
+    bool lossless = true;
+    val = value.As<BigInt>()->Uint64Value(&lossless);
+    if (lossless) {
+      Utf8Value label(env()->isolate(), name);
+      THROW_ERR_OUT_OF_RANGE(
+          env(),
+          (std::string("options.") + *label + " is out of range").c_str());
+      return Nothing<bool>();
+    }
+  } else {
+    val = static_cast<int64_t>(value.As<Number>()->Value());
+  }
+  config_.get()->*member = val;
+  return Just(true);
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    double Endpoint::Config::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK(value->IsNumber());
+  double val = static_cast<int64_t>(value.As<Number>()->Value());
+  config_.get()->*member = val;
+  return Just(true);
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    ngtcp2_cc_algo Endpoint::Config::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  ngtcp2_cc_algo val = static_cast<ngtcp2_cc_algo>(value.As<Int32>()->Value());
+  switch (val) {
+    case NGTCP2_CC_ALGO_CUBIC:
+      // Fall through
+    case NGTCP2_CC_ALGO_RENO:
+      config_.get()->*member = val;
+      break;
+    default:
+      UNREACHABLE();
+  }
+
+  return Just(true);
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    bool Endpoint::Config::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+  if (value->IsUndefined())
+    return Just(false);
+  CHECK(value->IsBoolean());
+  config_.get()->*member = value->IsTrue();
+  return Just(true);
+}
+
+void ConfigObject::New(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+
+  ConfigObject* config = new ConfigObject(env, args.This());
+  config->data()->GenerateResetTokenSecret();
+
+  if (args[0]->IsObject()) {
+    BindingState* state = env->GetBindingData<BindingState>(env->context());
+    Local<Object> object = args[0].As<Object>();
+    if (config->SetOption(
+            object,
+            state->retry_token_expiration_string(env),
+            &Endpoint::Config::retry_token_expiration).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_window_override_string(env),
+            &Endpoint::Config::max_window_override).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_stream_window_override_string(env),
+            &Endpoint::Config::max_stream_window_override).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_connections_per_host_string(env),
+            &Endpoint::Config::max_connections_per_host).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_connections_total_string(env),
+            &Endpoint::Config::max_connections_total).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_stateless_resets_string(env),
+            &Endpoint::Config::max_stateless_resets).IsNothing() ||
+        config->SetOption(
+            object,
+            state->address_lru_size_string(env),
+            &Endpoint::Config::address_lru_size).IsNothing() ||
+        config->SetOption(
+            object,
+            state->retry_limit_string(env),
+            &Endpoint::Config::retry_limit).IsNothing() ||
+        config->SetOption(
+            object,
+            state->max_payload_size_string(env),
+            &Endpoint::Config::max_payload_size).IsNothing() ||
+        config->SetOption(
+            object,
+            state->unacknowledged_packet_threshold_string(env),
+            &Endpoint::Config::unacknowledged_packet_threshold).IsNothing() ||
+        config->SetOption(
+            object,
+            state->qlog_string(env),
+            &Endpoint::Config::qlog).IsNothing() ||
+        config->SetOption(
+            object,
+            state->validate_address_string(env),
+            &Endpoint::Config::validate_address).IsNothing() ||
+        config->SetOption(
+            object,
+            state->disable_stateless_reset_string(env),
+            &Endpoint::Config::disable_stateless_reset).IsNothing() ||
+        config->SetOption(
+            object,
+            state->rx_packet_loss_string(env),
+            &Endpoint::Config::rx_loss).IsNothing() ||
+        config->SetOption(
+            object,
+            state->tx_packet_loss_string(env),
+            &Endpoint::Config::tx_loss).IsNothing() ||
+        config->SetOption(
+            object,
+            state->cc_algorithm_string(env),
+            &Endpoint::Config::cc_algorithm).IsNothing()) {
+      // The if block intentionally does nothing. The code is structured
+      // like this to shortcircuit if any of the SetOptions() returns Nothing.
+    }
+  }
+}
+
+void ConfigObject::GenerateResetTokenSecret(
+    const FunctionCallbackInfo<Value>& args) {
+  ConfigObject* config;
+  ASSIGN_OR_RETURN_UNWRAP(&config, args.Holder());
+  config->data()->GenerateResetTokenSecret();
+}
+
+void ConfigObject::SetResetTokenSecret(
+    const FunctionCallbackInfo<Value>& args) {
+  ConfigObject* config;
+  ASSIGN_OR_RETURN_UNWRAP(&config, args.Holder());
+
+  crypto::ArrayBufferOrViewContents<uint8_t> secret(args[0]);
+  CHECK_EQ(secret.size(), sizeof(config->data()->reset_token_secret));
+  memcpy(config->data()->reset_token_secret, secret.data(), secret.size());
+}
+
+ConfigObject::ConfigObject(
+    Environment* env,
+    Local<Object> object,
+    std::shared_ptr<Endpoint::Config> config)
+    : BaseObject(env, object),
+      config_(config) {
+  MakeWeak();
 }
 
 }  // namespace quic

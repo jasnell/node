@@ -103,6 +103,17 @@ void BindingState::DecreaseAllocatedSize(size_t size) {
   QUIC_JS_CALLBACKS(V)
 #undef V
 
+#define V(name, value)                                                         \
+  Local<String> BindingState::name ## _string(Environment* env) {              \
+    if (name ## _string_.IsEmpty())                                            \
+      name ## _string_.Set(                                                    \
+          env->isolate(),                                                      \
+          FIXED_ONE_BYTE_STRING(env->isolate(), value));                       \
+    return name ## _string_.Get(env->isolate());                               \
+  }
+  QUIC_STRINGS(V)
+#undef V
+
 Path::Path(const SocketAddress& local, const SocketAddress& remote) {
   ngtcp2_addr_init(
       &this->local,
@@ -173,6 +184,8 @@ void Initialize(Local<Object> target,
   Endpoint::Initialize(env);
   Session::Initialize(env);
   Stream::Initialize(env);
+  OptionsObject::Initialize(env, target);
+  ConfigObject::Initialize(env, target);
 
   NODE_DEFINE_CONSTANT(target, NGTCP2_APP_NOERROR);
   NODE_DEFINE_CONSTANT(target, NGTCP2_NO_ERROR);

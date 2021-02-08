@@ -70,9 +70,11 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
 
 #define QUIC_CONSTRUCTORS(V)                                                   \
   V(endpoint)                                                                  \
+  V(endpoint_config)                                                           \
   V(qlogstream)                                                                \
   V(send_wrap)                                                                 \
   V(session)                                                                   \
+  V(session_options)                                                           \
   V(stream)
 
 #define QUIC_JS_CALLBACKS(V)                                                   \
@@ -98,6 +100,41 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(stream_reset, onStreamReset)                                               \
   V(stream_headers, onStreamHeaders)                                           \
   V(stream_blocked, onStreamBlocked)
+
+#define QUIC_STRINGS(V)                                                        \
+  V(initial_max_stream_data_bidi_local, "initialMaxStreamDataBidiLocal")       \
+  V(initial_max_stream_data_bidi_remote, "initialMaxStreamDataBidiRemote")     \
+  V(initial_max_stream_data_uni, "initialMaxStreamDataUni")                    \
+  V(initial_max_data, "initialMaxData")                                        \
+  V(initial_max_streams_bidi, "initialMaxStreamsBidi")                         \
+  V(initial_max_streams_uni, "initialMaxStreamsUni")                           \
+  V(max_idle_timeout, "maxIdleTimeout")                                        \
+  V(active_connection_id_limit, "activeConnectionIdLimit")                     \
+  V(ack_delay_exponent, "ackDelayExponent")                                    \
+  V(max_ack_delay, "maxAckDelay")                                              \
+  V(max_datagram_frame_size, "maxDatagramFrameSize")                           \
+  V(disable_active_migration, "disableActiveMigration")                        \
+  V(reject_unauthorized, "rejectUnauthorized")                                 \
+  V(enable_tls_trace, "enableTLSTrace")                                        \
+  V(request_peer_certificate, "requestPeerCertificate")                        \
+  V(request_ocsp, "requestOCSP")                                               \
+  V(verify_hostname_identity, "verifyHostnameIdentity")                        \
+  V(retry_token_expiration, "retryTokenExpiration")                            \
+  V(max_window_override, "maxWindowOverride")                                  \
+  V(max_stream_window_override, "maxStreamWindowOverride")                     \
+  V(max_connections_per_host, "maxConnectionsPerHost")                         \
+  V(max_connections_total, "maxConnectionsTotal")                              \
+  V(max_stateless_resets, "maxStatelessResets")                                \
+  V(address_lru_size, "addressLRUSize")                                        \
+  V(retry_limit, "retryLimit")                                                 \
+  V(max_payload_size, "maxPayloadSize")                                        \
+  V(unacknowledged_packet_threshold, "unacknowledgedPacketThreshold")          \
+  V(qlog, "qlog")                                                              \
+  V(validate_address, "validateAddress")                                       \
+  V(disable_stateless_reset, "disableStatelessReset")                          \
+  V(rx_packet_loss, "rxPacketLoss")                                            \
+  V(tx_packet_loss, "txPacketLoss")                                            \
+  V(cc_algorithm, "ccAlgorithm")
 
 struct QuicError {
   enum class Type {
@@ -180,6 +217,10 @@ class BindingState final : public BaseObject,
   QUIC_JS_CALLBACKS(V)
 #undef V
 
+#define V(name, _) v8::Local<v8::String> name ## _string(Environment* env);
+  QUIC_STRINGS(V)
+#undef V
+
   bool warn_trace_tls = true;
 
  private:
@@ -193,6 +234,10 @@ class BindingState final : public BaseObject,
 #undef V
 
   v8::Eternal<v8::String> http3_alpn_;
+
+#define V(name, _) v8::Eternal<v8::String> name ## _string_;
+  QUIC_STRINGS(V)
+#undef V
 
   bool initialized_ = false;
   size_t current_ngtcp2_memory_ = 0;

@@ -129,20 +129,20 @@ class Endpoint final : public AsyncWrap,
     uint64_t retry_token_expiration = DEFAULT_RETRYTOKEN_EXPIRATION;
     uint64_t max_window_override = 0;
     uint64_t max_stream_window_override = 0;
-    size_t max_connections_per_host = DEFAULT_MAX_CONNECTIONS_PER_HOST;
-    size_t max_connections_total = DEFAULT_MAX_CONNECTIONS;
-    size_t max_stateless_resets = DEFAULT_MAX_STATELESS_RESETS;
-    size_t address_lru_size = DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE;
-    size_t retry_limit = DEFAULT_MAX_RETRY_LIMIT;
-    size_t max_payload_size = NGTCP2_DEFAULT_MAX_PKTLEN;
-    size_t unacknowledged_packet_threshold = 0;
+    uint64_t max_connections_per_host = DEFAULT_MAX_CONNECTIONS_PER_HOST;
+    uint64_t max_connections_total = DEFAULT_MAX_CONNECTIONS;
+    uint64_t max_stateless_resets = DEFAULT_MAX_STATELESS_RESETS;
+    uint64_t address_lru_size = DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE;
+    uint64_t retry_limit = DEFAULT_MAX_RETRY_LIMIT;
+    uint64_t max_payload_size = NGTCP2_DEFAULT_MAX_PKTLEN;
+    uint64_t unacknowledged_packet_threshold = 0;
     bool qlog = false;
     bool validate_address = true;
     bool disable_stateless_reset = false;
     double rx_loss = 0.0;
     double tx_loss = 0.0;
-    uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
     ngtcp2_cc_algo cc_algorithm = NGTCP2_CC_ALGO_CUBIC;
+    uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
 
     Config() = default;
     inline Config(const Config& other)
@@ -419,6 +419,55 @@ class Endpoint final : public AsyncWrap,
   CID::Map<BaseObjectPtr<Session>> sessions_;
   CID::Map<CID> dcid_to_scid_;
   SendWrap* last_created_send_wrap_ = nullptr;
+};
+
+class ConfigObject : public BaseObject {
+ public:
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GenerateResetTokenSecret(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SetResetTokenSecret(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
+
+  Endpoint::Config* data() { return config_.get(); }
+
+  // TODO(@jasnell): This is a lie
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(ConfigObject)
+  SET_SELF_SIZE(ConfigObject)
+
+ private:
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      uint64_t Endpoint::Config::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      double Endpoint::Config::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      ngtcp2_cc_algo Endpoint::Config::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      bool Endpoint::Config::*member);
+
+  ConfigObject(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::shared_ptr<Endpoint::Config> config =
+          std::make_shared<Endpoint::Config>());
+  std::shared_ptr<Endpoint::Config> config_;
 };
 
 }  // namespace quic

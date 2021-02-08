@@ -27,9 +27,12 @@ namespace node {
 using v8::Array;
 using v8::ArrayBuffer;
 using v8::BackingStore;
+using v8::BigInt;
 using v8::Context;
+using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
+using v8::Int32;
 using v8::Integer;
 using v8::Just;
 using v8::Local;
@@ -3237,6 +3240,277 @@ bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
   // TODO(@jasnell): Revisit this?
   //return !stream_data.stream->is_writable();
   return true;
+}
+
+bool OptionsObject::HasInstance(Environment* env, Local<Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
+Local<FunctionTemplate> OptionsObject::GetConstructorTemplate(
+    Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  Local<FunctionTemplate> tmpl =
+      state->session_options_constructor_template(env);
+  if (tmpl.IsEmpty()) {
+    tmpl = env->NewFunctionTemplate(New);
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        OptionsObject::kInternalFieldCount);
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "OptionsObject"));
+    env->SetProtoMethod(tmpl, "setPreferredAddress", SetPreferredAddress);
+    env->SetProtoMethod(tmpl, "setTransportParams", SetTransportParams);
+    state->set_session_options_constructor_template(env, tmpl);
+  }
+  return tmpl;
+}
+
+void OptionsObject::Initialize(Environment* env, Local<Object> target) {
+  env->SetConstructorFunction(
+      target,
+      "OptionsObject",
+      GetConstructorTemplate(env));
+}
+
+void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+
+  CHECK(args[0]->IsString());  // ALPN
+  CHECK(args[1]->IsObject());  // SecureContext
+  CHECK_IMPLIES(
+      !args[2]->IsUndefined(),
+      args[2]->IsString());  // Hostname
+  CHECK_IMPLIES(  // CID
+      !args[3]->IsUndefined(),
+      args[3]->IsArrayBuffer() || args[3]->IsArrayBufferView());
+  CHECK_IMPLIES(  // Preferred address strategy
+      !args[4]->IsUndefined(),
+      args[4]->IsInt32());
+
+  Utf8Value alpn(env->isolate(), args[0]);
+  crypto::SecureContext* context;
+  ASSIGN_OR_RETURN_UNWRAP(&context, args[1].As<Object>());
+
+  OptionsObject* options = new OptionsObject(env, args.This());
+  options->data()->alpn = *alpn;
+  options->data()->context.reset(context);
+
+  if (!args[2]->IsUndefined()) {
+    Utf8Value hostname(env->isolate(), args[2]);
+    options->data()->hostname = *hostname;
+  }
+
+  if (!args[3]->IsUndefined()) {
+    crypto::ArrayBufferOrViewContents<uint8_t> cid(args[3]);
+    CHECK_LE(cid.size(), NGTCP2_MAX_CIDLEN);
+    if (cid.size() > 0) {
+      uint8_t* ptr = reinterpret_cast<uint8_t*>(&(options->data()->dcid));
+      memcpy(ptr, cid.data(), cid.size());
+    }
+  }
+
+  if (!args[4]->IsUndefined()) {
+    PreferredAddress::Policy policy =
+        static_cast<PreferredAddress::Policy>(args[4].As<Int32>()->Value());
+    switch (policy) {
+      case PreferredAddress::Policy::USE:
+        options->data()->preferred_address_strategy =
+            Session::UsePreferredAddressStrategy;
+        break;
+      case PreferredAddress::Policy::IGNORE:
+        options->data()->preferred_address_strategy =
+            Session::IgnorePreferredAddressStrategy;
+        break;
+      default:
+        UNREACHABLE();
+    }
+  }
+}
+
+void OptionsObject::SetPreferredAddress(
+    const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  OptionsObject* options;
+  ASSIGN_OR_RETURN_UNWRAP(&options, args.Holder());
+
+  CHECK(args[0]->IsInt32());
+  CHECK(args[1]->IsString());
+  CHECK(args[2]->IsInt32());
+
+  int32_t type = args[0].As<Int32>()->Value();
+  int32_t port = args[2].As<Int32>()->Value();
+  Utf8Value address(env->isolate(), args[1]);
+
+  CHECK_IMPLIES(type != AF_INET, type == AF_INET6);
+
+  SocketAddress* addr = nullptr;
+  switch (type) {
+    case AF_INET:
+      addr = &options->data()->preferred_address_ipv4;
+      break;
+    case AF_INET6:
+      addr = &options->data()->preferred_address_ipv6;
+      break;
+    default:
+      UNREACHABLE();
+  }
+
+  args.GetReturnValue().Set(SocketAddress::New(type, *address, port, addr));
+}
+
+Maybe<bool> OptionsObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    uint64_t Session::Options::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK_IMPLIES(!value->IsBigInt(), value->IsNumber());
+
+  uint64_t val = 0;
+  if (value->IsBigInt()) {
+    bool lossless = true;
+    val = value.As<BigInt>()->Uint64Value(&lossless);
+    if (lossless) {
+      Utf8Value label(env()->isolate(), name);
+      THROW_ERR_OUT_OF_RANGE(
+          env(),
+          (std::string("options.") + *label + " is out of range").c_str());
+      return Nothing<bool>();
+    }
+  } else {
+    val = static_cast<int64_t>(value.As<Number>()->Value());
+  }
+  options_.get()->*member = val;
+  return Just(true);
+}
+
+Maybe<bool> OptionsObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    bool Session::Options::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+  if (value->IsUndefined())
+    return Just(false);
+  CHECK(value->IsBoolean());
+  options_.get()->*member = value->IsTrue();
+  return Just(true);
+}
+
+void OptionsObject::SetTransportParams(
+    const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  OptionsObject* options;
+  ASSIGN_OR_RETURN_UNWRAP(&options, args.Holder());
+
+  CHECK(args[0]->IsObject());
+  Local<Object> obj = args[0].As<Object>();
+
+  if (options->SetOption(
+          obj,
+          state->initial_max_stream_data_bidi_local_string(env),
+          &Session::Options::initial_max_stream_data_bidi_local).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->initial_max_stream_data_bidi_remote_string(env),
+          &Session::Options::initial_max_stream_data_bidi_remote).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->initial_max_stream_data_uni_string(env),
+          &Session::Options::initial_max_stream_data_uni).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->initial_max_data_string(env),
+          &Session::Options::initial_max_data).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->initial_max_streams_bidi_string(env),
+          &Session::Options::initial_max_streams_bidi).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->initial_max_streams_uni_string(env),
+          &Session::Options::initial_max_streams_uni).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->max_idle_timeout_string(env),
+          &Session::Options::max_idle_timeout).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->active_connection_id_limit_string(env),
+          &Session::Options::active_connection_id_limit).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->ack_delay_exponent_string(env),
+          &Session::Options::ack_delay_exponent).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->max_ack_delay_string(env),
+          &Session::Options::max_ack_delay).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->max_datagram_frame_size_string(env),
+          &Session::Options::max_datagram_frame_size).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->disable_active_migration_string(env),
+          &Session::Options::disable_active_migration).IsNothing()) {
+    // The if block intentionally does nothing. The code is structured
+    // like this to shortcircuit if any of the SetOptions() returns Nothing.
+  }
+}
+
+void OptionsObject::SetTLSOptions(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  OptionsObject* options;
+  ASSIGN_OR_RETURN_UNWRAP(&options, args.Holder());
+
+  CHECK(args[0]->IsObject());
+  Local<Object> obj = args[0].As<Object>();
+
+  if (options->SetOption(
+          obj,
+          state->reject_unauthorized_string(env),
+          &Session::Options::reject_unauthorized).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->enable_tls_trace_string(env),
+          &Session::Options::enable_tls_trace).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->request_peer_certificate_string(env),
+          &Session::Options::request_peer_certificate).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->request_ocsp_string(env),
+          &Session::Options::request_ocsp).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->verify_hostname_identity_string(env),
+          &Session::Options::verify_hostname_identity).IsNothing()) {
+    // The if block intentionally does nothing. The code is structured
+    // like this to shortcircuit if any of the SetOptions() returns Nothing.
+  }
+}
+
+void OptionsObject::SetSessionResume(const FunctionCallbackInfo<Value>& args) {
+  // TODO(@jasnell): Implement
+}
+
+OptionsObject::OptionsObject(
+    Environment* env,
+    Local<Object> object,
+    std::shared_ptr<Session::Options> options)
+    : BaseObject(env, object),
+      options_(std::move(options)) {
+  MakeWeak();
 }
 
 }  // namespace quic
