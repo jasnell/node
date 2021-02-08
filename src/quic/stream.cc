@@ -325,6 +325,12 @@ void Stream::set_final_size(uint64_t final_size) {
   Debug(this, "Set final size to %" PRIu64, final_size);
 }
 
+void Stream::Schedule(Queue* queue) {
+  if (!stream_queue_.IsEmpty())  // Already scheduled?
+    return;
+  queue->PushBack(this);
+}
+
 void StreamStatsTraits::ToString(const Stream& ptr, AddStatsField add_field) {
 #define V(_, name, label) add_field(label, ptr.GetStat(&StreamStats::name));
   STREAM_STATS(V)

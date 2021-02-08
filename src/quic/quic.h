@@ -535,17 +535,12 @@ class PreferredAddress final {
 // provide storage when creating new tokens to send.
 class StatelessResetToken final : public MemoryRetainer {
  public:
-  inline StatelessResetToken(
+  StatelessResetToken(
       uint8_t* token,
       const uint8_t* secret,
-      const CID& cid) {
-    GenerateResetToken(token, secret, cid);
-    memcpy(buf_, token, sizeof(buf_));
-  }
+      const CID& cid);
 
-  inline StatelessResetToken(const uint8_t* secret, const CID& cid) {
-    GenerateResetToken(buf_, secret, cid);
-  }
+  StatelessResetToken(const uint8_t* secret, const CID& cid);
 
   explicit inline StatelessResetToken(const uint8_t* token) {
     memcpy(buf_, token, sizeof(buf_));

@@ -116,6 +116,20 @@ Path::Path(const SocketAddress& local, const SocketAddress& remote) {
       const_cast<SocketAddress*>(&remote));
 }
 
+StatelessResetToken::StatelessResetToken(
+    uint8_t* token,
+    const uint8_t* secret,
+    const CID& cid) {
+  GenerateResetToken(token, secret, cid);
+  memcpy(buf_, token, sizeof(buf_));
+}
+
+StatelessResetToken::StatelessResetToken(
+    const uint8_t* secret,
+    const CID& cid) {
+  GenerateResetToken(buf_, secret, cid);
+}
+
 namespace {
 void InitializeCallbacks(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
