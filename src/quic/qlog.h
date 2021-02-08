@@ -3,11 +3,11 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
+#include "quic/quic.h"
 #include "async_wrap-inl.h"
 #include "base_object.h"
 #include "env-inl.h"
 #include "stream_base-inl.h"
-#include "quic/quic.h"
 #include <v8.h>
 
 namespace node {
@@ -40,7 +40,7 @@ class QLogStream final : public AsyncWrap,
             ->NewInstance(env->context()).ToLocal(&obj)) {
       return BaseObjectPtr<QLogStream>();
     }
-    new QLogStream(env, obj);
+    return MakeDetachedBaseObject<QLogStream>(env, obj);
   }
 
   inline QLogStream(Environment* env, v8::Local<v8::Object> obj)

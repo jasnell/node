@@ -28,6 +28,8 @@ struct StatsTraits {
   }
 };
 
+using AddStatsField = std::function<void(const char*, uint64_t)>;
+
 // StatsBase is a utility help for classes (like Session)
 // that record performance statistics. The template takes a
 // single Traits argument (see StreamStatsTraits in

@@ -7,9 +7,9 @@
 #include "async_wrap.h"
 #include "base_object.h"
 #include "env.h"
+#include "node_http_common.h"
 #include "quic/quic.h"
 #include "quic/buffer.h"
-#include "quic/session.h"
 #include "quic/stats.h"
 
 #include <ngtcp2/ngtcp2.h>
@@ -54,9 +54,7 @@ struct StreamStatsTraits {
   using Stats = StreamStats;
   using Base = Stream;
 
-  using AddField = void(*)(const char*, uint64_t);
-
-  void ToString(const Stream& ptr, AddField add_field);
+  static void ToString(const Stream& ptr, AddStatsField add_field);
 };
 
 using StreamStatsBase = StatsBase<StreamStatsTraits>;
@@ -124,15 +122,24 @@ class Stream final : public AsyncWrap,
                      public bob::SourceImpl<ngtcp2_vec>,
                      public StreamStatsBase {
  public:
-  enum class Direction {
-    UNIDIRECTIONAL,
-    BIDIRECTIONAL,
-  };
+  using Header = NgHeaderBase<BindingState>;
+  using HeaderList = std::vector<std::unique_ptr<Header>>;
 
   enum class Origin {
     SERVER,
     CLIENT,
   };
+
+  enum class Direction {
+    UNIDIRECTIONAL,
+    BIDIRECTIONAL,
+  };
+
+enum class HeadersKind {
+  INFO,
+  INITIAL,
+  TRAILING,
+};
 
   struct State {
 #define V(_, name, type) type name;
@@ -164,7 +171,7 @@ class Stream final : public AsyncWrap,
   // Returns false if the header cannot be added. This will
   // typically only happen if a maximimum number of headers,
   // or the maximum total header length is received.
-  bool AddHeader(std::unique_ptr<Session::Header> header);
+  bool AddHeader(std::unique_ptr<Header> header);
 
   // Attaches the given Buffer::Consumer to this Stream to consume
   // and inbound data.
@@ -246,7 +253,7 @@ class Stream final : public AsyncWrap,
 
   inline void set_headers_kind(HeadersKind kind) { headers_kind_ = kind; }
 
-  SET_NO_MEMORY_INFO()
+  void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(Stream)
   SET_SELF_SIZE(Stream)
 

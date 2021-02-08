@@ -3,6 +3,11 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
+#include "quic/buffer.h"
+#include "quic/crypto.h"
+#include "quic/stats.h"
+#include "quic/stream.h"
+#include "quic/quic.h"
 #include "aliased_struct.h"
 #include "async_wrap.h"
 #include "base_object.h"
@@ -11,11 +16,6 @@
 #include "node_http_common.h"
 #include "node_sockaddr.h"
 #include "timer_wrap.h"
-#include "quic/quic.h"
-#include "quic/buffer.h"
-#include "quic/stats.h"
-#include "quic/stream.h"
-#include "quic/crypto.h"
 
 #include <ngtcp2/ngtcp2.h>
 #include <v8.h>
@@ -79,13 +79,9 @@ namespace quic {
   V(PTO_COUNT, pto_count, "PTO count")                                         \
   V(RTTVAR, rttvar, "Mean deviation of observed RTT")                          \
   V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
-  V(SSTHRESH, ssthresh, "Slow start threshold")
-  V(MIN_RTT, min_rtt, "Minimum RTT")                                           \
-  V(LATEST_RTT, latest_rtt, "Latest RTT")                                      \
-  V(SMOOTHED_RTT, smoothed_rtt, "Smoothed RTT")                                \
-  V(CWND, cwnd, "Cwnd")                                                        \
+  V(SSTHRESH, ssthresh, "Slow start threshold")                                \
   V(RECEIVE_RATE, receive_rate, "Receive Rate / Sec")                          \
-  V(SEND_RATE, send_rate, "Send Rate  Sec")                                    \
+  V(SEND_RATE, send_rate, "Send Rate  Sec")
 
 // Every QuicSession instance maintains an AliasedStruct that is used to quickly
 // toggle certain settings back and forth or to access various stats with low
@@ -116,7 +112,6 @@ namespace quic {
 class Endpoint;
 class QLogStream;
 class Session;
-class Stream;
 
 using StreamsMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
 
@@ -135,12 +130,6 @@ using ConnectionCloseFn =
 
 static const int kInitialClientBufferLength = 4096;
 
-enum class HeadersKind {
-  INFO,
-  INITIAL,
-  TRAILING,
-};
-
 #define V(name, _, __) IDX_STATS_SESSION_##name,
 enum class SessionStatsIdx : int {
   SESSION_STATS(V)
@@ -158,9 +147,7 @@ struct SessionStatsTraits {
   using Stats = SessionStats;
   using Base = Session;
 
-  using AddField = void(*)(const char*, uint64_t);
-
-  void ToString(const Session& ptr, AddField add_field);
+  static void ToString(const Session& ptr, AddStatsField add_field);
 };
 
 using SessionStatsBase = StatsBase<SessionStatsTraits>;
@@ -168,9 +155,6 @@ class Session final : public AsyncWrap,
                       public SessionStatsBase {
  public:
   class Application;
-
-  using Header = NgHeaderBase<Application>;
-  using HeaderList = std::vector<std::unique_ptr<Header>>;
 
   static void IgnorePreferredAddressStrategy(
       Session* session,
@@ -260,7 +244,7 @@ class Session final : public AsyncWrap,
     CID dcid;
 
     ngtcp2_transport_params* early_transport_params = nullptr;
-    SSLSessionPointer early_session_ticket;
+    SSL_SESSION* early_session_ticket = nullptr;
   };
 
   #define V(_, name, type) type name;
@@ -465,7 +449,7 @@ class Session final : public AsyncWrap,
       }
 
       inline ~CallbackScope() {
-        context_->in_tls_callback_ = false;
+        context->in_tls_callback_ = false;
       }
 
       inline static bool is_in_callback(CryptoContext* context) {
@@ -568,8 +552,8 @@ class Session final : public AsyncWrap,
 
     virtual void StreamHeaders(
         stream_id stream_id,
-        HeadersKind kind,
-        const HeaderList& headers);
+        Stream::HeadersKind kind,
+        const Stream::HeaderList& headers);
 
     virtual void StreamClose(
         stream_id stream_id,
@@ -687,7 +671,7 @@ class Session final : public AsyncWrap,
   }
   inline CID dcid() const { return dcid_; }
   inline Application* application() const { return application_.get(); }
-  inline Endpoint* endpoint() const { return endpoint_.get(); }
+  inline Endpoint* endpoint() const;
   inline const std::string& alpn() { return alpn_; }
   inline const std::string& hostname() { return hostname_; }
 
@@ -695,9 +679,6 @@ class Session final : public AsyncWrap,
   inline const SocketAddress& local_address() const { return local_address_; }
 
   BaseObjectPtr<QLogStream> qlogstream();
-
-  void ExtendMaxStreamsBidi(uint64_t max_streams);
-  void ExtendMaxStreamsUni(uint64_t max_streams);
 
   inline bool is_destroyed() const { return state_->destroyed; }
   inline bool is_server() const {
@@ -722,7 +703,7 @@ class Session final : public AsyncWrap,
   // Submits headers to the QUIC Application If headers are not supported,
   // false will be returned. Otherwise, returns true
   bool SubmitHeaders(
-      HeadersKind kind,
+      Stream::HeadersKind kind,
       stream_id id,
       v8::Local<v8::Array> headers);
 
@@ -842,7 +823,7 @@ class Session final : public AsyncWrap,
 
   inline QuicError last_error() const { return last_error_; }
 
-  inline size_t max_packet_length() const { return max_pktlen_; }
+  inline size_t max_packet_length() const { return max_pkt_len_; }
 
   // When completing the TLS handshake, the TLS session information
   // is provided to the Session so that the session ticket and
@@ -891,17 +872,17 @@ class Session final : public AsyncWrap,
                 session->get_async_id(),
                 session->get_trigger_async_id()
               })),
-          try_catch_(session->env()->isolate()) {
+          try_catch(session->env()->isolate()) {
       try_catch.SetVerbose(true);
     }
 
     inline ~CallbackScope() {
       Environment* env = session->env();
       if (UNLIKELY(try_catch.HasCaught())) {
-        session->crypto_context()->set_in_client_hello(false);
-        session->crypto_context()->set_in_ocsp_request(false);
+        session->crypto_context()->in_client_hello_ = false;
+        session->crypto_context()->in_ocsp_request_ = false;
         if (!try_catch.HasTerminated() && env->can_call_into_js()) {
-          session->set_last_error(NGTCP2_INTERNAL_ERROR);
+          session->set_last_error(kQuicInternalError);
           session->Close();
           CHECK(session->is_destroyed());
         }
@@ -948,7 +929,7 @@ class Session final : public AsyncWrap,
     inline explicit NgCallbackScope(Session* session_)
         : session(session_) {
       CHECK(session);
-      CHECK(!InNgCallbackScope(session));
+      CHECK(!InNgCallbackScope(session_));
       session->in_ng_callback_ = true;
     }
 
@@ -1018,7 +999,6 @@ class Session final : public AsyncWrap,
   // which determines whether or not we need to retransmit data to
   // to packet loss or ack delay.
   void OnRetransmitTimeout();
-  void UpdateClosingTimer();
   void UpdateDataStats();
   void AckedStreamDataOffset(
       stream_id id,
@@ -1091,12 +1071,13 @@ class Session final : public AsyncWrap,
       stream_id id,
       uint64_t final_size,
       uint64_t app_error_code);
+
   bool WritePackets(const char* diagnostic_label = nullptr);
+
   void UpdateConnectionID(
       int type,
       const CID& cid,
       const StatelessResetToken& token);
-  void UpdateDataStats();
 
   // Every QUIC session has a remote address and local address.
   // Those endpoints can change through the lifetime of a connection,
@@ -1109,7 +1090,6 @@ class Session final : public AsyncWrap,
   // negotiation frame has been received by the client. The sv
   // parameter is an array of versions supported by the remote peer.
   void VersionNegotiation(const uint32_t* sv, size_t nsv);
-  void UpdateIdleTimer();
   void UpdateClosingTimer();
 
   // The retransmit timer allows us to trigger retransmission
@@ -1437,12 +1417,6 @@ class Session final : public AsyncWrap,
       const ngtcp2_cid* cid,
       const uint8_t* token,
       void* user_data);
-
-  static void OnQlogWrite(
-      void* user_data,
-      uint32_t flags,
-      const void* data,
-      size_t len);
 
   // A QUIC datagram is an independent data packet that is
   // unaffiliated with a stream.

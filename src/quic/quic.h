@@ -10,10 +10,12 @@
 #include "node_sockaddr.h"
 #include "string_bytes.h"
 #include "util.h"
+
 #include <ngtcp2/ngtcp2.h>
 #include <ngtcp2/version.h>
 #include <nghttp3/nghttp3.h>
 #include <nghttp3/version.h>
+
 #include <v8.h>
 #include <uv.h>
 
@@ -103,6 +105,10 @@ struct QuicError {
   };
   Type type;
   uint64_t code;
+
+  std::string ToString() const {
+    return std::to_string(code) + "(" + TypeName(*this) + ")";
+  }
 
   static QuicError FromNgtcp2(ngtcp2_connection_close_error_code close_code) {
     switch (close_code.type) {
@@ -360,7 +366,7 @@ class Packet final : public MemoryRetainer {
 
 // A utility class that wraps ngtcp2_path to adapt it to work with SocketAddress
 struct Path final : public ngtcp2_path {
-  inline Path(const SocketAddress& local, const SocketAddress& remote);
+  Path(const SocketAddress& local, const SocketAddress& remote);
 };
 
 struct PathStorage final : public ngtcp2_path_storage {

@@ -1,12 +1,17 @@
 #ifndef OPENSSL_NO_QUIC
 
+#include "quic/buffer.h"
 #include "quic/crypto.h"
 #include "quic/endpoint.h"
+#include "quic/quic.h"
+#include "quic/qlog.h"
+#include "quic/session.h"
+#include "quic/stream.h"
+#include "crypto/crypto_util.h"
 #include "aliased_struct-inl.h"
 #include "allocated_buffer-inl.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
-#include "crypto/crypto_util.h"
 #include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
@@ -919,7 +924,9 @@ void Endpoint::SocketAddressInfoTraits::Touch(
   type->timestamp = uv_hrtime();
 }
 
-void EndpointStatsTraits::ToString(const Endpoint& ptr, AddField add_field) {
+void EndpointStatsTraits::ToString(
+    const Endpoint& ptr,
+    AddStatsField add_field) {
 #define V(_n, name, label) add_field(label, ptr.GetStat(&EndpointStats::name));
   ENDPOINT_STATS(V)
 #undef V

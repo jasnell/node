@@ -3,9 +3,9 @@
 
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
+#include "quic/quic.h"
 #include "crypto/crypto_context.h"
 #include "crypto/crypto_util.h"
-#include "quic/quic.h"
 #include "node_sockaddr.h"
 #include "v8.h"
 

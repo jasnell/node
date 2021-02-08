@@ -1,16 +1,22 @@
 #ifndef OPENSSL_NO_QUIC
 
-#include "crypto/crypto_common.h"
-#include "crypto/x509.h"
-#include "quic/session.h"
+#include "quic/buffer.h"
+#include "quic/crypto.h"
 #include "quic/endpoint.h"
 #include "quic/qlog.h"
+#include "quic/quic.h"
+#include "quic/session.h"
+#include "quic/stream.h"
+#include "crypto/crypto_common.h"
+#include "crypto/x509.h"
 #include "aliased_struct-inl.h"
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
 #include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_bob-inl.h"
+#include "node_http_common-inl.h"
 #include "node_sockaddr-inl.h"
 #include "v8.h"
 
@@ -87,10 +93,11 @@ ConnectionCloseFn SelectCloseFn(QuicError error) {
     default:
       UNREACHABLE();
   }
+}
+
 }  // namespace
 
-Session::Config::Config(
-    Endpoint* endpoint) {
+Session::Config::Config(Endpoint* endpoint) {
   ngtcp2_settings_default(this);
   initial_ts = uv_hrtime();
   if (UNLIKELY(is_ngtcp2_debug_enabled(endpoint->env())))
@@ -230,17 +237,18 @@ Session::CryptoContext::~CryptoContext() {
 }
 
 void Session::CryptoContext::MaybeSetEarlySession(const Options& options) {
+  crypto::SSLSessionPointer ticket(options.early_session_ticket);
+
   if (session()->is_server() ||
       options.early_transport_params == nullptr ||
-      !options.early_session_ticket) {
+      !ticket) {
     return;
   }
 
   early_data_ =
-      SSL_SESSION_get_max_early_data(options.early_session_ticket.get())
-          == 0xffffffffUL;
+      SSL_SESSION_get_max_early_data(ticket.get()) == 0xffffffffUL;
 
-  if (!early_data)
+  if (!early_data())
     return;
 
   ngtcp2_conn_set_early_remote_transport_params(
@@ -249,7 +257,7 @@ void Session::CryptoContext::MaybeSetEarlySession(const Options& options) {
 
   // We don't care about the return value here. The early
   // data will just be ignored if it's invalid.
-  USE(crypto::SetTLSSession(ssl_, options.early_session_ticket));
+  USE(crypto::SetTLSSession(ssl_, ticket));
 }
 
 void Session::CryptoContext::AcknowledgeCryptoData(
@@ -356,8 +364,6 @@ int Session::CryptoContext::OnClientHello() {
     return -1;
   in_client_hello_ = true;
 
-  CryptoContext* ctx = session_->crypto_context();
-
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
@@ -375,7 +381,7 @@ int Session::CryptoContext::OnClientHello() {
   if (!crypto_context->hello_alpn(env).ToLocal(&argv[0]) ||
       !crypto_context->hello_servername(env).ToLocal(&argv[1]) ||
       !crypto_context->hello_ciphers(env).ToLocal(&argv[2])) {
-    return;
+    return 0;
   }
 
   // Grab a shared pointer to this to prevent the QuicSession
@@ -907,7 +913,7 @@ Session::Session(
       endpoint_(endpoint),
       state_(endpoint->env()),
       local_address_(local_addr),
-      remote_address_(remote_address_),
+      remote_address_(remote_addr),
       application_(SelectApplication(options.alpn)),
       crypto_context_(std::make_unique<CryptoContext>(this, options, side)),
       alpn_(options.alpn),
@@ -1082,7 +1088,7 @@ void Session::AddStream(const BaseObjectPtr<Stream>& stream) {
 }
 
 void Session::AttachToEndpoint() {
-  CHECK_NOT_NULL(socket);
+  CHECK(endpoint_);
   Debug(this, "Adding session to %s", endpoint_->diagnostic_name());
    endpoint_->AddSession(scid_, BaseObjectPtr<Session>(this));
   switch (crypto_context_->side()) {
@@ -1562,7 +1568,6 @@ void Session::PathValidation(
       object(),
       arraysize(argv),
       argv));
-  }
 }
 
 bool Session::Receive(
@@ -1919,7 +1924,7 @@ bool Session::StartClosingPeriod() {
     return true;
 
   QuicError error = last_error();
-  Debug(this, "Closing period has started. Error %d", error);
+  Debug(this, "Closing period has started. Error %s", error);
 
   conn_closebuf_ = std::make_unique<Packet>("server connection close");
 
@@ -1933,10 +1938,7 @@ bool Session::StartClosingPeriod() {
           error.code,
           uv_hrtime());
   if (nwrite < 0) {
-    set_last_error({
-      QuicError::Type::TRANSPORT,
-      static_cast<int>(nwrite)
-    });
+    set_last_error(kQuicInternalError);
     return false;
   }
   conn_closebuf_->set_length(nwrite);
@@ -1976,15 +1978,15 @@ void Session::StreamReset(
 }
 
 bool Session::SubmitHeaders(
-    HeadersKind kind,
+    Stream::HeadersKind kind,
     stream_id id,
     v8::Local<v8::Array> headers) {
   switch (kind) {
-    case HeadersKind::INFO:
+    case Stream::HeadersKind::INFO:
       return application_->SubmitInformation(id, headers);
-    case HeadersKind::INITIAL:
+    case Stream::HeadersKind::INITIAL:
       return application_->SubmitHeaders(id, headers);
-    case HeadersKind::TRAILING:
+    case Stream::HeadersKind::TRAILING:
       return application_->SubmitTrailers(id, headers);
     default:
       UNREACHABLE();
@@ -2119,6 +2121,8 @@ void Session::VersionNegotiation(const uint32_t* sv, size_t nsv) {
       argv));
 }
 
+Endpoint* Session::endpoint() const { return endpoint_.get(); }
+
 bool Session::is_handshake_completed() const {
   DCHECK(!is_destroyed());
   return ngtcp2_conn_get_handshake_completed(connection());
@@ -2179,7 +2183,7 @@ int Session::set_session(SSL_SESSION* session) {
         reinterpret_cast<unsigned char*>(session_ticket->Data());
     memset(session_data, 0, size);
     if (i2d_SSL_SESSION(session, &session_data) <= 0)
-      return;
+      return 0;
     argv[0] = ArrayBuffer::New(env()->isolate(), session_ticket);
   }
 
@@ -2662,7 +2666,7 @@ int Session::OnDatagram(
   return 0;
 }
 
-void SessionStatsTraits::ToString(const Session& ptr, AddField add_field) {
+void SessionStatsTraits::ToString(const Session& ptr, AddStatsField add_field) {
 #define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
     SESSION_STATS(V)
 #undef V

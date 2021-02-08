@@ -3,17 +3,19 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
+#include "quic/buffer.h"
+#include "quic/crypto.h"
+#include "quic/quic.h"
+#include "quic/stats.h"
+#include "quic/session.h"
+#include "crypto/crypto_context.h"
+#include "crypto/crypto_util.h"
 #include "aliased_struct.h"
 #include "async_wrap.h"
 #include "base_object.h"
 #include "env.h"
-#include "crypto/crypto_context.h"
-#include "crypto/crypto_util.h"
 #include "node_sockaddr.h"
 #include "udp_wrap.h"
-#include "quic/quic.h"
-#include "quic/stats.h"
-#include "quic/session.h"
 
 #include <ngtcp2/ngtcp2.h>
 #include <v8.h>
@@ -64,9 +66,7 @@ struct EndpointStatsTraits {
   using Stats = EndpointStats;
   using Base = Endpoint;
 
-  using AddField = void(*)(const char*, uint64_t);
-
-  static void ToString(const Base& ptr, AddField add_field);
+  static void ToString(const Base& ptr, AddStatsField add_field);
 };
 
 using EndpointStatsBase = StatsBase<EndpointStatsTraits>;

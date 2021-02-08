@@ -1,5 +1,9 @@
 #ifndef OPENSSL_NO_QUIC
 
+#include "quic/buffer.h"
+#include "quic/crypto.h"
+#include "quic/endpoint.h"
+#include "quic/session.h"
 #include "quic/stream.h"
 #include "quic/quic.h"
 #include "aliased_struct-inl.h"
@@ -8,6 +12,8 @@
 #include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_bob-inl.h"
+#include "node_http_common-inl.h"
 #include "node_sockaddr-inl.h"
 #include "v8.h"
 
@@ -319,7 +325,7 @@ void Stream::set_final_size(uint64_t final_size) {
   Debug(this, "Set final size to %" PRIu64, final_size);
 }
 
-void StreamStatsTraits::ToString(const Stream& ptr, AddField add_field) {
+void StreamStatsTraits::ToString(const Stream& ptr, AddStatsField add_field) {
 #define V(_, name, label) add_field(label, ptr.GetStat(&StreamStats::name));
   STREAM_STATS(V)
 #undef V

@@ -1,20 +1,26 @@
 #ifndef OPENSSL_NO_QUIC
 
-#include "node.h"
+#include "quic/buffer.h"
+#include "quic/crypto.h"
+#include "quic/endpoint.h"
+#include "quic/session.h"
+#include "quic/stream.h"
+#include "quic/qlog.h"
+#include "quic/quic.h"
 #include "aliased_struct-inl.h"
+#include "async_wrap-inl.h"
 #include "base_object-inl.h"
 #include "debug_utils-inl.h"
 #include "env-inl.h"
 #include "memory_tracker-inl.h"
+#include "node.h"
+#include "node_bob-inl.h"
+#include "node_errors.h"
+#include "node_http_common-inl.h"
 #include "node_mem-inl.h"
+#include "node_process.h"
 #include "node_sockaddr-inl.h"
 #include "util-inl.h"
-#include "quic/endpoint.h"
-#include "quic/session.h"
-#include "quic/stream.h"
-#include "quic/quic.h"
-#include "node_errors.h"
-#include "node_process.h"
 
 #include <v8.h>
 
