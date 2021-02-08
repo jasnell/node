@@ -805,7 +805,7 @@ void Session::UsePreferredAddressStrategy(
 
   Debug(session, "Using server preferred address");
   if (UNLIKELY(session->state_->use_preferred_address_enabled == 1))
-    session->OnUsePreferredAddress(address);
+    session->UsePreferredAddress(address);
 }
 
 // Generates a new random connection ID.
@@ -1268,6 +1268,13 @@ BaseObjectPtr<Stream> Session::CreateStream(stream_id id) {
       argv));
 
   return stream;
+}
+
+void Session::Datagram(
+    uint32_t flags,
+    const uint8_t* data,
+    size_t datalen) {
+  // TODO(@jasnell): Implement
 }
 
 void Session::Destroy() {
@@ -2084,6 +2091,28 @@ void Session::UpdateIdleTimer() {
 
 void Session::UpdateRetransmitTimer(uint64_t timeout) {
   retransmit_.Update(timeout, timeout);
+}
+
+void Session::UsePreferredAddress(const PreferredAddress::Address& address) {
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  HandleScope scope(env()->isolate());
+  Context::Scope context_scope(env()->context());
+
+  CallbackScope cb_scope(this);
+
+  Local<Value> argv[] = {
+      OneByteString(env()->isolate(), address.address.c_str()),
+      Integer::NewFromUnsigned(env()->isolate(), address.port),
+      Integer::New(env()->isolate(), address.family)
+  };
+
+  BaseObjectPtr<Session> ptr(this);
+
+  USE(state->session_use_preferred_address_callback(env())->Call(
+      env()->context(),
+      object(),
+      arraysize(argv),
+      argv));
 }
 
 void Session::VersionNegotiation(const uint32_t* sv, size_t nsv) {

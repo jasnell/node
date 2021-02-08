@@ -975,7 +975,7 @@ class Session final : public AsyncWrap,
       const Options& options,
       const CID& dcid = CID(),
       ngtcp2_crypto_side side = NGTCP2_CRYPTO_SIDE_CLIENT);
-  void OnUsePreferredAddress(const PreferredAddress::Address& address);
+  void UsePreferredAddress(const PreferredAddress::Address& address);
 
   void set_last_error(QuicError error = kQuicNoError) {
     last_error_ = error;

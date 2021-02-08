@@ -21,6 +21,7 @@
 #include "v8.h"
 
 #include <ngtcp2/ngtcp2_crypto.h>
+#include <openssl/evp.h>
 
 namespace node {
 
@@ -36,6 +37,18 @@ using v8::Value;
 namespace quic {
 
 namespace {
+ngtcp2_crypto_aead CryptoAeadAes128GCM() {
+  ngtcp2_crypto_aead aead;
+  ngtcp2_crypto_aead_init(&aead, const_cast<EVP_CIPHER *>(EVP_aes_128_gcm()));
+  return aead;
+}
+
+ngtcp2_crypto_md CryptoMDSha256() {
+  ngtcp2_crypto_md md;
+  ngtcp2_crypto_md_init(&md, const_cast<EVP_MD *>(EVP_sha256()));
+  return md;
+}
+
 // The reserved version is a mechanism QUIC endpoints
 // can use to ensure correct handling of version
 // negotiation. It is defined by the QUIC spec in
@@ -153,6 +166,8 @@ Endpoint::Endpoint(
       EndpointStatsBase(env, object),
       config_(config),
       state_(env),
+      token_aead_(CryptoAeadAes128GCM()),
+      token_md_(CryptoMDSha256()),
       block_list_(SocketAddressBlockListWrap::New(env)),
       addrLRU_(config.address_lru_size) {
   MakeWeak();
@@ -527,7 +542,8 @@ BaseObjectPtr<Session> Endpoint::AcceptInitialPacket(
                   remote_addr,
                   &ocid,
                   token_secret_,
-                  config_.retry_token_expiration)) {
+                  config_.retry_token_expiration,
+                  token_aead_)) {
             Debug(this, "Invalid retry token was detected. Failing");
             ImmediateConnectionClose(
                 version,
@@ -725,7 +741,9 @@ bool Endpoint::SendRetry(
           dcid,
           scid,
           local_addr,
-          remote_addr);
+          remote_addr,
+          token_aead_,
+          token_md_);
   return packet ?
       SendPacket(local_addr, remote_addr, std::move(packet)) == 0 : false;
 }

@@ -991,15 +991,22 @@
           'node_target_type=="executable"', {
           'defines': [ 'NODE_ENABLE_LARGE_CODE_PAGES=1' ],
         }],
-        [
-          'no_quic=="false"', {
+        [ 'no_quic=="false"', {
           'sources': [
+            'src/quic/buffer.h',
+            'src/quic/crypto.h',
+            'src/quic/endpoint.h',
+            'src/quic/qlog.h',
+            'src/quic/quic.h',
+            'src/quic/session.h',
+            'src/quic/stats.h',
+            'src/quic/stream.h',
             'src/quic/buffer.cc',
             'src/quic/crypto.cc',
             'src/quic/endpoint.cc',
+            'src/quic/quic.cc',
             'src/quic/session.cc',
             'src/quic/stream.cc',
-            'src/quic/quic.cc',
           ]
         }],
         [ 'no_quic==1', {

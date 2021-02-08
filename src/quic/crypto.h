@@ -73,7 +73,9 @@ std::unique_ptr<Packet> GenerateRetryPacket(
     const CID& dcid,
     const CID& scid,
     const SocketAddress& local_addr,
-    const SocketAddress& remote_addr);
+    const SocketAddress& remote_addr,
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md);
 
 // The IPv6 Flow Label is generated and set whenever IPv6 is used.
 // The label is derived as a cryptographic function of the CID,
@@ -97,7 +99,8 @@ bool InvalidRetryToken(
     const SocketAddress& addr,
     CID* ocid,
     const uint8_t* token_secret,
-    uint64_t verification_expiration);
+    uint64_t verification_expiration,
+    const ngtcp2_crypto_aead& aead);
 
 // Get the ALPN protocol identifier that was negotiated for the session
 v8::Local<v8::Value> GetALPNProtocol(const Session& session);

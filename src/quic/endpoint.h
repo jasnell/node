@@ -397,6 +397,9 @@ class Endpoint final : public AsyncWrap,
   BaseObjectPtr<AsyncWrap> udp_strong_ptr_;
   uint8_t token_secret_[kTokenSecretLen];
 
+  ngtcp2_crypto_aead token_aead_;
+  ngtcp2_crypto_md token_md_;
+
   struct SocketAddressInfoTraits {
     struct Type {
       size_t active_connections;

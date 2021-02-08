@@ -318,8 +318,6 @@ void ArrayBufferViewSource::Initialize(Environment* env, Local<Object> target) {
 
 void StreamSource::Initialize(Environment* env, Local<Object> target) {
   Local<FunctionTemplate> temp = env->NewFunctionTemplate(StreamSource::New);
-  Local<String> class_name =
-      FIXED_ONE_BYTE_STRING(env->isolate(), "StreamSource");
   temp->Inherit(AsyncWrap::GetConstructorTemplate(env));
   StreamBase::AddMethods(env, temp);
   temp->InstanceTemplate()->SetInternalFieldCount(

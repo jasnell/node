@@ -59,6 +59,7 @@ bool SessionTicketAppData::Get(uint8_t** data, size_t* len) const {
 }
 
 namespace {
+constexpr uint8_t kRetryTokenMagic = 0xb6;
 constexpr int kCryptoTokenKeylen = 32;
 constexpr int kCryptoTokenIvlen = 32;
 constexpr size_t kTokenRandLen = 16;
@@ -72,7 +73,8 @@ bool DeriveTokenKey(
     uint8_t* token_iv,
     const uint8_t* rand_data,
     size_t rand_datalen,
-    const ngtcp2_crypto_ctx& ctx,
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md,
     const uint8_t* token_secret) {
   static constexpr int kCryptoTokenSecretlen = 32;
   uint8_t secret[kCryptoTokenSecretlen];
@@ -80,7 +82,7 @@ bool DeriveTokenKey(
   return
       NGTCP2_OK(ngtcp2_crypto_hkdf_extract(
           secret,
-          &ctx.md,
+          &md,
           token_secret,
           kTokenSecretLen,
           rand_data,
@@ -89,8 +91,8 @@ bool DeriveTokenKey(
           token_key,
           token_iv,
           nullptr,
-          &ctx.aead,
-          &ctx.md,
+          &aead,
+          &md,
           secret,
           kCryptoTokenSecretlen));
 }
@@ -143,20 +145,21 @@ bool GenerateRetryToken(
     uint8_t* token,
     size_t* tokenlen,
     const SocketAddress& addr,
+    const CID& retry_cid,
     const CID& ocid,
-    const uint8_t* token_secret) {
+    const uint8_t* token_secret,
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md) {
   std::array<uint8_t, 4096> plaintext;
+  std::array<uint8_t, 256> aad;
   uint8_t rand_data[kTokenRandLen];
   uint8_t token_key[kCryptoTokenKeylen];
   uint8_t token_iv[kCryptoTokenIvlen];
 
-  ngtcp2_crypto_ctx ctx;
-  ngtcp2_crypto_ctx_initial(&ctx);
-  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&ctx.aead);
+  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&aead);
   uint64_t now = uv_hrtime();
 
   auto p = std::begin(plaintext);
-  p = std::copy_n(addr.raw(), addr.length(), p);
   p = std::copy_n(reinterpret_cast<uint8_t*>(&now), sizeof(uint64_t), p);
   p = std::copy_n(ocid->data, ocid->datalen, p);
 
@@ -167,15 +170,22 @@ bool GenerateRetryToken(
           token_iv,
           rand_data,
           kTokenRandLen,
-          ctx,
+          aead,
+          md,
           token_secret)) {
     return false;
   }
 
+  p = std::begin(aad);
+  p = std::copy_n(addr.raw(), addr.length(), p);
+  p = std::copy_n(retry_cid.data(), retry_cid.length(), p);
+
+  token[0] = kRetryTokenMagic;
+
   ngtcp2_crypto_aead_ctx aead_ctx;
   if (NGTCP2_ERR(ngtcp2_crypto_aead_ctx_encrypt_init(
           &aead_ctx,
-          &ctx.aead,
+          &aead,
           token_key,
           ivlen))) {
     return false;
@@ -184,7 +194,7 @@ bool GenerateRetryToken(
   size_t plaintextlen = std::distance(std::begin(plaintext), p);
   if (NGTCP2_ERR(ngtcp2_crypto_encrypt(
           token,
-          &ctx.aead,
+          &aead,
           &aead_ctx,
           plaintext.data(),
           plaintextlen,
@@ -195,7 +205,7 @@ bool GenerateRetryToken(
     return false;
   }
 
-  *tokenlen = plaintextlen + ngtcp2_crypto_aead_taglen(&ctx.aead);
+  *tokenlen = plaintextlen + aead.max_overhead;
   memcpy(token + (*tokenlen), rand_data, kTokenRandLen);
   *tokenlen += kTokenRandLen;
   return true;
@@ -237,17 +247,27 @@ std::unique_ptr<Packet> GenerateRetryPacket(
     const CID& dcid,
     const CID& scid,
     const SocketAddress& local_addr,
-    const SocketAddress& remote_addr) {
+    const SocketAddress& remote_addr,
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md) {
 
   uint8_t token[256];
   size_t tokenlen = sizeof(token);
 
-  if (!GenerateRetryToken(token, &tokenlen, remote_addr, dcid, token_secret))
-    return {};
-
   CID cid;
   EntropySource(cid.data(), NGTCP2_MAX_CIDLEN);
   cid.set_length(NGTCP2_MAX_CIDLEN);
+
+  if (!GenerateRetryToken(
+          token,
+          &tokenlen,
+          remote_addr,
+          cid,
+          dcid,
+          token_secret,
+          aead,
+          md))
+    return {};
 
   size_t pktlen = tokenlen + (2 * NGTCP2_MAX_CIDLEN) + scid.length() + 8;
 
@@ -281,15 +301,16 @@ bool InvalidRetryToken(
     const SocketAddress& addr,
     CID* ocid,
     const uint8_t* token_secret,
-    uint64_t verification_expiration) {
+    uint64_t verification_expiration,
+    const ngtcp2_crypto_aead& aead,
+    const ngtcp2_crypto_md& md) {
+
+  // TODO(@jasnell): Fix implementation
 
   if (token.len < kTokenRandLen)
     return true;
 
-  ngtcp2_crypto_ctx ctx;
-  ngtcp2_crypto_ctx_initial(&ctx);
-
-  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&ctx.aead);
+  size_t ivlen = ngtcp2_crypto_packet_protection_ivlen(&aead);
 
   size_t ciphertextlen = token.len - kTokenRandLen;
   const uint8_t* ciphertext = token.base;
@@ -303,7 +324,8 @@ bool InvalidRetryToken(
           token_iv,
           rand_data,
           kTokenRandLen,
-          ctx,
+          aead,
+          md,
           token_secret)) {
     return true;
   }
@@ -313,7 +335,7 @@ bool InvalidRetryToken(
   ngtcp2_crypto_aead_ctx aead_ctx;
   if (NGTCP2_ERR(ngtcp2_crypto_aead_ctx_decrypt_init(
           &aead_ctx,
-          &ctx.aead,
+          &aead,
           token_key,
           ivlen))) {
     return true;
@@ -321,7 +343,7 @@ bool InvalidRetryToken(
 
   if (NGTCP2_ERR(ngtcp2_crypto_decrypt(
           plaintext,
-          &ctx.aead,
+          &aead,
           &aead_ctx,
           ciphertext,
           ciphertextlen,
@@ -332,7 +354,7 @@ bool InvalidRetryToken(
     return true;
   }
 
-  size_t plaintextlen = ciphertextlen - ngtcp2_crypto_aead_taglen(&ctx.aead);
+  size_t plaintextlen = ciphertextlen - aead.max_overhead;
   if (plaintextlen < addr.length() + sizeof(uint64_t))
     return true;
 
@@ -361,7 +383,7 @@ bool InvalidRetryToken(
 
 // Get the ALPN protocol identifier that was negotiated for the session
 // Local<Value> GetALPNProtocol(const QuicSession& session) {
-//   QuicCryptoContext* ctx = session.crypto_context();
+//   Session::CryptoContext* ctx = session.crypto_context();
 //   Environment* env = session.env();
 //   std::string alpn = ctx->selected_alpn();
 //   // This supposed to be `NGHTTP3_ALPN_H3 + 1`
