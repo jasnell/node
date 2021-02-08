@@ -182,12 +182,19 @@ class Endpoint final : public AsyncWrap,
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
 
-  static void Initialize(Environment* env);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
 
   static BaseObjectPtr<Endpoint> Create(
       Environment* env,
       v8::Local<v8::Object> udp_wrap,
       const Config& config);
+
+  static void CreateEndpoint(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void StartListen(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void StartWaitForPendingCallbacks(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
 
   Endpoint(
       Environment* env,
@@ -433,8 +440,8 @@ class ConfigObject : public BaseObject {
   static void SetResetTokenSecret(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
-
   Endpoint::Config* data() { return config_.get(); }
+  const Endpoint::Config& config() { return *config_.get(); }
 
   // TODO(@jasnell): This is a lie
   SET_NO_MEMORY_INFO()

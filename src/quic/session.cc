@@ -3302,10 +3302,13 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
 
   if (!args[3]->IsUndefined()) {
     crypto::ArrayBufferOrViewContents<uint8_t> cid(args[3]);
-    CHECK_LE(cid.size(), NGTCP2_MAX_CIDLEN);
+    // CHECK_LE(cid.size(), NGTCP2_MAX_CIDLEN);
     if (cid.size() > 0) {
-      uint8_t* ptr = reinterpret_cast<uint8_t*>(&(options->data()->dcid));
-      memcpy(ptr, cid.data(), cid.size());
+      memcpy(
+          options->data()->dcid.data(),
+          cid.data(),
+          cid.size());
+      options->data()->dcid.set_length(cid.size());
     }
   }
 

@@ -136,6 +136,8 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(tx_packet_loss, "txPacketLoss")                                            \
   V(cc_algorithm, "ccAlgorithm")
 
+void IllegalConstructor(const v8::FunctionCallbackInfo<v8::Value>& args);
+
 struct QuicError {
   enum class Type {
     TRANSPORT,

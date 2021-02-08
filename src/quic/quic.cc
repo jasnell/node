@@ -114,6 +114,12 @@ void BindingState::DecreaseAllocatedSize(size_t size) {
   QUIC_STRINGS(V)
 #undef V
 
+void IllegalConstructor(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+  THROW_ERR_ILLEGAL_CONSTRUCTOR(env);
+}
+
 Path::Path(const SocketAddress& local, const SocketAddress& remote) {
   ngtcp2_addr_init(
       &this->local,
@@ -181,11 +187,10 @@ void Initialize(Local<Object> target,
 
   env->SetMethod(target, "initializeCallbacks", InitializeCallbacks);
 
-  Endpoint::Initialize(env);
+  Endpoint::Initialize(env, target);
   Session::Initialize(env);
   Stream::Initialize(env);
   OptionsObject::Initialize(env, target);
-  ConfigObject::Initialize(env, target);
 
   NODE_DEFINE_CONSTANT(target, NGTCP2_APP_NOERROR);
   NODE_DEFINE_CONSTANT(target, NGTCP2_NO_ERROR);

@@ -1483,6 +1483,7 @@ class OptionsObject : public BaseObject {
   static void SetSessionResume(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   Session::Options* data() { return options_.get(); }
+  const Session::Options& options() {return *options_.get(); }
 
   // TODO(@jasnell): This is a lie
   SET_NO_MEMORY_INFO()

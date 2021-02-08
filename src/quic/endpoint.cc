@@ -18,6 +18,7 @@
 #include "node_mem-inl.h"
 #include "node_sockaddr-inl.h"
 #include "req_wrap-inl.h"
+#include "udp_wrap.h"
 #include "v8.h"
 
 #include <ngtcp2/ngtcp2_crypto.h>
@@ -136,19 +137,31 @@ Local<FunctionTemplate> Endpoint::GetConstructorTemplate(Environment* env) {
   CHECK_NOT_NULL(state);
   Local<FunctionTemplate> tmpl = state->endpoint_constructor_template(env);
   if (tmpl.IsEmpty()) {
-    tmpl = FunctionTemplate::New(env->isolate());
+    tmpl = env->NewFunctionTemplate(IllegalConstructor);
     tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "QuicEndpoint"));
     tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
     tmpl->InstanceTemplate()->SetInternalFieldCount(
         Endpoint::kInternalFieldCount);
+    env->SetProtoMethod(
+        tmpl,
+        "startListen",
+        StartListen);
+    env->SetProtoMethod(
+        tmpl,
+        "startWaitingForPendingCallbacks",
+        StartWaitForPendingCallbacks);
     state->set_endpoint_constructor_template(env, tmpl);
   }
   return tmpl;
 }
 
-void Endpoint::Initialize(Environment* env) {
+void Endpoint::Initialize(Environment* env, Local<Object> target) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   state->set_endpoint_constructor_template(env, GetConstructorTemplate(env));
+
+  env->SetMethod(target, "createEndpoint", CreateEndpoint);
+
+  ConfigObject::Initialize(env, target);
 }
 
 BaseObjectPtr<Endpoint> Endpoint::Create(
@@ -163,6 +176,35 @@ BaseObjectPtr<Endpoint> Endpoint::Create(
 
   return MakeBaseObject<Endpoint>(env, obj, udp_wrap, config);
 }
+
+void Endpoint::CreateEndpoint(const FunctionCallbackInfo<Value>& args) {
+  CHECK(!args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+  CHECK(ConfigObject::HasInstance(env, args[0]));
+  CHECK(args[1]->IsObject());  // UDPWrap object
+  ConfigObject* config;
+  ASSIGN_OR_RETURN_UNWRAP(&config, args[0]);
+
+  BaseObjectPtr<Endpoint> endpoint = Create(
+      env,
+      args[1].As<Object>(),
+      config->config());
+  if (endpoint)
+    args.GetReturnValue().Set(endpoint->object());
+}
+
+void Endpoint::StartListen(const FunctionCallbackInfo<Value>& args) {
+  Endpoint* endpoint;
+  ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
+  Environment* env = Environment::GetCurrent(args);
+  CHECK(OptionsObject::HasInstance(env, args[0]));
+  OptionsObject* options;
+  ASSIGN_OR_RETURN_UNWRAP(&options, args[0].As<Object>());
+  endpoint->Listen(options->options());
+}
+
+void Endpoint::StartWaitForPendingCallbacks(
+    const FunctionCallbackInfo<Value>& args) {}
 
 Endpoint::Endpoint(
     Environment* env,
