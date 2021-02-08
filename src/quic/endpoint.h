@@ -15,6 +15,7 @@
 #include "base_object.h"
 #include "env.h"
 #include "node_sockaddr.h"
+#include "node_worker.h"
 #include "udp_wrap.h"
 
 #include <ngtcp2/ngtcp2.h>
@@ -125,7 +126,7 @@ class Endpoint final : public AsyncWrap,
 #undef V
   };
 
-  struct Config {
+  struct Config : public MemoryRetainer {
     uint64_t retry_token_expiration = DEFAULT_RETRYTOKEN_EXPIRATION;
     uint64_t max_window_override = 0;
     uint64_t max_stream_window_override = 0;
@@ -177,6 +178,10 @@ class Endpoint final : public AsyncWrap,
           reinterpret_cast<unsigned char*>(&reset_token_secret),
           NGTCP2_STATELESS_RESET_TOKENLEN);
     }
+
+    SET_NO_MEMORY_INFO()
+    SET_MEMORY_INFO_NAME(Endpoint::Config)
+    SET_SELF_SIZE(Config)
   };
 
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
@@ -440,13 +445,41 @@ class ConfigObject : public BaseObject {
   static void SetResetTokenSecret(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  ConfigObject(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::shared_ptr<Endpoint::Config> config =
+          std::make_shared<Endpoint::Config>());
+
   Endpoint::Config* data() { return config_.get(); }
   const Endpoint::Config& config() { return *config_.get(); }
 
-  // TODO(@jasnell): This is a lie
-  SET_NO_MEMORY_INFO()
+  void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(ConfigObject)
   SET_SELF_SIZE(ConfigObject)
+
+  class TransferData : public worker::TransferData {
+   public:
+    explicit TransferData(std::shared_ptr<Endpoint::Config> config);
+
+    BaseObjectPtr<BaseObject> Deserialize(
+        Environment* env,
+        v8::Local<v8::Context> context,
+        std::unique_ptr<worker::TransferData> self);
+
+    void MemoryInfo(MemoryTracker* tracker) const override;
+    SET_MEMORY_INFO_NAME(ConfigObject::TransferData)
+    SET_SELF_SIZE(TransferData)
+
+   private:
+    std::shared_ptr<Endpoint::Config> config_;
+  };
+
+  TransferMode GetTransferMode() const override {
+    return TransferMode::kCloneable;
+  }
+
+  std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
 
  private:
   v8::Maybe<bool> SetOption(
@@ -469,11 +502,6 @@ class ConfigObject : public BaseObject {
       v8::Local<v8::String> name,
       bool Endpoint::Config::*member);
 
-  ConfigObject(
-      Environment* env,
-      v8::Local<v8::Object> object,
-      std::shared_ptr<Endpoint::Config> config =
-          std::make_shared<Endpoint::Config>());
   std::shared_ptr<Endpoint::Config> config_;
 };
 

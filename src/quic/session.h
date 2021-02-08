@@ -15,6 +15,7 @@
 #include "env.h"
 #include "node_http_common.h"
 #include "node_sockaddr.h"
+#include "node_worker.h"
 #include "timer_wrap.h"
 
 #include <ngtcp2/ngtcp2.h>
@@ -175,7 +176,7 @@ class Session final : public AsyncWrap,
     void EnableQLog(const CID& ocid);
   };
 
-  struct Options {
+  struct Options : public MemoryRetainer {
     std::string alpn;
     std::string hostname = "";
     BaseObjectPtr<crypto::SecureContext> context;
@@ -244,6 +245,10 @@ class Session final : public AsyncWrap,
     bool resume = false;
     ngtcp2_transport_params* early_transport_params = nullptr;
     SSL_SESSION* early_session_ticket = nullptr;
+
+    void MemoryInfo(MemoryTracker* tracker) const override;
+    SET_MEMORY_INFO_NAME(Session::Options)
+    SET_SELF_SIZE(Options)
   };
 
   #define V(_, name, type) type name;
@@ -1482,13 +1487,44 @@ class OptionsObject : public BaseObject {
   static void SetTLSOptions(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void SetSessionResume(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  OptionsObject(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::shared_ptr<Session::Options> options =
+          std::make_shared<Session::Options>());
+
   Session::Options* data() { return options_.get(); }
   const Session::Options& options() {return *options_.get(); }
 
-  // TODO(@jasnell): This is a lie
-  SET_NO_MEMORY_INFO()
+  void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(OptionsObject)
   SET_SELF_SIZE(OptionsObject)
+
+  class TransferData : public worker::TransferData {
+   public:
+    inline explicit TransferData(std::shared_ptr<Session::Options> options)
+        : options_(std::move(options)) {}
+
+    BaseObjectPtr<BaseObject> Deserialize(
+        Environment* env,
+        v8::Local<v8::Context> context,
+        std::unique_ptr<worker::TransferData> self);
+
+    void MemoryInfo(MemoryTracker* tracker) const override;
+    SET_MEMORY_INFO_NAME(OptionsObject::TransferData)
+    SET_SELF_SIZE(TransferData)
+
+   private:
+    std::shared_ptr<Session::Options> options_;
+  };
+
+  TransferMode GetTransferMode() const override {
+    return TransferMode::kCloneable;
+  }
+
+  std::unique_ptr<worker::TransferData> CloneForMessaging() const override {
+    return std::make_unique<TransferData>(options_);
+  }
 
  private:
   v8::Maybe<bool> SetOption(
@@ -1500,12 +1536,6 @@ class OptionsObject : public BaseObject {
       v8::Local<v8::Object> object,
       v8::Local<v8::String> name,
       bool Session::Options::*member);
-
-  OptionsObject(
-      Environment* env,
-      v8::Local<v8::Object> object,
-      std::shared_ptr<Session::Options> options =
-          std::make_shared<Session::Options>());
 
   std::shared_ptr<Session::Options> options_;
 };

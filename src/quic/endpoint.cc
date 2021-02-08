@@ -1228,6 +1228,37 @@ ConfigObject::ConfigObject(
   MakeWeak();
 }
 
+void ConfigObject::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackField("config", config_);
+}
+
+ConfigObject::TransferData::TransferData(
+    std::shared_ptr<Endpoint::Config> config)
+    : config_(std::move(config)) {}
+
+std::unique_ptr<worker::TransferData>
+ConfigObject::CloneForMessaging() const {
+  return std::make_unique<ConfigObject::TransferData>(config_);
+}
+
+void ConfigObject::TransferData::MemoryInfo(MemoryTracker* tracker) const {
+  tracker->TrackField("config", config_);
+}
+
+BaseObjectPtr<BaseObject> ConfigObject::TransferData::Deserialize(
+    Environment* env,
+    v8::Local<v8::Context> context,
+    std::unique_ptr<worker::TransferData> self) {
+  Local<Object> obj;
+  if (!ConfigObject::GetConstructorTemplate(env)
+          ->InstanceTemplate()
+          ->NewInstance(context).ToLocal(&obj)) {
+    return BaseObjectPtr<BaseObject>();
+  }
+
+  return MakeDetachedBaseObject<ConfigObject>(env, obj, std::move(config_));
+}
+
 }  // namespace quic
 }  // namespace node
 
