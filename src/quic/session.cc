@@ -3259,6 +3259,8 @@ Local<FunctionTemplate> OptionsObject::GetConstructorTemplate(
     tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "OptionsObject"));
     env->SetProtoMethod(tmpl, "setPreferredAddress", SetPreferredAddress);
     env->SetProtoMethod(tmpl, "setTransportParams", SetTransportParams);
+    env->SetProtoMethod(tmpl, "setTLSOptions", SetTLSOptions);
+    env->SetProtoMethod(tmpl, "setSessionResume", SetSessionResume);
     state->set_session_options_constructor_template(env, tmpl);
   }
   return tmpl;

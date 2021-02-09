@@ -192,6 +192,19 @@ void Initialize(Local<Object> target,
   Stream::Initialize(env);
   OptionsObject::Initialize(env, target);
 
+  constexpr uint32_t NGTCP2_PREFERRED_ADDRESS_USE =
+      static_cast<uint32_t>(PreferredAddress::Policy::USE);
+  constexpr uint32_t NGTCP2_PREFERRED_ADDRESS_IGNORE =
+      static_cast<uint32_t>(PreferredAddress::Policy::IGNORE);
+
+  NODE_DEFINE_STRING_CONSTANT(target, "HTTP3_ALPN", &NGHTTP3_ALPN_H3[1]);
+  NODE_DEFINE_CONSTANT(target, AF_INET);
+  NODE_DEFINE_CONSTANT(target, AF_INET6);
+  NODE_DEFINE_CONSTANT(target, NGTCP2_CC_ALGO_CUBIC);
+  NODE_DEFINE_CONSTANT(target, NGTCP2_CC_ALGO_RENO);
+  NODE_DEFINE_CONSTANT(target, NGTCP2_PREFERRED_ADDRESS_IGNORE);
+  NODE_DEFINE_CONSTANT(target, NGTCP2_PREFERRED_ADDRESS_USE);
+  NODE_DEFINE_CONSTANT(target, NGTCP2_MAX_CIDLEN);
   NODE_DEFINE_CONSTANT(target, NGTCP2_APP_NOERROR);
   NODE_DEFINE_CONSTANT(target, NGTCP2_NO_ERROR);
   NODE_DEFINE_CONSTANT(target, NGTCP2_INTERNAL_ERROR);

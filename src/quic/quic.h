@@ -68,6 +68,14 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
       NGTCP2_MAX_PKTLEN_IPV4;
 }
 
+// The constructors are v8::FunctionTemplates that are stored
+// persistently in the quic::BindingState class. These are
+// used for creating instances of the various objects, as well
+// as for performing HasInstance type checks. We choose to
+// store these on the BindingData instead of the Environment
+// in order to keep like-things together and to reduce the
+// additional memory overhead on the Environment when QUIC is
+// not being used.
 #define QUIC_CONSTRUCTORS(V)                                                   \
   V(endpoint)                                                                  \
   V(endpoint_config)                                                           \
@@ -77,6 +85,11 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(session_options)                                                           \
   V(stream)
 
+// The callbacks are persistent v8::Function references that
+// are set in the quic::BindingState used to communicate data
+// and events back out to the JS environment. They are set once
+// from the JavaScript side when the internalBinding('quic') is
+// first loaded.
 #define QUIC_JS_CALLBACKS(V)                                                   \
   V(endpoint_error, onEndpointError)                                           \
   V(endpoint_busy, onEndpointBusy)                                             \
@@ -101,6 +114,8 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(stream_headers, onStreamHeaders)                                           \
   V(stream_blocked, onStreamBlocked)
 
+// The strings are persistent/eternal v8::Strings that are set in
+// the quic::BindingState.
 #define QUIC_STRINGS(V)                                                        \
   V(initial_max_stream_data_bidi_local, "initialMaxStreamDataBidiLocal")       \
   V(initial_max_stream_data_bidi_remote, "initialMaxStreamDataBidiRemote")     \
@@ -136,8 +151,16 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(tx_packet_loss, "txPacketLoss")                                            \
   V(cc_algorithm, "ccAlgorithm")
 
+// If users do happen to get ahold of the prototype constructor for certain
+// objects, we want to make sure they are unable to new up new instances.
+// To do so, we make the IllegalConstructor the constructor function for
+// those objects.
 void IllegalConstructor(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+// Encapsulates a QUIC Error. All QUIC Errors are essentially name spaced.
+// QUIC makes a distinction between Transport and Application error codes
+// and allows the values to overlap. That is, a Transport error and
+// Application error can both use code 1 to mean entirely different things.
 struct QuicError {
   enum class Type {
     TRANSPORT,
@@ -181,6 +204,10 @@ static constexpr QuicError kQuicAppNoError =
 
 class Session;
 class Stream;
+
+// The quic::BindingState stores state information for the QUIC
+// internal binding. It is set when the QUIC internal binding
+// is created.
 class BindingState final : public BaseObject,
                            public QuicMemoryManager {
  public:
@@ -245,7 +272,7 @@ class BindingState final : public BaseObject,
   size_t current_ngtcp2_memory_ = 0;
 };
 
-// CIDs are used to identify QUIC sessions and may
+// CIDs are used to identify endpoints in a QUIC session and may
 // be between 0 and 20 bytes in length.
 class CID final : public MemoryRetainer {
  public:
