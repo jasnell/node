@@ -3380,7 +3380,7 @@ Maybe<bool> OptionsObject::SetOption(
   if (value->IsBigInt()) {
     bool lossless = true;
     val = value.As<BigInt>()->Uint64Value(&lossless);
-    if (lossless) {
+    if (!lossless) {
       Utf8Value label(env()->isolate(), name);
       THROW_ERR_OUT_OF_RANGE(
           env(),

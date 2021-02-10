@@ -19,10 +19,10 @@
 #include <v8.h>
 #include <uv.h>
 
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
 namespace node {
 namespace quic {
 

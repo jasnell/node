@@ -14,6 +14,7 @@
 #include "async_wrap.h"
 #include "base_object.h"
 #include "env.h"
+#include "handle_wrap.h"
 #include "node_sockaddr.h"
 #include "node_worker.h"
 #include "udp_wrap.h"
@@ -21,6 +22,7 @@
 #include <ngtcp2/ngtcp2.h>
 #include <v8.h>
 
+#include <deque>
 #include <string>
 
 namespace node {
@@ -51,9 +53,16 @@ namespace quic {
 class Endpoint;
 
 #define V(name, _, __) IDX_STATS_ENDPOINT_##name,
-enum class EndpointStatsIdx : int {
+enum EndpointStatsIdx {
   ENDPOINT_STATS(V)
   IDX_STATS_ENDPOINT_COUNT
+};
+#undef V
+
+#define V(name, _, __) IDX_STATE_ENDPOINT_##name,
+enum EndpointStateIdx {
+  ENDPOINT_STATE(V)
+  IDX_STATE_ENDPOINT_COUNT
 };
 #undef V
 
@@ -504,6 +513,366 @@ class ConfigObject : public BaseObject {
 
   std::shared_ptr<Endpoint::Config> config_;
 };
+
+
+// --------------------
+
+// Temporary.. will move to session.h
+class InnerEndpoint;
+
+class InnerSession : public BaseObject {
+ public:
+  struct Config {
+    ngtcp2_vec token;
+    explicit Config(
+        InnerEndpoint* endpoint,
+        const CID& dcid,
+        const CID& scid,
+        uint32_t version);
+  };
+
+  void SendPacketDone(int status);
+  bool Receive(
+      std::shared_ptr<v8::BackingStore> store,
+      size_t nread,
+      const SocketAddress& local_address,
+      const SocketAddress& remote_address,
+      unsigned int flags);
+
+  bool is_destroyed() const;
+  bool is_server() const;
+  SocketAddress remote_address() const;
+};
+
+// TODO(@jasnell): Rename
+class InnerEndpoint : public HandleWrap,
+                      public EndpointStatsBase {
+ public:
+  struct Config : public MemoryRetainer {
+      uint64_t retry_token_expiration = DEFAULT_RETRYTOKEN_EXPIRATION;
+      uint64_t max_window_override = 0;
+      uint64_t max_stream_window_override = 0;
+      uint64_t max_connections_per_host = DEFAULT_MAX_CONNECTIONS_PER_HOST;
+      uint64_t max_connections_total = DEFAULT_MAX_CONNECTIONS;
+      uint64_t max_stateless_resets = DEFAULT_MAX_STATELESS_RESETS;
+      uint64_t address_lru_size = DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE;
+      uint64_t retry_limit = DEFAULT_MAX_RETRY_LIMIT;
+      uint64_t max_payload_size = NGTCP2_DEFAULT_MAX_PKTLEN;
+      uint64_t unacknowledged_packet_threshold = 0;
+      bool qlog = false;
+      bool validate_address = true;
+      bool disable_stateless_reset = false;
+      double rx_loss = 0.0;
+      double tx_loss = 0.0;
+      ngtcp2_cc_algo cc_algorithm = NGTCP2_CC_ALGO_CUBIC;
+      uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
+
+      Config() = default;
+      inline Config(const Config& other)
+          : retry_token_expiration(other.retry_token_expiration),
+            max_connections_per_host(other.max_connections_per_host),
+            max_connections_total(other.max_connections_total),
+            max_stateless_resets(other.max_stateless_resets),
+            address_lru_size(other.address_lru_size),
+            qlog(other.qlog),
+            validate_address(other.validate_address),
+            disable_stateless_reset(other.disable_stateless_reset),
+            rx_loss(other.rx_loss),
+            tx_loss(other.tx_loss) {
+        memcpy(
+            reset_token_secret,
+            other.reset_token_secret,
+            NGTCP2_STATELESS_RESET_TOKENLEN);
+        GenerateResetTokenSecret();
+      }
+
+      Config(Config&& other) = delete;
+      Config& operator=(Config&& other) = delete;
+
+      inline Config& operator=(const Config& other) {
+        if (this == &other) return *this;
+        this->~Config();
+        return *new(this) Config(other);
+      }
+
+      inline void GenerateResetTokenSecret() {
+        crypto::EntropySource(
+            reinterpret_cast<unsigned char*>(&reset_token_secret),
+            NGTCP2_STATELESS_RESET_TOKENLEN);
+      }
+
+      SET_NO_MEMORY_INFO()
+      SET_MEMORY_INFO_NAME(InnerEndpoint::Config)
+      SET_SELF_SIZE(Config)
+    };
+
+  struct QueuedPacket {
+    SocketAddress local_address;
+    SocketAddress remote_address;
+    std::unique_ptr<Packet> packet;
+    BaseObjectPtr<InnerSession> session;
+
+    using Queue = std::deque<QueuedPacket>;
+  };
+
+  class SendWrap : public UdpSendWrap {
+   public:
+    static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+
+    static SendWrap* Create(
+        Environment* env,
+        std::unique_ptr<Packet> packet,
+        BaseObjectPtr<InnerSession> session);
+
+    SendWrap(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::unique_ptr<Packet> packet,
+      BaseObjectPtr<InnerSession> session);
+
+    InnerSession* session() { return session_.get(); }
+
+    void MemoryInfo(MemoryTracker* tracker) const override;
+    SET_MEMORY_INFO_NAME(InnerEndpoint::SendWrap)
+    SET_SELF_SIZE(SendWrap)
+
+   private:
+    std::unique_ptr<Packet> packet_;
+    BaseObjectPtr<InnerSession> session_;
+  };
+
+  struct InitialPacketListener {
+    void Accept(
+        const InnerSession::Config& config,
+        std::shared_ptr<v8::BackingStore> store,
+        size_t nread,
+        const SocketAddress& local_addr,
+        const SocketAddress& remote_addr);
+
+    using List = std::deque<InitialPacketListener*>;
+  };
+
+  InnerEndpoint(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      const Config& config);
+
+  void AddInitialPacketListener(InitialPacketListener* listener);
+  void RemoveInitialPacketListener(InitialPacketListener* listener);
+
+  void AddSession(const CID& cid, BaseObjectPtr<InnerSession> session);
+
+  void RemoveSession(const CID& cid, const SocketAddress& addr);
+
+  void AssociateCID(const CID& cid, const CID& scid);
+
+  void DisassociateCID(const CID& cid);
+
+  void AssociateStatelessResetToken(
+      const StatelessResetToken& token,
+      BaseObjectPtr<InnerSession> session);
+
+  void DisassociateStatelessResetToken(const StatelessResetToken& token);
+
+  bool SendPacket(
+    const SocketAddress& local_address,
+    const SocketAddress& remote_address,
+    std::unique_ptr<Packet> packet,
+    InnerSession* session = nullptr);
+
+  // Shutdown a connection prematurely, before a QuicSession is created.
+  // This should only be called at the start of a session before the crypto
+  // keys have been established.
+  void ImmediateConnectionClose(
+      uint32_t version,
+      const CID& scid,
+      const CID& dcid,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      int64_t reason = NGTCP2_INVALID_TOKEN);
+
+  // Generates and sends a retry packet. This is terminal
+  // for the connection. Retry packets are used to force
+  // explicit path validation by issuing a token to the
+  // peer that it must thereafter include in all subsequent
+  // initial packets. Upon receiving a retry packet, the
+  // peer must termination it's initial attempt to
+  // establish a connection and start a new attempt.
+  //
+  // Retry packets will only ever be generated by QUIC servers,
+  // and only if the QuicSocket is configured for explicit path
+  // validation. There is no way for a client to force a retry
+  // packet to be created. However, once a client determines that
+  // explicit path validation is enabled, it could attempt to
+  // DOS by sending a large number of malicious initial packets
+  // to intentionally ellicit retry packets (It can do so by
+  // intentionally sending initial packets that ignore the retry
+  // token). To help mitigate that risk, we limit the number of
+  // retries we send to a given remote endpoint.
+  bool SendRetry(
+      uint32_t version,
+      const CID& dcid,
+      const CID& scid,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr);
+
+  // Sends a version negotiation packet. This is terminal for
+  // the connection and is sent only when a QUIC packet is
+  // received for an unsupported Node.js version.
+  // It is possible that a malicious packet triggered this
+  // so we need to be careful not to commit too many resources.
+  // Currently, we only support one QUIC version at a time.
+  void SendVersionNegotiation(
+      uint32_t version,
+      const CID& dcid,
+      const CID& scid,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr);
+
+  int StartReceiving();
+  int StopReceiving();
+
+  void Ref();
+  void Unref();
+
+  SocketAddress local_address() const;
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(InnerEndpoint);
+  SET_SELF_SIZE(InnerEndpoint);
+
+ private:
+  static void OnAlloc(
+      uv_handle_t* handle,
+      size_t suggested_size,
+      uv_buf_t* buf);
+  static void OnOutbound(uv_async_t* handle);
+  static void OnReceive(
+      uv_udp_t* handle,
+      ssize_t nread,
+      const uv_buf_t* buf,
+      const sockaddr* addr,
+      unsigned int flags);
+
+  void IncrementPendingOutbound() { pending_outbound_++; }
+  void DecrementPendingOutbound() { pending_outbound_--; }
+
+  // Inspects the packet and possibly accepts it as a new
+  // initial packet creating a new Session instance.
+  // If the packet is not acceptable, it is very important
+  // not to commit resources.
+  bool AcceptInitialPacket(
+      uint32_t version,
+      const CID& dcid,
+      const CID& scid,
+      std::shared_ptr<v8::BackingStore> store,
+      size_t nread,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      unsigned int flags);
+
+  InnerSession* FindSession(const CID& cid);
+
+  // When a received packet contains a QUIC short header but cannot be
+  // matched to a known Session, it is either (a) garbage,
+  // (b) a valid packet for a connection we no longer have state
+  // for, or (c) a stateless reset. Because we do not yet know if
+  // we are going to process the packet, we need to try to quickly
+  // determine -- with as little cost as possible -- whether the
+  // packet contains a reset token. We do so by checking the final
+  // NGTCP2_STATELESS_RESET_TOKENLEN bytes in the packet to see if
+  // they match one of the known reset tokens previously given by
+  // the remote peer. If there's a match, then it's a reset token,
+  // if not, we move on the to the next check. It is very important
+  // that this check be as inexpensive as possible to avoid a DOS
+  // vector.
+  bool MaybeStatelessReset(
+      const CID& dcid,
+      const CID& scid,
+      std::shared_ptr<v8::BackingStore> store,
+      size_t nread,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      unsigned int flags);
+
+  InitialPacketListener* NextListener();
+
+  uv_buf_t OnAlloc(size_t suggested_size);
+  void OnReceive(
+      size_t nread,
+      const uv_buf_t& buf,
+      const SocketAddress& addr,
+      unsigned int flags);
+
+  void ProcessOutbound();
+
+  int ProcessPacket(
+    const SocketAddress& local_address,
+    const SocketAddress& remote_address,
+    std::unique_ptr<Packet> packet,
+    BaseObjectPtr<InnerSession> session);
+
+  void ProcessSendFailure(int status);
+  void ProcessReceiveFailure(int status);
+
+  // Possibly generates and sends a stateless reset packet.
+  // This is terminal for the connection. It is possible
+  // that a malicious packet triggered this so we need to
+  // be careful not to commit too many resources.
+  bool SendStatelessReset(
+      const CID& cid,
+      const SocketAddress& local_addr,
+      const SocketAddress& remote_addr,
+      size_t source_len);
+
+  void set_validated_address(const SocketAddress& addr);
+  bool is_validated_address(const SocketAddress& addr) const;
+  void IncrementSocketAddressCounter(const SocketAddress& addr);
+  void DecrementSocketAddressCounter(const SocketAddress& addr);
+  void IncrementStatelessResetCounter(const SocketAddress& addr);
+  size_t current_socket_address_count(const SocketAddress& addr) const;
+  size_t current_stateless_reset_count(const SocketAddress& addr) const;
+  bool is_diagnostic_packet_loss(double prob) const;
+
+  Config config_;
+  uv_udp_t handle_;
+
+  QueuedPacket::Queue outbound_;
+  uv_async_t outbound_signal_;
+  size_t pending_outbound_ = 0;
+
+  uint8_t token_secret_[kTokenSecretLen];
+  ngtcp2_crypto_aead token_aead_;
+  ngtcp2_crypto_md token_md_;
+
+  struct SocketAddressInfoTraits {
+    struct Type {
+      size_t active_connections;
+      size_t reset_count;
+      size_t retry_count;
+      uint64_t timestamp;
+      bool validated;
+    };
+
+    static bool CheckExpired(const SocketAddress& address, const Type& type);
+    static void Touch(const SocketAddress& address, Type* type);
+  };
+
+  SocketAddressLRU<SocketAddressInfoTraits> addrLRU_;
+  StatelessResetToken::Map<InnerSession> token_map_;
+  CID::Map<BaseObjectPtr<InnerSession>> sessions_;
+  CID::Map<CID> dcid_to_scid_;
+
+  InitialPacketListener::List listeners_;
+
+  bool busy_ = false;
+
+  Mutex session_mutex_;
+  Mutex outbound_mutex_;
+  Mutex listener_mutex_;
+};
+
 
 }  // namespace quic
 }  // namespace node
