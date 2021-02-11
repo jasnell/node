@@ -622,6 +622,7 @@ class Endpoint final : public MemoryRetainer,
   struct Lock {
     Mutex::ScopedLock lock_;
     Lock(Endpoint* endpoint): lock_(endpoint->mutex_) {}
+    Lock(const std::shared_ptr<Endpoint>& endpoint): lock_(endpoint->mutex_) {}
   };
 
  private:
@@ -732,11 +733,6 @@ class Endpoint final : public MemoryRetainer,
   bool receiving_ = false;
 
   Mutex mutex_;
-
-  Mutex session_mutex_;
-  Mutex outbound_mutex_;
-  Mutex listener_mutex_;
-  Mutex close_mutex_;
 };
 
 // The EndpointWrap is the intermediate JavaScript binding object

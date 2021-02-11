@@ -510,17 +510,15 @@ void Endpoint::ProcessReceiveFailure(int status) {
 }
 
 void Endpoint::AddCloseListener(CloseListener* listener) {
-  Mutex::ScopedLock lock(close_mutex_);
   close_listeners_.insert(listener);
 }
 
 void Endpoint::RemoveCloseListener(CloseListener* listener) {
-  Mutex::ScopedLock lock(close_mutex_);
   close_listeners_.erase(listener);
 }
 
 void Endpoint::Close(CloseListener::Context context, int status) {
-  Mutex::ScopedLock lock(close_mutex_);
+  Lock lock(this);
   env()->RemoveCleanupHook(OnCleanup, this);
   udp_.Close();
   for (const auto listener : close_listeners_) {
@@ -627,7 +625,7 @@ bool Endpoint::AcceptInitialPacket(
   // the list so that another listener has the option of picking
   // up the next one.
   {
-    Mutex::ScopedLock lock(listener_mutex_);
+    Lock lock(this);
     for (auto it = listeners_.begin(); it != listeners_.end(); it++) {
       InitialPacketListener* listener = *it;
       if (listener->Accept(config, store, nread, local_addr, remote_addr)) {
@@ -641,21 +639,15 @@ bool Endpoint::AcceptInitialPacket(
   return false;
 }
 
-void Endpoint::AssociateCID(
-    const CID& cid,
-    PacketListener* listener) {
-  Mutex::ScopedLock lock(session_mutex_);
+void Endpoint::AssociateCID(const CID& cid, PacketListener* listener) {
   sessions_[cid] = listener;
 }
 
 void Endpoint::DisassociateCID(const CID& cid) {
-  Mutex::ScopedLock lock(session_mutex_);
   sessions_.erase(cid);
 }
 
-void Endpoint::AddInitialPacketListener(
-    InitialPacketListener* listener) {
-  Mutex::ScopedLock lock(listener_mutex_);
+void Endpoint::AddInitialPacketListener(InitialPacketListener* listener) {
   listeners_.emplace_back(listener);
 }
 
@@ -684,14 +676,12 @@ void Endpoint::ImmediateConnectionClose(
 
 void Endpoint::RemoveInitialPacketListener(
     InitialPacketListener* listener) {
-  Mutex::ScopedLock lock(listener_mutex_);
   auto it = std::find(listeners_.begin(), listeners_.end(), listener);
   if (it != listeners_.end())
     listeners_.erase(it);
 }
 
 Endpoint::PacketListener* Endpoint::FindSession(const CID& cid) {
-  Mutex::ScopedLock lock(session_mutex_);
   auto session_it = sessions_.find(cid);
   if (session_it != std::end(sessions_))
     return session_it->second;
@@ -700,14 +690,12 @@ Endpoint::PacketListener* Endpoint::FindSession(const CID& cid) {
 
 void Endpoint::DisassociateStatelessResetToken(
     const StatelessResetToken& token) {
-  Mutex::ScopedLock lock(session_mutex_);
   token_map_.erase(token);
 }
 
 void Endpoint::AssociateStatelessResetToken(
     const StatelessResetToken& token,
     PacketListener* listener) {
-  Mutex::ScopedLock lock(session_mutex_);
   token_map_[token] = listener;
 }
 
@@ -736,7 +724,7 @@ bool Endpoint::MaybeStatelessReset(
   ptr += nread;
   ptr -= NGTCP2_STATELESS_RESET_TOKENLEN;
   StatelessResetToken possible_token(ptr);
-  Mutex::ScopedLock lock(session_mutex_);
+  Lock lock(this);
   auto it = token_map_.find(possible_token);
   if (it == token_map_.end())
     return false;
@@ -818,7 +806,11 @@ void Endpoint::OnReceive(
   CID dcid(pdcid, pdcidlen);
   CID scid(pscid, pscidlen);
 
-  PacketListener* listener = FindSession(dcid);
+  PacketListener* listener = nullptr;
+  {
+    Lock lock(this);
+    listener = FindSession(dcid);
+  }
 
   // If a session is not found, there are four possible reasons:
   // 1. The session has not been created yet
@@ -899,7 +891,7 @@ void Endpoint::OnReceive(
 void Endpoint::ProcessOutbound() {
   SendWrap::Queue queue;
   {
-    Mutex::ScopedLock lock(outbound_mutex_);
+    Lock lock(this);
     outbound_.swap(queue);
   }
 
@@ -950,11 +942,11 @@ bool Endpoint::SendPacket(
 
 void Endpoint::SendPacket(BaseObjectPtr<SendWrap> packet) {
   {
-    Mutex::ScopedLock lock(outbound_mutex_);
+    Lock lock(this);
     outbound_.emplace_back(std::move(packet));
+    IncrementStat(&EndpointStats::bytes_sent, packet->packet()->length());
+    IncrementStat(&EndpointStats::packets_sent);
   }
-  IncrementStat(&EndpointStats::bytes_sent, packet->packet()->length());
-  IncrementStat(&EndpointStats::packets_sent);
   outbound_signal_.Send();
 }
 
@@ -1114,12 +1106,10 @@ void Endpoint::IncrementStatelessResetCounter(const SocketAddress& addr) {
 }
 
 void Endpoint::IncrementSocketAddressCounter(const SocketAddress& addr) {
-  Mutex::ScopedLock lock(session_mutex_);
   addrLRU_.Upsert(addr)->active_connections++;
 }
 
 void Endpoint::DecrementSocketAddressCounter(const SocketAddress& addr) {
-  Mutex::ScopedLock lock(session_mutex_);
   SocketAddressInfoTraits::Type* counts = addrLRU_.Peek(addr);
   if (counts != nullptr && counts->active_connections > 0)
     counts->active_connections--;
@@ -1428,6 +1418,7 @@ EndpointWrap::EndpointWrap(
   inbound_signal_.Unref();
   initial_signal_.Unref();
 
+  Endpoint::Lock lock(inner_);
   inner_->AddCloseListener(this);
 
   // TODO(@jasnell): Re-enable
@@ -1454,7 +1445,9 @@ EndpointWrap::~EndpointWrap() {
   CHECK(sessions_.empty());
   Debug(this, "Destroying");
   if (inner_) {
+    Endpoint::Lock lock(inner_);
     inner_->RemoveCloseListener(this);
+    inner_->RemoveInitialPacketListener(this);
     inner_->DebugStats(this);
   }
 
@@ -1500,6 +1493,7 @@ void EndpointWrap::MemoryInfo(MemoryTracker* tracker) const {
 
 void EndpointWrap::AddSession(const CID& cid, BaseObjectPtr<Session> session) {
   sessions_[cid] = session;
+  Endpoint::Lock lock(inner_);
   inner_->AssociateCID(cid, this);
   inner_->IncrementSocketAddressCounter(session->remote_address());
   inner_->IncrementStat(
@@ -1512,6 +1506,7 @@ void EndpointWrap::AssociateCID(const CID& cid, const CID& scid) {
   if (cid && scid) {
     Debug(this, "Associating cid %s with %s", cid, scid);
     dcid_to_scid_[cid] = scid;
+    Endpoint::Lock lock(inner_);
     inner_->AssociateCID(cid, this);
   }
 }
@@ -1521,6 +1516,7 @@ void EndpointWrap::AssociateStatelessResetToken(
     BaseObjectPtr<Session> session) {
   Debug(this, "Associating stateless reset token %s", token);
   token_map_[token] = session;
+  Endpoint::Lock lock(inner_);
   inner_->AssociateStatelessResetToken(token, this);
 }
 
@@ -1528,6 +1524,7 @@ void EndpointWrap::DisassociateCID(const CID& cid) {
   if (cid) {
     Debug(this, "Removing association for cid %s", cid);
     dcid_to_scid_.erase(cid);
+    Endpoint::Lock lock(inner_);
     inner_->DisassociateCID(cid);
   }
 }
@@ -1535,7 +1532,8 @@ void EndpointWrap::DisassociateCID(const CID& cid) {
 void EndpointWrap::DisassociateStatelessResetToken(
     const StatelessResetToken& token) {
   Debug(this, "Removing stateless reset token %s", token);
- inner_->DisassociateStatelessResetToken(token);
+  Endpoint::Lock lock(inner_);
+  inner_->DisassociateStatelessResetToken(token);
 }
 
 BaseObjectPtr<Session> EndpointWrap::FindSession(const CID& cid) {
@@ -1584,6 +1582,7 @@ void EndpointWrap::Listen(const Session::Options& options) {
   Debug(this, "Starting to listen");
   server_options_ = options;
   state_->listening = 1;
+  Endpoint::Lock lock(inner_);
   inner_->AddInitialPacketListener(this);
 }
 
@@ -1719,6 +1718,7 @@ void EndpointWrap::ProcessInbound() {
 
 void EndpointWrap::RemoveSession(const CID& cid, const SocketAddress& addr) {
   sessions_.erase(cid);
+  Endpoint::Lock lock(inner_);
   inner_->DisassociateCID(cid);
   inner_->DecrementSocketAddressCounter(addr);
 }
