@@ -41,30 +41,25 @@ class StatsBase {
  public:
   typedef typename T::Stats Stats;
 
-  inline StatsBase(Environment* env, v8::Local<v8::Object> wrap) {
-    // Create the backing store for the statistics
-    size_t size = sizeof(Stats);
-    size_t count = size / sizeof(uint64_t);
-    stats_store_ = v8::ArrayBuffer::NewBackingStore(env->isolate(), size);
-    stats_ = new (stats_store_->Data()) Stats;
-
+  inline StatsBase(Environment* env)
+      : stats_store_(
+            v8::ArrayBuffer::NewBackingStore(
+                env->isolate(),
+                sizeof(Stats))),
+        stats_(new (stats_store_->Data()) Stats) {
     DCHECK_NOT_NULL(stats_);
     stats_->created_at = uv_hrtime();
-
-    // The stats buffer is exposed as a BigUint64Array on
-    // the JavaScript side to allow statistics to be monitored.
-    v8::Local<v8::ArrayBuffer> stats_buffer =
-        v8::ArrayBuffer::New(env->isolate(), stats_store_);
-    v8::Local<v8::BigUint64Array> stats_array =
-        v8::BigUint64Array::New(stats_buffer, 0, count);
-    USE(wrap->DefineOwnProperty(
-        env->context(),
-        env->stats_string(),
-        stats_array,
-        v8::PropertyAttribute::ReadOnly));
   }
 
-  inline ~StatsBase() { if (stats_ != nullptr) stats_->~Stats(); }
+  v8::Local<v8::BigUint64Array> ToBigUint64Array(Environment* env) {
+    size_t size = sizeof(Stats);
+    size_t count = size / sizeof(uint64_t);
+    v8::Local<v8::ArrayBuffer> stats_buffer =
+        v8::ArrayBuffer::New(env->isolate(), stats_store_);
+    return v8::BigUint64Array::New(stats_buffer, 0, count);
+  }
+
+  virtual ~StatsBase() { if (stats_ != nullptr) stats_->~Stats(); }
 
   // The StatsDebug utility is used when StatsBase is destroyed
   // to output statistical information to Debug. It is designed
@@ -91,16 +86,19 @@ class StatsBase {
   // Increments the given stat field by the given amount or 1 if
   // no amount is specified.
   inline void IncrementStat(uint64_t Stats::*member, uint64_t amount = 1) {
+    Mutex::ScopedLock lock(mutex_);
     stats_->*member += std::min(amount, kMaxUint64 - stats_->*member);
   }
 
   // Sets an entirely new value for the given stat field
   inline void SetStat(uint64_t Stats::*member, uint64_t value) {
+    Mutex::ScopedLock lock(mutex_);
     stats_->*member = value;
   }
 
   // Sets the given stat field to the current uv_hrtime()
   inline void RecordTimestamp(uint64_t Stats::*member) {
+    Mutex::ScopedLock lock(mutex_);
     stats_->*member = uv_hrtime();
   }
 
@@ -113,14 +111,16 @@ class StatsBase {
     tracker->TrackField("stats_store", stats_store_);
   }
 
-  inline void DebugStats() {
+  inline void DebugStats(AsyncWrap* wrap) {
     StatsDebug stats_debug(static_cast<typename T::Base*>(this));
-    Debug(static_cast<typename T::Base*>(this), "Destroyed. %s", stats_debug);
+    Debug(wrap, "Destroyed. %s", stats_debug);
   }
 
  private:
   std::shared_ptr<v8::BackingStore> stats_store_;
   Stats* stats_ = nullptr;
+
+  Mutex mutex_;
 };
 
 }  // namespace quic

@@ -112,6 +112,7 @@ namespace quic {
   V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)
 
 class Endpoint;
+class EndpointWrap;
 class QLogStream;
 class Session;
 
@@ -172,7 +173,15 @@ class Session final : public AsyncWrap,
       size_t cidlen);
 
   struct Config : public ngtcp2_settings {
-    explicit Config(Endpoint* endpoint);
+    uint32_t version;
+    CID dcid;
+    CID scid;
+    CID ocid;
+    explicit Config(
+        Endpoint* endpoint,
+        const CID& dcid,
+        const CID& scid,
+        uint32_t version);
     void EnableQLog(const CID& ocid);
   };
 
@@ -264,7 +273,7 @@ class Session final : public AsyncWrap,
         const CID& ocid = CID());
 
     void SetPreferredAddress(const SocketAddress& address);
-    void GenerateStatelessResetToken(Endpoint* endpoint, const CID& cid);
+    void GenerateStatelessResetToken(EndpointWrap* endpoint, const CID& cid);
     void GeneratePreferredAddressToken(
         ConnectionIDStrategy connection_id_strategy,
         Session* session,
@@ -634,17 +643,14 @@ class Session final : public AsyncWrap,
   static void Initialize(Environment* env);
 
   static BaseObjectPtr<Session> CreateServer(
-      Endpoint* endpoint,
+      EndpointWrap* endpoint,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Config& config,
-      const CID& dcid,
-      const CID& scid,
-      const CID& ocid,
-      uint32_t version);
+      const Options& options);
 
   static BaseObjectPtr<Session> CreateClient(
-      Endpoint* endpoint,
+      EndpointWrap* endpoint,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Config& config,
@@ -652,7 +658,7 @@ class Session final : public AsyncWrap,
       uint32_t version);
 
   Session(
-      Endpoint* endpoint,
+      EndpointWrap* endpoint,
       v8::Local<v8::Object> object,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
@@ -664,7 +670,7 @@ class Session final : public AsyncWrap,
       uint32_t version);
 
   Session(
-      Endpoint* endpoint,
+      EndpointWrap* endpoint,
       v8::Local<v8::Object> object,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
@@ -680,7 +686,7 @@ class Session final : public AsyncWrap,
   }
   inline CID dcid() const { return dcid_; }
   inline Application* application() const { return application_.get(); }
-  inline Endpoint* endpoint() const;
+  inline EndpointWrap* endpoint() const;
   inline const std::string& alpn() { return alpn_; }
   inline const std::string& hostname() { return hostname_; }
 
@@ -720,11 +726,10 @@ class Session final : public AsyncWrap,
 
   // Receive and process a QUIC packet received from the peer
   bool Receive(
-      ssize_t nread,
-      const uint8_t* data,
+      size_t nread,
+      std::shared_ptr<v8::BackingStore> store,
       const SocketAddress& local_addr,
-      const SocketAddress& remote_addr,
-      unsigned int flags);
+      const SocketAddress& remote_addr);
 
   // Called by ngtcp2 when a chunk of stream data has been received. If
   // the stream does not yet exist, it is created, then the data is
@@ -780,7 +785,7 @@ class Session final : public AsyncWrap,
   // once Close() is called.
   void StartGracefulClose();
 
-  bool AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding = false);
+  bool AttachToNewEndpoint(EndpointWrap* endpoint, bool nat_rebinding = false);
 
   // Error handling for the Session. client and server
   // instances will do different things here, but ultimately
@@ -979,7 +984,7 @@ class Session final : public AsyncWrap,
 
  private:
   Session(
-      Endpoint* endpoint,
+      EndpointWrap* endpoint,
       v8::Local<v8::Object> object,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
@@ -1136,7 +1141,7 @@ class Session final : public AsyncWrap,
 
   ngtcp2_mem allocator_;
   QuicConnectionPointer connection_;
-  BaseObjectPtr<Endpoint> endpoint_;
+  BaseObjectPtr<EndpointWrap> endpoint_;
   AliasedStruct<State> state_;
   StreamsMap streams_;
 

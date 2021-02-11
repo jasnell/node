@@ -70,7 +70,7 @@ Stream::Stream(
     stream_id id,
     Buffer::Source* source)
     : AsyncWrap(session->env(), object, AsyncWrap::PROVIDER_QUICSTREAM),
-      StreamStatsBase(session->env(), object),
+      StreamStatsBase(session->env()),
       session_(session),
       state_(session->env()),
       id_(id) {
@@ -85,13 +85,19 @@ Stream::Stream(
       state_.GetArrayBuffer(),
       PropertyAttribute::ReadOnly).Check();
 
+  object->DefineOwnProperty(
+      env()->context(),
+      env()->stats_string(),
+      ToBigUint64Array(env()),
+      PropertyAttribute::ReadOnly).Check();
+
   ngtcp2_transport_params params;
   ngtcp2_conn_get_local_transport_params(session->connection(), &params);
   IncrementStat(&StreamStats::max_offset, params.initial_max_data);
 }
 
 Stream::~Stream() {
-  DebugStats();
+  DebugStats(this);
 }
 
 void Stream::Acknowledge(uint64_t offset, size_t datalen) {

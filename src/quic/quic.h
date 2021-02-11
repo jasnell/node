@@ -83,7 +83,8 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(send_wrap)                                                                 \
   V(session)                                                                   \
   V(session_options)                                                           \
-  V(stream)
+  V(stream)                                                                    \
+  V(udp)
 
 // The callbacks are persistent v8::Function references that
 // are set in the quic::BindingState used to communicate data
@@ -91,8 +92,8 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
 // from the JavaScript side when the internalBinding('quic') is
 // first loaded.
 #define QUIC_JS_CALLBACKS(V)                                                   \
+  V(endpoint_done, onEndpointDone)                                             \
   V(endpoint_error, onEndpointError)                                           \
-  V(endpoint_busy, onEndpointBusy)                                             \
   V(session_ready, onSessionReady)                                             \
   V(session_cert, onSessionCert)                                               \
   V(session_client_hello, onSessionClientHello)                                \
@@ -670,8 +671,7 @@ class StatelessResetToken final : public MemoryRetainer {
   template <typename T>
   using Map =
       std::unordered_map<
-          StatelessResetToken,
-          BaseObjectPtr<T>,
+          StatelessResetToken, T,
           StatelessResetToken::Hash>;
 
  private:

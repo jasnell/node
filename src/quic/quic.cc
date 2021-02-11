@@ -187,7 +187,7 @@ void Initialize(Local<Object> target,
 
   env->SetMethod(target, "initializeCallbacks", InitializeCallbacks);
 
-  Endpoint::Initialize(env, target);
+  EndpointWrap::Initialize(env, target);
   Session::Initialize(env);
   Stream::Initialize(env);
   OptionsObject::Initialize(env, target);

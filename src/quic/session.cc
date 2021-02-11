@@ -131,7 +131,14 @@ size_t get_length(const T* vec, size_t count) {
 }
 }  // namespace
 
-Session::Config::Config(Endpoint* endpoint) {
+Session::Config::Config(
+    Endpoint* endpoint,
+    const CID& dcid_,
+    const CID& scid_,
+    uint32_t version_)
+    : version(version_),
+      dcid(dcid_),
+      scid(scid_) {
   ngtcp2_settings_default(this);
   initial_ts = uv_hrtime();
   if (UNLIKELY(is_ngtcp2_debug_enabled(endpoint->env())))
@@ -154,6 +161,7 @@ Session::Config::Config(Endpoint* endpoint) {
 
 void Session::Config::EnableQLog(const CID& ocid) {
   qlog = { *ocid, OnQlogWrite };
+  this->ocid = ocid;
 }
 
 Session::TransportParams::TransportParams(
@@ -225,7 +233,7 @@ void Session::TransportParams::SetPreferredAddress(
 }
 
 void Session::TransportParams::GenerateStatelessResetToken(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     const CID& cid) {
   CHECK(cid);
   stateless_reset_token_present = 1;
@@ -892,7 +900,7 @@ void Session::Initialize(Environment* env) {
 }
 
 BaseObjectPtr<Session> Session::CreateClient(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Config& config,
@@ -918,14 +926,11 @@ BaseObjectPtr<Session> Session::CreateClient(
 
 // Static function to create a new server QuicSession instance
 BaseObjectPtr<Session> Session::CreateServer(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Config& config,
-    const CID& dcid,
-    const CID& scid,
-    const CID& ocid,
-    uint32_t version) {
+    const Options& options) {
   Local<Object> obj;
   Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
   CHECK(!tmpl.IsEmpty());
@@ -940,15 +945,15 @@ BaseObjectPtr<Session> Session::CreateServer(
       local_addr,
       remote_addr,
       config,
-      endpoint->server_config(),
-      dcid,
-      scid,
-      ocid,
-      version);
+      options,
+      config.dcid,
+      config.scid,
+      config.ocid,
+      config.version);
 }
 
 Session::Session(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     v8::Local<v8::Object> object,
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
@@ -956,7 +961,7 @@ Session::Session(
     const CID& dcid,
     ngtcp2_crypto_side side)
     : AsyncWrap(endpoint->env(), object, AsyncWrap::PROVIDER_QUICSESSION),
-      SessionStatsBase(endpoint->env(), object),
+      SessionStatsBase(endpoint->env()),
       allocator_(BindingState::GetAllocator(endpoint->env())),
       endpoint_(endpoint),
       state_(endpoint->env()),
@@ -987,6 +992,12 @@ Session::Session(
       state_.GetArrayBuffer(),
       PropertyAttribute::ReadOnly).Check();
 
+  object->DefineOwnProperty(
+      env()->context(),
+      env()->stats_string(),
+      ToBigUint64Array(env()),
+      PropertyAttribute::ReadOnly).Check();
+
   AttachToEndpoint();
 
   idle_.Unref();
@@ -994,7 +1005,7 @@ Session::Session(
 }
 
 Session::Session(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     Local<Object> object,
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
@@ -1042,7 +1053,7 @@ Session::Session(
 }
 
 Session::Session(
-    Endpoint* endpoint,
+    EndpointWrap* endpoint,
     Local<Object> object,
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
@@ -1086,7 +1097,7 @@ Session::~Session() {
   if (qlogstream_) qlogstream_->End();
   idle_.Stop();
   retransmit_.Stop();
-  DebugStats();
+  DebugStats(this);
 }
 
 void Session::AckedStreamDataOffset(
@@ -1169,7 +1180,7 @@ void Session::AttachToEndpoint() {
 }
 
 // A client QuicSession can be migrated to a different QuicSocket instance.
-bool Session::AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding) {
+bool Session::AttachToNewEndpoint(EndpointWrap* endpoint, bool nat_rebinding) {
   CHECK(!is_server());
   CHECK(!is_destroyed());
 
@@ -1195,7 +1206,6 @@ bool Session::AttachToNewEndpoint(Endpoint* endpoint, bool nat_rebinding) {
   AttachToEndpoint();
 
   auto local_address = endpoint->local_address();
-  endpoint_->ReceiveStart();
 
   // The nat_rebinding option here should rarely, if ever
   // be used in a real application. It is intended to serve
@@ -1415,7 +1425,7 @@ void Session::DetachFromEndpoint() {
   }
 
   Debug(this, "Removed from the endpoint");
-  BaseObjectPtr<Endpoint> endpoint = std::move(endpoint_);
+  BaseObjectPtr<EndpointWrap> endpoint = std::move(endpoint_);
   endpoint->RemoveSession(scid_, remote_address_);
 }
 
@@ -1656,11 +1666,10 @@ void Session::PathValidation(
 }
 
 bool Session::Receive(
-    ssize_t nread,
-    const uint8_t* data,
+    size_t nread,
+    std::shared_ptr<v8::BackingStore> store,
     const SocketAddress& local_addr,
-    const SocketAddress& remote_addr,
-    unsigned int flags) {
+    const SocketAddress& remote_addr) {
 
   CHECK(!is_destroyed());
 
@@ -1696,6 +1705,7 @@ bool Session::Receive(
     InternalCallbackScope callback_scope(this);
     remote_address_ = remote_addr;
     Path path(local_addr, remote_address_);
+    uint8_t* data = static_cast<uint8_t*>(store->Data());
     if (!ReceivePacket(&path, data, nread)) {
       HandleError();
       return false;
@@ -1889,14 +1899,11 @@ bool Session::SendPacket(std::unique_ptr<Packet> packet) {
         remote_address_,
         local_address_);
 
-  if (endpoint_->SendPacket(
+  endpoint_->SendPacket(
       local_address_,
       remote_address_,
       std::move(packet),
-      BaseObjectPtr<Session>(this)) != 0) {
-    set_last_error(kQuicInternalError);
-    return false;
-  }
+      BaseObjectPtr<Session>(this));
 
   return true;
 }
@@ -2228,7 +2235,7 @@ void Session::VersionNegotiation(const uint32_t* sv, size_t nsv) {
       argv));
 }
 
-Endpoint* Session::endpoint() const { return endpoint_.get(); }
+EndpointWrap* Session::endpoint() const { return endpoint_.get(); }
 
 bool Session::is_handshake_completed() const {
   DCHECK(!is_destroyed());
