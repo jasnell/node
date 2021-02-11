@@ -715,8 +715,10 @@ int Endpoint::MaybeBind() {
   if (bound_) return 0;
   bound_ = true;
 
-  // TODO(@jasnell): Add bind flags
-  return udp_.Bind(config_.local_address, 0);
+  return udp_.Bind(
+      config_.local_address,
+      config_.local_address.family() == AF_INET6 && config_.ipv6_only
+          ? UV_UDP_IPV6ONLY : 0);
 }
 
 bool Endpoint::MaybeStatelessReset(
@@ -1075,12 +1077,15 @@ void Endpoint::SendVersionNegotiation(
 }
 
 int Endpoint::StartReceiving() {
+  if (receiving_) return UV_EALREADY;
+  receiving_ = true;
   int err = MaybeBind();
   if (err) return err;
   return udp_.StartReceiving();
 }
 
 int Endpoint::StopReceiving() {
+  receiving_ = false;
   return udp_.StopReceiving();
 }
 

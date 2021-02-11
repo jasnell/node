@@ -138,6 +138,12 @@ class Endpoint final : public MemoryRetainer,
       // will be supported by default.
       SocketAddress local_address;
 
+      // When the local_address specifies an IPv6 local address to bind
+      // to, the ipv6_only parameter determines whether dual stack mode
+      // (supporting both IPv6 and IPv4) transparently is supported.
+      // This sets the UV_UDP_IPV6ONLY flag on the underlying uv_udp_t.
+      bool ipv6_only = false;
+
       // Retry tokens issued by the Endpoint are time-limited. By default,
       // retry tokens expire after DEFAULT_RETRYTOKEN_EXPIRATION *seconds*.
       // The retry_token_expiration parameter is always expressed in terms
@@ -613,6 +619,11 @@ class Endpoint final : public MemoryRetainer,
   SET_MEMORY_INFO_NAME(Endpoint);
   SET_SELF_SIZE(Endpoint);
 
+  struct Lock {
+    Mutex::ScopedLock lock_;
+    Lock(Endpoint* endpoint): lock_(endpoint->mutex_) {}
+  };
+
  private:
   static void OnCleanup(void* data);
 
@@ -718,6 +729,9 @@ class Endpoint final : public MemoryRetainer,
 
   bool busy_ = false;
   bool bound_ = false;
+  bool receiving_ = false;
+
+  Mutex mutex_;
 
   Mutex session_mutex_;
   Mutex outbound_mutex_;
