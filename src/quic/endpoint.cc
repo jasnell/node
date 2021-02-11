@@ -489,8 +489,6 @@ Endpoint::~Endpoint() {
   CHECK(sessions_.empty());
   CHECK(outbound_.empty());
   CHECK(listeners_.empty());
-
-  udp_.Close();
 }
 
 void Endpoint::MemoryInfo(MemoryTracker* tracker) const {
@@ -1168,7 +1166,7 @@ int Endpoint::UDP::Bind(const SocketAddress& address, int flags) {
 }
 
 void Endpoint::UDP::Close() {
-  handle_.data = nullptr;
+  if (is_closing()) return;
   env()->CloseHandle(reinterpret_cast<uv_handle_t*>(&handle_), ClosedCb);
 }
 
@@ -1360,7 +1358,7 @@ BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
     return BaseObjectPtr<EndpointWrap>();
   }
 
-  return MakeDetachedBaseObject<EndpointWrap>(env, obj, config);
+  return MakeBaseObject<EndpointWrap>(env, obj, config);
 }
 
 BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
@@ -1373,7 +1371,7 @@ BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
     return BaseObjectPtr<EndpointWrap>();
   }
 
-  return MakeDetachedBaseObject<EndpointWrap>(env, obj, std::move(endpoint));
+  return MakeBaseObject<EndpointWrap>(env, obj, std::move(endpoint));
 }
 
 EndpointWrap::EndpointWrap(
@@ -1398,6 +1396,8 @@ EndpointWrap::EndpointWrap(
 
   uv_async_init(env->event_loop(), &inbound_signal_, OnInboundSignal);
   uv_async_init(env->event_loop(), &initial_signal_, OnInitialSignal);
+  uv_unref(reinterpret_cast<uv_handle_t*>(&inbound_signal_));
+  uv_unref(reinterpret_cast<uv_handle_t*>(&initial_signal_));
 
   // TODO(@jasnell): Re-enable
   // object->DefineOwnProperty(

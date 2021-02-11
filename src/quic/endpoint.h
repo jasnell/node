@@ -210,6 +210,8 @@ class Endpoint final : public MemoryRetainer,
 
     int SendPacket(BaseObjectPtr<SendWrap> req);
 
+    bool is_closing() const { return uv_is_closing(GetHandle()); }
+
     SET_NO_MEMORY_INFO()
     SET_MEMORY_INFO_NAME(Endpoint::UDP)
     SET_SELF_SIZE(UDP)
