@@ -33,6 +33,7 @@ using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::Int32;
+using v8::Integer;
 using v8::Just;
 using v8::Local;
 using v8::Maybe;
@@ -473,14 +474,15 @@ Endpoint::Endpoint(
       env_(env),
       udp_(env, this),
       config_(config),
+      outbound_signal_(env, [this]() { this->ProcessOutbound(); }),
       token_aead_(CryptoAeadAes128GCM()),
       token_md_(CryptoMDSha256()),
       addrLRU_(config.address_lru_size) {
-  CHECK_EQ(uv_async_init(env->event_loop(), &outbound_signal_, OnOutbound), 0);
-  uv_unref(reinterpret_cast<uv_handle_t*>(&outbound_signal_));
+  outbound_signal_.Unref();
   crypto::EntropySource(
       reinterpret_cast<unsigned char*>(token_secret_),
       kTokenSecretLen);
+  env->AddCleanupHook(OnCleanup, this);
 };
 
 Endpoint::~Endpoint() {
@@ -489,14 +491,41 @@ Endpoint::~Endpoint() {
   CHECK(sessions_.empty());
   CHECK(outbound_.empty());
   CHECK(listeners_.empty());
+  outbound_signal_.Close();
+}
+
+void Endpoint::OnCleanup(void* data) {
+  Endpoint* endpoint = static_cast<Endpoint*>(data);
+  endpoint->Close();
 }
 
 void Endpoint::MemoryInfo(MemoryTracker* tracker) const {
-  // TODO(@jasnell): Implement
+  tracker->TrackField("udp", udp_);
+  tracker->TrackField("outbound", outbound_);
+  tracker->TrackField("addrLRU", addrLRU_);
 }
 
 void Endpoint::ProcessReceiveFailure(int status) {
-  // TODO(@jasnell): Implement
+  Close(CloseListener::Context::RECEIVE_FAILURE, status);
+}
+
+void Endpoint::AddCloseListener(CloseListener* listener) {
+  Mutex::ScopedLock lock(close_mutex_);
+  close_listeners_.insert(listener);
+}
+
+void Endpoint::RemoveCloseListener(CloseListener* listener) {
+  Mutex::ScopedLock lock(close_mutex_);
+  close_listeners_.erase(listener);
+}
+
+void Endpoint::Close(CloseListener::Context context, int status) {
+  Mutex::ScopedLock lock(close_mutex_);
+  env()->RemoveCleanupHook(OnCleanup, this);
+  udp_.Close();
+  for (const auto listener : close_listeners_) {
+    listener->EndpointClosed(context, status);
+  }
 }
 
 bool Endpoint::AcceptInitialPacket(
@@ -723,12 +752,6 @@ uv_buf_t Endpoint::OnAlloc(size_t suggested_size) {
   return AllocatedBuffer::AllocateManaged(env(), suggested_size).release();
 }
 
-void Endpoint::OnOutbound(uv_async_t* handle) {
-  Endpoint* endpoint =
-      ContainerOf(&Endpoint::outbound_signal_, handle);
-  endpoint->ProcessOutbound();
-}
-
 void Endpoint::OnReceive(
     size_t nread,
     const uv_buf_t& buf,
@@ -903,8 +926,7 @@ void Endpoint::ProcessOutbound() {
 }
 
 void Endpoint::ProcessSendFailure(int status) {
-  // TODO(@jasnell): Likely a signal of a larger failure.
-  // Tear down the Endpoint...
+  Close(CloseListener::Context::SEND_FAILURE, status);
 }
 
 void Endpoint::Ref() {
@@ -931,7 +953,7 @@ void Endpoint::SendPacket(BaseObjectPtr<SendWrap> packet) {
   }
   IncrementStat(&EndpointStats::bytes_sent, packet->packet()->length());
   IncrementStat(&EndpointStats::packets_sent);
-  uv_async_send(&outbound_signal_);
+  outbound_signal_.Send();
 }
 
 bool Endpoint::SendRetry(
@@ -1389,15 +1411,19 @@ EndpointWrap::EndpointWrap(
     std::shared_ptr<Endpoint> inner)
     : AsyncWrap(env, object, AsyncWrap::PROVIDER_QUICENDPOINT),
       state_(env),
-      inner_(std::move(inner)) {
+      inner_(std::move(inner)),
+      close_signal_(env, [this]() { Close(); }),
+      inbound_signal_(env, [this]() { ProcessInbound(); }),
+      initial_signal_(env, [this]() { ProcessInitial(); }) {
   MakeWeak();
 
   Debug(this, "New QUIC endpoint created");
 
-  uv_async_init(env->event_loop(), &inbound_signal_, OnInboundSignal);
-  uv_async_init(env->event_loop(), &initial_signal_, OnInitialSignal);
-  uv_unref(reinterpret_cast<uv_handle_t*>(&inbound_signal_));
-  uv_unref(reinterpret_cast<uv_handle_t*>(&initial_signal_));
+  close_signal_.Unref();
+  inbound_signal_.Unref();
+  initial_signal_.Unref();
+
+  inner_->AddCloseListener(this);
 
   // TODO(@jasnell): Re-enable
   // object->DefineOwnProperty(
@@ -1422,7 +1448,44 @@ EndpointWrap::EndpointWrap(
 EndpointWrap::~EndpointWrap() {
   CHECK(sessions_.empty());
   Debug(this, "Destroying");
-  inner_->DebugStats(this);
+  if (inner_) {
+    inner_->RemoveCloseListener(this);
+    inner_->DebugStats(this);
+  }
+
+  close_signal_.Close();
+  inbound_signal_.Close();
+  initial_signal_.Close();
+}
+
+void EndpointWrap::EndpointClosed(
+    Endpoint::CloseListener::Context context,
+    int status) {
+  close_context_ = context;
+  close_status_ = status;
+  // TODO(@jasnell): Need to capture the statistics...
+  close_signal_.Send();
+}
+
+// The underlying endpoint has been closed. Clean everything up and notify.
+// No further packets will be sent at this point. This can happen abruptly
+// so we have to make sure we cycle out through the JavaScript side to free
+// up everything there.
+void EndpointWrap::Close() {
+  HandleScope scope(env()->isolate());
+  v8::Context::Scope context_scope(env()->context());
+  BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  // If the Environment is being torn down, then there's nothing more we can do.
+  if (state == nullptr || !env()->can_call_into_js())
+    return;
+  Local<Value> argv[] = {
+    Integer::NewFromUnsigned(
+        env()->isolate(),
+        static_cast<uint32_t>(close_context_)),
+    Integer::New(env()->isolate(), close_status_)
+  };
+  BaseObjectPtr<EndpointWrap> ptr(this);
+  MakeCallback(state->endpoint_close_callback(env()), arraysize(argv), argv);
 }
 
 void EndpointWrap::MemoryInfo(MemoryTracker* tracker) const {
@@ -1521,7 +1584,7 @@ void EndpointWrap::Listen(const Session::Options& options) {
 
 void EndpointWrap::OnEndpointDone() {
   HandleScope scope(env()->isolate());
-  Context::Scope context_scope(env()->context());
+  v8::Context::Scope context_scope(env()->context());
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   MakeCallback(state->endpoint_done_callback(env()), 0, nullptr);
 }
@@ -1529,16 +1592,15 @@ void EndpointWrap::OnEndpointDone() {
 void EndpointWrap::OnError() {
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   HandleScope scope(env()->isolate());
-  Context::Scope context_scope(env()->context());
+  v8::Context::Scope context_scope(env()->context());
   MakeCallback(state->endpoint_error_callback(env()), 0, nullptr);
 }
 
 void EndpointWrap::OnNewSession(const BaseObjectPtr<Session>& session) {
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   Local<Value> arg = session->object();
-  Context::Scope context_scope(env()->context());
-  // TODO(@jasnell): Rename the callback
-  MakeCallback(state->session_ready_callback(env()), 1, &arg);
+  v8::Context::Scope context_scope(env()->context());
+  MakeCallback(state->session_new_callback(env()), 1, &arg);
 }
 
 void EndpointWrap::OnSendDone(int status) {
@@ -1564,13 +1626,8 @@ bool EndpointWrap::Accept(
       remote_addr
     });
   }
-  uv_async_send(&initial_signal_);
+  initial_signal_.Send();
   return true;
-}
-
-void EndpointWrap::OnInitialSignal(uv_async_t* handle) {
-  EndpointWrap* wrap = ContainerOf(&EndpointWrap::initial_signal_, handle);
-  wrap->ProcessInitial();
 }
 
 void EndpointWrap::ProcessInitial() {
@@ -1628,13 +1685,8 @@ bool EndpointWrap::Receive(
       flags
     });
   }
-  uv_async_send(&inbound_signal_);
+  inbound_signal_.Send();
   return true;
-}
-
-void EndpointWrap::OnInboundSignal(uv_async_t* handle) {
-  EndpointWrap* wrap = ContainerOf(&EndpointWrap::inbound_signal_, handle);
-  wrap->ProcessInbound();
 }
 
 void EndpointWrap::ProcessInbound() {

@@ -52,7 +52,8 @@ constexpr size_t DEFAULT_MAX_CONNECTIONS =
         kMaxSizeT,
         static_cast<size_t>(kMaxSafeJsInteger));
 constexpr size_t DEFAULT_MAX_CONNECTIONS_PER_HOST = 100;
-constexpr size_t DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE = 1000;
+constexpr size_t DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE =
+   (DEFAULT_MAX_CONNECTIONS_PER_HOST * 10);
 constexpr size_t DEFAULT_MAX_STATELESS_RESETS = 10;
 constexpr size_t DEFAULT_MAX_RETRY_LIMIT = 10;
 constexpr uint64_t DEFAULT_RETRYTOKEN_EXPIRATION = 10;
@@ -92,9 +93,10 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
 // from the JavaScript side when the internalBinding('quic') is
 // first loaded.
 #define QUIC_JS_CALLBACKS(V)                                                   \
+  V(endpoint_close, onEndpointClose)                                           \
   V(endpoint_done, onEndpointDone)                                             \
   V(endpoint_error, onEndpointError)                                           \
-  V(session_ready, onSessionReady)                                             \
+  V(session_new, onSessionReady)                                               \
   V(session_cert, onSessionCert)                                               \
   V(session_client_hello, onSessionClientHello)                                \
   V(session_close, onSessionClose)                                             \
@@ -205,6 +207,57 @@ static constexpr QuicError kQuicAppNoError =
 
 class Session;
 class Stream;
+
+class AsyncSignal : public MemoryRetainer {
+ public:
+  using Callback = std::function<void()>;
+
+  AsyncSignal(Environment*, const Callback& fn);
+  AsyncSignal(const AsyncSignal&) = delete;
+
+  inline Environment* env() const { return env_; }
+
+  void Close();
+  void Send();
+  void Ref();
+  void Unref();
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(AsyncSignal)
+  SET_SELF_SIZE(AsyncSignal)
+
+ private:
+  static void ClosedCb(uv_handle_t* handle);
+  static void OnSignal(uv_async_t* timer);
+  Environment* env_;
+  Callback fn_;
+  uv_async_t handle_;
+};
+
+class AsyncSignalHandle : public MemoryRetainer {
+ public:
+  AsyncSignalHandle(
+      Environment* env,
+      const AsyncSignal::Callback& fn);
+
+  AsyncSignalHandle(const AsyncSignalHandle&) = delete;
+
+  inline ~AsyncSignalHandle() { Close(); }
+
+  void Close();
+  void Send();
+  void Ref();
+  void Unref();
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(AsyncSignalHandle)
+  SET_SELF_SIZE(AsyncSignalHandle)
+
+ private:
+  static void CleanupHook(void* data);
+
+  AsyncSignal* signal_;
+};
 
 // The quic::BindingState stores state information for the QUIC
 // internal binding. It is set when the QUIC internal binding

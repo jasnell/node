@@ -23,6 +23,7 @@
 #include <v8.h>
 
 #include <deque>
+#include <unordered_set>
 #include <string>
 
 namespace node {
@@ -78,27 +79,181 @@ struct EndpointStatsTraits {
 using EndpointStatsBase = StatsBase<EndpointStatsTraits>;
 using UdpSendWrap = ReqWrap<uv_udp_send_t>;
 
+// An Endpoint encapsulates a bound UDP port through which QUIC packets
+// are sent and received. An Endpoint is created when a new EndpointWrap
+// is created, and may be shared by multiple EndpointWrap instances at
+// the same time. The Endpoint, and it's bound UDP port, are associated
+// with the libuv event loop and Environment of the EndpointWrap that
+// originally created it. All network traffic will be processed within
+// the context of that owning event loop for as long as it lasts. If that
+// event loop exits, the Endpoint will be closed along with all
+// EndpointWrap instances holding a reference to it.
+//
+// For inbound packets, the Endpoint will perform a preliminary check
+// to determine if the UDP packet *looks* like a valid QUIC packet, and
+// will perform a handful of checks to see if the packet is acceptable.
+// Assuming the packet passes those checks, the Endpoint will extract
+// the destination CID from the packet header and will determine whether
+// there is an EndpointWrap associated with the CID. If there is, the
+// packet will be passed on the EndpointWrap to be processed further.
+// If the packet is an "Initial" QUIC packet and the CID is not matched
+// to an existing EndpointWrap, the Endpoint will dispatch the packet
+// to the first available EndpointWrap instance that has registered
+// itself as accepting initial packets ("listening"). If there are
+// multiple EndpointWrap instances listening, dispatch is round-robin,
+// iterating through each until one accepts the packet or all reject.
+// The EndpointWrap that accepts the packet will be moved to the end
+// of the list for when the next packet arrives.
+//
+// The Endpoint can be marked as "busy", which will stop it from accepting
+// and dispatching new initial packets to any EndpointWrap, even if those
+// are currently idle.
+//
+// For outbound packets, EndpointWrap instances prepare a SendWrap
+// that encapsulates the packet to be sent and the destination address.
+// Those are pushed into a queue and processed as a batch on each
+// event loop turn. The packets are processed in the order they are added
+// to the queue. While the outbound packets can originate from any
+// worker thread or context, the actual dispatch of the packet data to
+// the UDP port takes place within the context of the Endpoint's owning
+// event loop.
+//
+// The Endpoint encapsulates the uv_udp_t handle directly (via the
+// Endpoint::UDPHandle and Endpoint::UDP classes) rather than using
+// the node::UDPWrap in order to provide greater control over the
+// buffer allocation of inbound packets to ensure that we can safely
+// implement zero-copy, thread-safe data sharing across worker
+// threads.
 class Endpoint final : public MemoryRetainer,
                        public EndpointStatsBase {
  public:
+  // Endpoint::Config provides the fundamental configuration options for
+  // an Endpoint instance. The configuration property names should be
+  // relatively self-explanatory but additional notes are provided in
+  // comments where necessary.
   struct Config : public MemoryRetainer {
+      // The local socket address to which the UDP port will be bound.
+      // The port may be 0 to have Node.js select an available port.
+      // IPv6 or IPv4 addresses may be used. When using IPv6, dual mode
+      // will be supported by default.
       SocketAddress local_address;
+
+      // Retry tokens issued by the Endpoint are time-limited. By default,
+      // retry tokens expire after DEFAULT_RETRYTOKEN_EXPIRATION *seconds*.
+      // The retry_token_expiration parameter is always expressed in terms
+      // of seconds. This is an arbitrary choice that is not mandated by
+      // the QUIC specification; so we can choose any value that makes
+      // sense here. Retry tokens are sent to the client, which echoes them
+      // back to the server in a subsequent set of packets, which means the
+      // expiration must be set high enough to allow a reasonable round-trip
+      // time for the session TLS handshake to complete.
       uint64_t retry_token_expiration = DEFAULT_RETRYTOKEN_EXPIRATION;
+
+      // The max_window_override and max_stream_window_override parameters
+      // determine the maximum flow control window sizes that will be used.
+      // Setting these at zero causes ngtcp2 to use it's defaults, which is
+      // ideal. Setting things to any other value will disable the automatic
+      // flow control management, which is already optimized. Settings these
+      // should be rare, and should only be done if there's a really good
+      // reason.
       uint64_t max_window_override = 0;
       uint64_t max_stream_window_override = 0;
+
+      // Each Endpoint places limits on the number of concurrent connections
+      // from a single host, and the total number of concurrent connections
+      // allowed as a whole. These are set to fairly modest, and arbitrary
+      // defaults. We can set these to whatever we'd like.
       uint64_t max_connections_per_host = DEFAULT_MAX_CONNECTIONS_PER_HOST;
       uint64_t max_connections_total = DEFAULT_MAX_CONNECTIONS;
+
+      // A stateless reset in QUIC is a discrete mechanism that one endpoint
+      // can use to communicate to a peer that it has lost whatever state
+      // it previously held about a session. Because generating a stateless
+      // reset consumes resources (even very modestly), they can be a DOS
+      // vector in which a malicious peer intentionally sends a large number
+      // of stateless reset eliciting packets. To protect against that risk,
+      // we limit the number of stateless resets that may be generated for
+      // a given remote host within a window of time. This is not mandated
+      // by QUIC, and the limit is arbitrary. We can set it to whatever we'd
+      // like.
       uint64_t max_stateless_resets = DEFAULT_MAX_STATELESS_RESETS;
+
+      // For tracking the number of connections per host, the number of
+      // stateless resets that have been sent, and tracking the path
+      // verification status of a remote host, we maintain an LRU cache
+      // of the most recently seen hosts.  The address_lru_size parameter
+      // determines the size of that cache. The default is set modestly
+      // at 10 times the default max connections per host.
       uint64_t address_lru_size = DEFAULT_MAX_SOCKETADDRESS_LRU_SIZE;
+
+      // Similar to stateless resets, we enforce a limit on the number of
+      // retry packets that can be generated and sent for a remote host.
+      // Generating retry packets consumes a modest amount of resources
+      // and it's fairly trivial for a malcious peer to trigger generation
+      // of a large number of retries, so limiting them helps prevent a
+      // DOS vector.
       uint64_t retry_limit = DEFAULT_MAX_RETRY_LIMIT;
+
+      // The max_payload_size is the maximum size of a serialized QUIC
+      // packet. It should always be set small enough to fit within a
+      // single MTU without fragmentation. The default is set by the QUIC
+      // specification at 1200. This value should not be changed unless
+      // you know for sure that the entire path supports a given MTU
+      // without fragmenting at any point in the path.
       uint64_t max_payload_size = NGTCP2_DEFAULT_MAX_PKTLEN;
+
+      // The unacknowledged_packet_threshold is the maximum number of
+      // unacknowledged packets that an ngtcp2 session will accumulate
+      // before sending an acknowledgement. Setting this to 0 uses the
+      // ngtcp2 defaults, which is what most will want. The value can
+      // be changed to fine tune some of the performance characteristics
+      // of the session. This should only be changed if you have a really
+      // good reason for doing so.
       uint64_t unacknowledged_packet_threshold = 0;
+
+      // The qlog parameter enables the generation of detailed qlog
+      // debugging details for each ngtcp2 session.
       bool qlog = false;
+
+      // The validate_address parameter instructs the Endpoint to perform
+      // explicit address validation using retry tokens. This is strongly
+      // recommended and should only be disabled in trusted, closed
+      // environments as a performance optimization.
       bool validate_address = true;
+
+      // The stateless reset mechanism can be disabled. This should rarely
+      // ever be needed, and should only ever be done in trusted, closed
+      // environments as a performance optimization.
       bool disable_stateless_reset = false;
+
+      // The rx_loss and tx_loss parameters are debugging tools that allow
+      // the Endpoint to simulate random packet loss. The value for each
+      // parameter is a value between 0.0 and 1.0 indicating a probability
+      // of packet loss. Each time a packet is sent or received, the packet
+      // loss bit is calculated and if true, the packet is silently dropped.
+      // This should only ever be used for testing and debugging. There is
+      // never a reason why rx_loss and tx_loss should ever be used in a
+      // production system.
       double rx_loss = 0.0;
       double tx_loss = 0.0;
+
+      // There are two common congestion control algorithms that ngtcp2 uses
+      // to determine how it manages the flow control window: RENO and CUBIC.
+      // The details of how each works is not relevant here. The choice of
+      // which to use by default is arbitrary and we can choose whichever we'd
+      // like. Additional performance profiling will be needed to determine
+      // which is the better of the two for our needs.
       ngtcp2_cc_algo cc_algorithm = NGTCP2_CC_ALGO_CUBIC;
+
+      // By default, when Node.js starts, it will generate a reset_token_secret
+      // at random. This is a secret used in generating stateless reset tokens.
+      // In order for stateless reset to be effective, however, it is necessary
+      // to use a deterministic secret that persists across ngtcp2 endpoints and
+      // sessions.
+      // TODO(@jasnell): Given that this is a secret, it may make sense to use
+      // the secure heap to store it (when the heap is available). Doing so
+      // will require some refactoring here, however, so we'll defer that to
+      // a future iteration.
       uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
 
       Config() = default;
@@ -141,6 +296,9 @@ class Endpoint final : public MemoryRetainer,
       SET_SELF_SIZE(Config)
     };
 
+  // The SendWrap is a persistent ReqWrap instance that encapsulates a
+  // QUIC Packet that is to be sent to a remote peer. They are created
+  // by the EndpointWrap and queued into the shared Endpoint for processing.
   class SendWrap : public UdpSendWrap {
    public:
     static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
@@ -183,6 +341,12 @@ class Endpoint final : public MemoryRetainer,
     BaseObjectPtr<SendWrap> self_ptr_;
   };
 
+  // The UDP class directly encapsulates the uv_udp_t handle. This is
+  // very similar to UDPWrap except that it is specific to the QUIC
+  // data structures (like Endpoint and Packet), and passes received
+  // packet data on using v8::BackingStore instead of uv_buf_t to
+  // help eliminate the need for memcpy down the line by making
+  // transfer of data ownership more explicit.
   class UDP : public HandleWrap {
    public:
     static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
@@ -236,6 +400,11 @@ class Endpoint final : public MemoryRetainer,
     Endpoint* endpoint_;
   };
 
+  // UDPHandle is a helper class that sits between the Endpoint and
+  // the UDP the help manage the lifecycle of the UDP class. Essentially,
+  // UDPHandle allows the Endpoint to be deconstructed immediately while
+  // allowing the UDP class to go through the typical asynchronous cleanup
+  // flow with the event loop.
   class UDPHandle : public MemoryRetainer {
    public:
     UDPHandle(Environment* env, Endpoint* endpoint);
@@ -246,16 +415,24 @@ class Endpoint final : public MemoryRetainer,
       return udp_->Bind(address, flags);
     }
 
-    inline void Ref() { udp_->Ref(); }
-    inline void Unref() { udp_->Unref();}
-    inline int StartReceiving() { return udp_->StartReceiving(); }
-    inline int StopReceiving() { return udp_->StopReceiving(); }
-    inline SocketAddress local_address() const { return udp_->local_address(); }
+    inline void Ref() { if (udp_) udp_->Ref(); }
+    inline void Unref() { if (udp_) udp_->Unref();}
+    inline int StartReceiving() {
+      return udp_ ? udp_->StartReceiving() : UV_EBADF;
+    }
+    inline int StopReceiving() {
+      return udp_ ? udp_->StopReceiving() : UV_EBADF;
+    }
+    inline SocketAddress local_address() const {
+      return udp_ ? udp_->local_address() : SocketAddress();
+    }
     void Close();
 
     inline int SendPacket(BaseObjectPtr<SendWrap> req) {
-      return udp_->SendPacket(std::move(req));
+      return udp_ ? udp_->SendPacket(std::move(req)) : UV_EBADF;
     }
+
+    bool closed() const { return !udp_; }
 
     void MemoryInfo(node::MemoryTracker* tracker) const override;
     SET_MEMORY_INFO_NAME(Endpoint::UDPHandle)
@@ -267,6 +444,13 @@ class Endpoint final : public MemoryRetainer,
     BaseObjectPtr<UDP> udp_;
   };
 
+  // The InitialPacketListener is an interface implemented by EndpointWrap
+  // and registered with the Endpoint when it is set to listen for new
+  // incoming initial packets (that is, when it's acting as a server).
+  // The Endpoint passes both the v8::BackingStore and the nread because
+  // the nread (the actual number of bytes read and filled in the backing
+  // store) may be less than the actual size of the v8::BackingStore.
+  // Specifically, nread will always <= v8::BackStore::ByteLength().
   struct InitialPacketListener {
     virtual bool Accept(
         const Session::Config& config,
@@ -278,6 +462,13 @@ class Endpoint final : public MemoryRetainer,
     using List = std::deque<InitialPacketListener*>;
   };
 
+  // The PacketListener is an interface implemented by EndpointWrap
+  // and registered with the Endpoint to handle received packets
+  // intended for a specific session.
+  // The Endpoint passes both the v8::BackingStore and the nread because
+  // the nread (the actual number of bytes read and filled in the backing
+  // store) may be less than the actual size of the v8::BackingStore.
+  // Specifically, nread will always <= v8::BackStore::ByteLength().
   struct PacketListener {
     enum class Flags {
       NONE,
@@ -294,9 +485,26 @@ class Endpoint final : public MemoryRetainer,
         Flags flags = Flags::NONE) = 0;
   };
 
+  // Every EndpointWrap associated with the Endpoint registers a CloseListener
+  // that receives notification when the Endpoint is closing, either because
+  // it's owning event loop is closing or because of an error.
+  struct CloseListener {
+    enum class Context {
+      CLOSE,
+      RECEIVE_FAILURE,
+      SEND_FAILURE,
+    };
+    virtual void EndpointClosed(Context context, int status) = 0;
+
+    using Set = std::unordered_set<CloseListener*>;
+  };
+
   Endpoint(Environment* env, const Config& config);
 
   ~Endpoint() override;
+
+  void AddCloseListener(CloseListener* listener);
+  void RemoveCloseListener(CloseListener* listener);
 
   void AddInitialPacketListener(InitialPacketListener* listener);
   void RemoveInitialPacketListener(InitialPacketListener* listener);
@@ -382,8 +590,16 @@ class Endpoint final : public MemoryRetainer,
   void Ref();
   void Unref();
 
+  // While the busy flag is set, the Endpoint will reject all initial
+  // packets with a SERVER_BUSY response, even if there are available
+  // listening EndpointWraps. This allows us to build a circuit breaker
+  // directly in to the implementation, explicitly signaling that the
+  // server is blocked when activity is high.
   inline void set_busy(bool on = true) { busy_ = on; }
 
+  // QUIC strongly recommends the use of flow labels when using IPv6.
+  // The GetFlowLabel will deterministically generate a flow label as
+  // a function of the given local address, remote address, and connection ID.
   uint32_t GetFlowLabel(
     const SocketAddress& local_address,
     const SocketAddress& remote_address,
@@ -398,7 +614,11 @@ class Endpoint final : public MemoryRetainer,
   SET_SELF_SIZE(Endpoint);
 
  private:
-  static void OnOutbound(uv_async_t* handle);
+  static void OnCleanup(void* data);
+
+  void Close(
+      CloseListener::Context context = CloseListener::Context::CLOSE,
+      int status = 0);
 
   // Inspects the packet and possibly accepts it as a new
   // initial packet creating a new Session instance.
@@ -470,7 +690,7 @@ class Endpoint final : public MemoryRetainer,
   Config config_;
 
   SendWrap::Queue outbound_;
-  uv_async_t outbound_signal_;
+  AsyncSignalHandle outbound_signal_;
   size_t pending_outbound_ = 0;
 
   uint8_t token_secret_[kTokenSecretLen];
@@ -493,8 +713,8 @@ class Endpoint final : public MemoryRetainer,
   SocketAddressLRU<SocketAddressInfoTraits> addrLRU_;
   StatelessResetToken::Map<PacketListener*> token_map_;
   CID::Map<PacketListener*> sessions_;
-
   InitialPacketListener::List listeners_;
+  CloseListener::Set close_listeners_;
 
   bool busy_ = false;
   bool bound_ = false;
@@ -502,9 +722,21 @@ class Endpoint final : public MemoryRetainer,
   Mutex session_mutex_;
   Mutex outbound_mutex_;
   Mutex listener_mutex_;
+  Mutex close_mutex_;
 };
 
+// The EndpointWrap is the intermediate JavaScript binding object
+// that is passed into JavaScript for interacting with the Endpoint.
+// Every EndpointWrap wraps a single Endpoint (that may be shared
+// with other EndpointWrap instances).
+// All EndpointWrap instances are "cloneable" via MessagePort but
+// the instances are not true copies. Each "clone" will share a
+// reference to the same Endpoint (via std::shared_ptr<Endpoint>),
+// but will retain their own separate state in every other regard.
+// Specifically, QUIC Sessions are only ever associated with a
+// single EndpointWrap at a time.
 class EndpointWrap final : public AsyncWrap,
+                           public Endpoint::CloseListener,
                            public Endpoint::InitialPacketListener,
                            public Endpoint::PacketListener {
  public:
@@ -514,6 +746,11 @@ class EndpointWrap final : public AsyncWrap,
 #undef V
   };
 
+  // The InboundPacket represents a packet received by the
+  // Endpoint and passed on to the EndpointWrap for processing.
+  // InboundPackets are stored in a queue and processed in a batch
+  // once per event loop turn. They are always processed in the
+  // order they were received.
   struct InboundPacket {
     CID dcid;
     CID scid;
@@ -526,6 +763,11 @@ class EndpointWrap final : public AsyncWrap,
     using Queue = std::deque<InboundPacket>;
   };
 
+  // The InitialPacket represents an initial packet to create
+  // a new Session received by the Endpoint and passed on to
+  // the EndpointWrap for processing. InitialPackets are stored
+  // in a queue and processed in a batch once per event loop turn.
+  // They are always processed in the order they were received.
   struct InitialPacket {
     Session::Config config;
     std::shared_ptr<v8::BackingStore> store;
@@ -537,8 +779,10 @@ class EndpointWrap final : public AsyncWrap,
   };
 
   static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
+
   static void Initialize(Environment* env, v8::Local<v8::Object> target);
 
   static BaseObjectPtr<EndpointWrap> Create(
@@ -573,8 +817,12 @@ class EndpointWrap final : public AsyncWrap,
   EndpointWrap& operator=(const Endpoint& other) = delete;
   EndpointWrap& operator=(const Endpoint&& other) = delete;
 
+  void EndpointClosed(Endpoint::CloseListener::Context context, int status);
+
   // Returns the default Session::Options used for new server
-  // sessions accepted by this EndpointWrap.
+  // sessions accepted by this EndpointWrap. The server_options_
+  // is set when EndpointWrap::Listen() is called. Until then it
+  // will return the defaults.
   const Session::Options& server_config() const { return server_options_; }
 
   State* state() { return state_.Data(); }
@@ -733,8 +981,7 @@ class EndpointWrap final : public AsyncWrap,
   std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
 
  private:
-   static void OnInboundSignal(uv_async_t* handle);
-   static void OnInitialSignal(uv_async_t* handle);
+   void Close();
 
   // Called after the endpoint has been closed and the final
   // pending send callback has been received. Signals to the
@@ -773,8 +1020,13 @@ class EndpointWrap final : public AsyncWrap,
   InboundPacket::Queue inbound_;
   InitialPacket::Queue initial_;
 
-  uv_async_t inbound_signal_;
-  uv_async_t initial_signal_;
+  Endpoint::CloseListener::Context close_context_ =
+      Endpoint::CloseListener::Context::CLOSE;
+  int close_status_ = 0;
+
+  AsyncSignalHandle close_signal_;
+  AsyncSignalHandle inbound_signal_;
+  AsyncSignalHandle initial_signal_;
   Mutex inbound_mutex_;
 };
 
