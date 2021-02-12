@@ -32,12 +32,8 @@ namespace quic {
 
 #define SESSION_STATS(V)                                                       \
   V(CREATED_AT, created_at, "Created At")                                      \
-  V(HANDSHAKE_START_AT, handshake_start_at, "Handshake Started")               \
-  V(HANDSHAKE_SEND_AT, handshake_send_at, "Handshke Last Sent")                \
-  V(HANDSHAKE_CONTINUE_AT, handshake_continue_at, "Handshke Continued")        \
   V(HANDSHAKE_COMPLETED_AT, handshake_completed_at, "Handshake Completed")     \
   V(HANDSHAKE_CONFIRMED_AT, handshake_confirmed_at, "Handshake Confirmed")     \
-  V(HANDSHAKE_ACKED_AT, handshake_acked_at, "Handshake Last Acknowledged")     \
   V(SENT_AT, sent_at, "Last Sent At")                                          \
   V(RECEIVED_AT, received_at, "Last Received At")                              \
   V(CLOSING_AT, closing_at, "Closing")                                         \
@@ -50,15 +46,6 @@ namespace quic {
   V(STREAMS_OUT_COUNT, streams_out_count, "Streams Out Count")                 \
   V(KEYUPDATE_COUNT, keyupdate_count, "Key Update Count")                      \
   V(LOSS_RETRANSMIT_COUNT, loss_retransmit_count, "Loss Retransmit Count")     \
-  V(ACK_DELAY_RETRANSMIT_COUNT,                                                \
-    ack_delay_retransmit_count,                                                \
-    "Ack Delay Retransmit Count")                                              \
-  V(PATH_VALIDATION_SUCCESS_COUNT,                                             \
-    path_validation_success_count,                                             \
-    "Path Validation Success Count")                                           \
-  V(PATH_VALIDATION_FAILURE_COUNT,                                             \
-    path_validation_failure_count,                                             \
-    "Path Validation Failure Count")                                           \
   V(MAX_BYTES_IN_FLIGHT, max_bytes_in_flight, "Max Bytes In Flight")           \
   V(BLOCK_COUNT, block_count, "Block Count")                                   \
   V(BYTES_IN_FLIGHT, bytes_in_flight, "Bytes In Flight")                       \
@@ -154,40 +141,83 @@ struct SessionStatsTraits {
 };
 
 using SessionStatsBase = StatsBase<SessionStatsTraits>;
+
+// A Session is a persistent connection between two QUIC peers,
+// one acting as a server, the other acting as a client. Every
+// Session is established first by performing a TLS 1.3 handshake
+// in which the client sends an initial packet to the server
+// containing a TLS client hello. Once the TLS handshake has
+// been completed, the Session can be used to open one or more
+// Streams for the actual data flow back and forth.
 class Session final : public AsyncWrap,
                       public SessionStatsBase {
  public:
   class Application;
 
+  // Used only by client Sessions, this PreferredAddressStrategy
+  // ignores the server provided preference communicated via the
+  // transport parameters.
   static void IgnorePreferredAddressStrategy(
       Session* session,
       const PreferredAddress& preferred_address);
 
+  // Used only by client Sessions, this PreferredAddressStrategy
+  // uses the server provided preference that matches the local
+  // port type (IPv4 or IPv6) used by the Endpoint. That is, if
+  // the Endpoint is IPv4, and the server advertises an IPv4
+  // preferred address, then that preference will be used. Otherwise,
+  // the preferred address preference is ignored.
   static void UsePreferredAddressStrategy(
       Session* session,
       const PreferredAddress& preferred_address);
 
+  // Generates new Connection ID's using the cryptographic
+  // pseudo-random number generator.
   static void RandomConnectionIDStrategy(
       Session* session,
       ngtcp2_cid* cid,
       size_t cidlen);
 
+  // A utility that wraps the configuration settings for the
+  // Session and the underlying ngtcp2_conn. This struct is
+  // created when a new Client or Server session is created.
   struct Config : public ngtcp2_settings {
+    // The QUIC protocol version requested for the Session.
     uint32_t version;
+
+    // The initial destination CID.
     CID dcid;
+
+    // The locally selected source CID.
     CID scid;
+
+    // The original CID (if any).
     CID ocid;
-    explicit Config(
+
+    Config(
         Endpoint* endpoint,
         const CID& dcid,
         const CID& scid,
         uint32_t version);
+
     void EnableQLog(const CID& ocid);
   };
 
+  // The Options struct contains all of the usercode specified
+  // options for the session. Most of the options correlate to
+  // the transport parameters that are communicated to the remote
+  // peer once the session is created.
   struct Options : public MemoryRetainer {
+    // The protocol identifier to be used by this Session.
     std::string alpn;
+
+    // The SNI hostname to be used. This is used only by client
+    // Sessions to identify the SNI host in the TLS client hello
+    // message.
     std::string hostname = "";
+
+    // The crypto::SecureContext used to configure the TLS context
+    // for this Session.
     BaseObjectPtr<crypto::SecureContext> context;
 
     CID dcid {};
@@ -195,32 +225,68 @@ class Session final : public AsyncWrap,
     PreferredAddressStrategy preferred_address_strategy =
         UsePreferredAddressStrategy;
 
-    // Options used for transport params:
-
+    // Set only on server Sessions, the preferred address communicates
+    // the IP address and port that the server would prefer the client
+    // to use when communicating with it. See the QUIC specification for
+    // more detail on how the preferred address mechanism works.
     SocketAddress preferred_address_ipv4;
     SocketAddress preferred_address_ipv6;
+
+    // The initial size of the flow control window of locally initiated
+    // streams. This is the maximum number of bytes that the *remote*
+    // endpoint can send when the connection is started.
     uint64_t initial_max_stream_data_bidi_local =
         DEFAULT_MAX_STREAM_DATA_BIDI_LOCAL;
+
+    // The initial size of the flow control window of remotely initiated
+    // streams. This is the maximum number of bytes that the remote endpoint
+    // can send when the connection is started.
     uint64_t initial_max_stream_data_bidi_remote =
         DEFAULT_MAX_STREAM_DATA_BIDI_REMOTE;
-    uint64_t initial_max_stream_data_uni =
-        DEFAULT_MAX_STREAM_DATA_UNI;
-    uint64_t initial_max_data =
-        DEFAULT_MAX_DATA;
-    uint64_t initial_max_streams_bidi =
-        DEFAULT_MAX_STREAMS_BIDI;
-    uint64_t initial_max_streams_uni =
-        DEFAULT_MAX_STREAMS_UNI;
-    uint64_t max_idle_timeout =
-        DEFAULT_MAX_DATA;
-    uint64_t active_connection_id_limit =
-        DEFAULT_ACTIVE_CONNECTION_ID_LIMIT;
-    uint64_t ack_delay_exponent =
-        NGTCP2_DEFAULT_ACK_DELAY_EXPONENT;
-    uint64_t max_ack_delay =
-        NGTCP2_DEFAULT_MAX_ACK_DELAY;
-    uint64_t max_datagram_frame_size =
-        NGTCP2_DEFAULT_MAX_PKTLEN;
+
+    // The initial size of the flow control window of remotely initiated
+    // unidirectional streams. This is the maximum number of bytes that
+    // the remote endpoint can send when the connection is started.
+    uint64_t initial_max_stream_data_uni = DEFAULT_MAX_STREAM_DATA_UNI;
+
+    // The initial size of the session-level flow control window.
+    uint64_t initial_max_data = DEFAULT_MAX_DATA;
+
+    // The initial maximum number of concurrent bidirectional streams
+    // the remote endpoint is permitted to open.
+    uint64_t initial_max_streams_bidi = DEFAULT_MAX_STREAMS_BIDI;
+
+    // The initial maximum number of concurrent unidirectional streams
+    // the remote endpoint is permitted to open.
+    uint64_t initial_max_streams_uni = DEFAULT_MAX_STREAMS_UNI;
+
+    // The maximum amount of time that a Session is permitted to remain
+    // idle before it is silently closed and state is discarded.
+    uint64_t max_idle_timeout = DEFAULT_MAX_IDLE_TIMEOUT;
+
+    // The maximum number of Connection IDs that the peer can store.
+    // A single Session may have several connection IDs over it's lifetime.
+    uint64_t active_connection_id_limit = DEFAULT_ACTIVE_CONNECTION_ID_LIMIT;
+
+    // Establishes the exponent used in ACK Delay field in the ACK frame.
+    // See the QUIC specification for details. This is an advanced option
+    // that should rarely be modified and only if there is really good reason.
+    uint64_t ack_delay_exponent = NGTCP2_DEFAULT_ACK_DELAY_EXPONENT;
+
+    // The maximum amount of time by which the endpoint will delay sending
+    // acknowledgements. This is an advanced option that should rarely be
+    // modified and only if there is a really good reason. It is used to
+    // determine how long a Session will wait to determine that a packet
+    // has been lost.
+    uint64_t max_ack_delay = NGTCP2_DEFAULT_MAX_ACK_DELAY;
+
+    // The maximum size of DATAGRAM frames that the endpoint will accept.
+    // Setting the value to 0 will disable DATAGRAM support.
+    uint64_t max_datagram_frame_size = NGTCP2_DEFAULT_MAX_PKTLEN;
+
+    // When true, communicates that the Session does not support active
+    // connection migration. See the QUIC specification for more details
+    // on connection migration.
     bool disable_active_migration = false;
 
     // When set, the peer certificate is verified against
@@ -266,6 +332,8 @@ class Session final : public AsyncWrap,
   };
   #undef V
 
+  // A utility struct used to prepare the ngtcp2_transport_params
+  // when creating a new Session.
   struct TransportParams : public ngtcp2_transport_params {
     TransportParams(
         const Options& options,
@@ -280,6 +348,11 @@ class Session final : public AsyncWrap,
         CID* pscid);
   };
 
+  // Every Session has exactly one CryptoContext that maintains the
+  // state of the TLS handshake and negotiated cipher keys after the
+  // handshake has been completed. It is separated out from the main
+  // Session class only as a convenience to help make the code more
+  // maintainable and understandable.
   class CryptoContext final : public MemoryRetainer {
    public:
     CryptoContext(
@@ -302,10 +375,10 @@ class Session final : public AsyncWrap,
     void Initialize();
 
     // Returns the server's prepared OCSP response for transmission
-    // (if available). The response will be empty only if there was
-    // an error. If the response is v8::Undefined then there is no
-    // response but no error occurred. This is only used on server sessions.
-    std::shared_ptr<v8::BackingStore> ocsp_response() const;
+    // (if any). The shared_ptr will be empty if there was an error
+    // or if no OCSP response was provided. If release is true, the
+    // internal std::shared_ptr will be reset.
+    std::shared_ptr<v8::BackingStore> ocsp_response(bool release = true);
 
     // Returns ngtcp2's understanding of the current inbound crypto level
     ngtcp2_crypto_level read_crypto_level() const;
@@ -499,9 +572,34 @@ class Session final : public AsyncWrap,
     friend class Session;
   };
 
+  // An Application encapsulates the ALPN-identified application
+  // specific semantics associated with the Session. The Application
+  // class itself is an abstract base class that must be specialized.
+  // Every Session has exactly one associated Application that is
+  // selected using the ALPN identifier when the Session is created.
+  // Once selected, the Session will defer many actions to be handled
+  // by the Application.
   class Application : public MemoryRetainer {
    public:
-    explicit Application(Session* session);
+    // A base class for configuring the Application.
+    struct Config {
+      // The maximum number of header pairs permitted for a Stream.
+      // Not all Applications support headers so the default is 0.
+      size_t max_header_pairs = 0;
+
+      // The maximum total number of header bytes (including header
+      // name and value) permitted for a Stream.
+      // Not all Applications support headers so the default is 0.
+      size_t max_header_length = 0;
+    };
+
+    Application(Session* session, const Config& config);
+
+    Application(const Application& other) = delete;
+    Application(Application&& other) = delete;
+    Application& operator=(const Application& other) = delete;
+    Application& operator=(Application&& other) = delete;
+
     virtual ~Application() = default;
 
     // The session will call initialize as soon as the TLS secrets
@@ -526,26 +624,45 @@ class Session final : public AsyncWrap,
     // an attacker. We're not currently making use of that flag.
     virtual bool ReceiveStreamData(
         uint32_t flags,
-        stream_id stream_id,
+        stream_id id,
         const uint8_t* data,
         size_t datalen,
         uint64_t offset) = 0;
 
+    // Session will forward all data acknowledgements for a stream to
+    // the Application.
     virtual void AcknowledgeStreamData(
-        stream_id stream_id,
+        stream_id id,
         uint64_t offset,
         size_t datalen) {
-      Acknowledge(stream_id, offset, datalen);
+      Acknowledge(id, offset, datalen);
     }
 
+    // Called to mark the identified stream as being blocked. Not all
+    // Application types will support blocked streams, and those that
+    // do will do so differently. The default implementation here is
+    // to simply acknowledge the notification.
     virtual bool BlockStream(stream_id id) { return true; }
 
+    // Called when the Session determines that the maximum number of
+    // remotely-initiated unidirectional streams has been extended.
+    // Not all Application types will require this notification so
+    // the default is to do nothing.
     virtual void ExtendMaxStreamsRemoteUni(uint64_t max_streams) {}
 
+    // Called when the Session determines that the maximum number of
+    // remotely-initiated bidirectional streams has been extended.
+    // Not all Application types will require this notification so
+    // the default is to do nothing.
     virtual void ExtendMaxStreamsRemoteBidi(uint64_t max_streams) {}
 
+    // Called when the Session determines that the flow control window
+    // for the given stream has been expanded. Not all Application types
+    // will require this notification so the default is to do nothing.
     virtual void ExtendMaxStreamData(stream_id id, uint64_t max_data) {}
 
+    // Called when the session determines that there is outbound data
+    // available to send for the given stream.
     virtual void ResumeStream(stream_id id) {}
 
     // Different Applications may wish to set some application data in
@@ -565,48 +682,44 @@ class Session final : public AsyncWrap,
         SessionTicketAppData::Status::TICKET_USE;
     }
 
+    // Notifies the Application about a block of headers that
+    // have been fully received for the given stream.
     virtual void StreamHeaders(
-        stream_id stream_id,
+        stream_id id,
         Stream::HeadersKind kind,
         const Stream::HeaderList& headers);
 
+    // Notifies the Application that the identified stream has
+    // been closed.
     virtual void StreamClose(
-        stream_id stream_id,
-        uint64_t app_error_code);
-
-    virtual void StreamReset(
-        stream_id stream_id,
-        uint64_t app_error_code);
-
-    virtual bool SubmitInformation(
         stream_id id,
-        v8::Local<v8::Array> headers) { return false; }
+        uint64_t app_error_code);
 
+    // Notifies the Application that the identified stream has
+    // ben reset.
+    virtual void StreamReset(
+        stream_id id,
+        uint64_t app_error_code);
+
+    // Submits an outbound block of headers for the given stream.
+    // Not all Application types will support headers, in which
+    // case this function should return false.
     virtual bool SubmitHeaders(
         stream_id id,
+        Stream::HeadersKind kind,
         v8::Local<v8::Array> headers) { return false; }
 
-    virtual bool SubmitTrailers(
-        stream_id id,
-        v8::Local<v8::Array> headers) { return false; }
-
-    Environment* env() const;
+    Environment* env() const { return session_->env(); }
     inline Session* session() const { return session_.get(); }
+    const Config& config() const { return config_; }
 
-    bool SendPendingData();
-
-    Environment* env() { return session_->env(); }
-
-    size_t max_header_pairs() const { return max_header_pairs_; }
-    size_t max_header_length() const { return max_header_length_; }
+    // Signals to the Application that it should serialize and transmit
+    // any pending session and stream packets it has accumulated.
+    bool SendPendingData() final;
 
    protected:
-    inline bool needs_init() const { return needs_init_; }
-    inline void set_init_done() { needs_init_ = false; }
-    inline void set_max_header_pairs(size_t max) { max_header_pairs_ = max; }
-    inline void set_max_header_length(size_t max) { max_header_length_ = max; }
-    void set_stream_fin(stream_id stream_id);
-    std::unique_ptr<Packet> CreateStreamDataPacket();
+    void set_stream_fin(stream_id id) final;
+    std::unique_ptr<Packet> CreateStreamDataPacket() final;
 
     struct StreamData {
       size_t count = 0;
@@ -619,7 +732,7 @@ class Session final : public AsyncWrap,
       StreamData() { buf = data; }
     };
 
-    void Acknowledge(stream_id stream_id, uint64_t offset, size_t datalen);
+    void Acknowledge(stream_id id, uint64_t offset, size_t datalen) final;
     virtual int GetStreamData(StreamData* data) = 0;
     virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
     virtual bool ShouldSetFin(const StreamData& data) = 0;
@@ -633,14 +746,39 @@ class Session final : public AsyncWrap,
    private:
     void MaybeSetFin(const StreamData& stream_data);
     BaseObjectWeakPtr<Session> session_;
+    const Config config_;
     bool needs_init_ = true;
-    size_t max_header_pairs_ = 0;
-    size_t max_header_length_ = 0;
   };
 
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
   static void Initialize(Environment* env);
+
+  static void DoAttachToEndpoint(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void DoDestroy(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetRemoteAddress(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetCertificate(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetEphemeralKeyInfo(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GetPeerCertificate(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void GracefulClose(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void SilentClose(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void UpdateKey(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void DoDetachFromEndpoint(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void OnClientHelloDone(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void OnOCSPDone(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
 
   static BaseObjectPtr<Session> CreateServer(
       EndpointWrap* endpoint,
@@ -654,8 +792,7 @@ class Session final : public AsyncWrap,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Config& config,
-      const Options& options,
-      uint32_t version);
+      const Options& options);
 
   Session(
       EndpointWrap* endpoint,
@@ -684,12 +821,11 @@ class Session final : public AsyncWrap,
   inline CryptoContext* crypto_context() const {
     return crypto_context_.get();
   }
-  inline CID dcid() const { return dcid_; }
+  inline const CID& dcid() const { return dcid_; }
   inline Application* application() const { return application_.get(); }
   inline EndpointWrap* endpoint() const;
   inline const std::string& alpn() { return alpn_; }
   inline const std::string& hostname() { return hostname_; }
-
   inline const SocketAddress& remote_address() const { return remote_address_; }
   inline const SocketAddress& local_address() const { return local_address_; }
 
@@ -714,7 +850,7 @@ class Session final : public AsyncWrap,
   void ResumeStream(stream_id id);
   bool HasStream(stream_id id) const;
   void StreamDataBlocked(stream_id id);
-  void ShutdownStream(stream_id stream_id, uint64_t code = NGTCP2_NO_ERROR);
+  void ShutdownStream(stream_id id, uint64_t code = NGTCP2_NO_ERROR);
   const StreamsMap& streams() const { return streams_; }
 
   // Submits headers to the QUIC Application If headers are not supported,
@@ -736,7 +872,7 @@ class Session final : public AsyncWrap,
   // forwarded on.
   bool ReceiveStreamData(
       uint32_t flags,
-      stream_id stream_id,
+      stream_id id,
       const uint8_t* data,
       size_t datalen,
       uint64_t offset);
@@ -1137,7 +1273,8 @@ class Session final : public AsyncWrap,
   // this as activity occurs to keep the idle timer from firing.
   void UpdateIdleTimer();
 
-  Application* SelectApplication();
+  Application* SelectApplication(
+      const Application::Config& config = Application::Config());
 
   ngtcp2_mem allocator_;
   QuicConnectionPointer connection_;
@@ -1451,7 +1588,7 @@ class Session final : public AsyncWrap,
 
 class DefaultApplication final : public Session::Application {
  public:
-  explicit DefaultApplication(Session* session);
+  DefaultApplication(Session* session, const Application::Config& config);
 
   bool ReceiveStreamData(
       uint32_t flags,

@@ -699,7 +699,7 @@ class Endpoint final : public MemoryRetainer,
 
   Environment* env_;
   UDPHandle udp_;
-  Config config_;
+  const Config config_;
 
   SendWrap::Queue outbound_;
   AsyncSignalHandle outbound_signal_;
@@ -803,6 +803,8 @@ class EndpointWrap final : public AsyncWrap,
       Environment* env,
       std::shared_ptr<Endpoint> endpoint);
 
+  static void CreateClientSession(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
   static void CreateEndpoint(
       const v8::FunctionCallbackInfo<v8::Value>& args);
   static void StartListen(

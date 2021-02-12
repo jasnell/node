@@ -17,6 +17,7 @@
 #include "memory_tracker-inl.h"
 #include "node_bob-inl.h"
 #include "node_http_common-inl.h"
+#include "node_process.h"
 #include "node_sockaddr-inl.h"
 #include "v8.h"
 
@@ -144,7 +145,7 @@ Session::Config::Config(
   if (UNLIKELY(is_ngtcp2_debug_enabled(endpoint->env())))
     log_printf = Ngtcp2DebugLog;
 
-  auto config = endpoint->config();
+  Endpoint::Config config = endpoint->config();
 
   cc_algo = config.cc_algorithm;
   max_udp_payload_size = config.max_payload_size;
@@ -229,7 +230,6 @@ void Session::TransportParams::SetPreferredAddress(
     default:
       UNREACHABLE();
   }
-
 }
 
 void Session::TransportParams::GenerateStatelessResetToken(
@@ -337,7 +337,7 @@ void Session::CryptoContext::Initialize() {
 void Session::CryptoContext::EnableTrace() {
 #if HAVE_SSL_TRACE
   if (!bio_trace_) {
-    bio_trace_.reset(BIO_new_fp(stderr,  BIO_NOCLOSE | BIO_FP_TEXT));
+    bio_trace_.reset(BIO_new_fp(stderr, BIO_NOCLOSE | BIO_FP_TEXT));
     SSL_set_msg_callback(
         ssl_.get(),
         [](int write_p,
@@ -355,9 +355,9 @@ void Session::CryptoContext::EnableTrace() {
 #endif
 }
 
-std::shared_ptr<v8::BackingStore>
-Session::CryptoContext::ocsp_response() const {
-  return ocsp_response_;
+std::shared_ptr<BackingStore> Session::CryptoContext::ocsp_response(
+    bool release) {
+  return LIKELY(release) ? std::move(ocsp_response_) : ocsp_response_;
 }
 
 std::string Session::CryptoContext::selected_alpn() const {
@@ -547,7 +547,6 @@ bool Session::CryptoContext::OnSecrets(
   return true;
 }
 
-
 int Session::CryptoContext::OnTLSStatus() {
   Environment* env = session_->env();
   HandleScope scope(env->isolate());
@@ -600,12 +599,6 @@ int Session::CryptoContext::Receive(
     size_t datalen) {
   if (UNLIKELY(session_->is_destroyed()))
     return NGTCP2_ERR_CALLBACK_FAILURE;
-
-  // Statistics are collected so we can monitor how long the
-  // handshake is taking to operate and complete.
-  if (session_->GetStat(&SessionStats::handshake_start_at) == 0)
-    session_->RecordTimestamp(&SessionStats::handshake_start_at);
-  session_->RecordTimestamp(&SessionStats::handshake_continue_at);
 
   Debug(session(), "Receiving %d bytes of crypto data", datalen);
 
@@ -698,8 +691,6 @@ void Session::CryptoContext::WriteHandshake(
         "Writing %d bytes of %s handshake data.",
         datalen,
         crypto_level_name(level));
-
-  session_->RecordTimestamp(&SessionStats::handshake_send_at);
 
   std::unique_ptr<BackingStore> store =
       ArrayBuffer::NewBackingStore(
@@ -879,6 +870,10 @@ void Session::RandomConnectionIDStrategy(
     crypto::EntropySource(cid->data, cidlen);
 }
 
+bool Session::HasInstance(Environment* env, v8::Local<v8::Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
 Local<FunctionTemplate> Session::GetConstructorTemplate(Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   CHECK_NOT_NULL(state);
@@ -889,6 +884,30 @@ Local<FunctionTemplate> Session::GetConstructorTemplate(Environment* env) {
     tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
     tmpl->InstanceTemplate()->SetInternalFieldCount(
         Session::kInternalFieldCount);
+    env->SetProtoMethodNoSideEffect(
+        tmpl,
+        "getRemoteAddress",
+        GetRemoteAddress);
+    env->SetProtoMethodNoSideEffect(
+        tmpl,
+        "getCertificate",
+        GetCertificate);
+    env->SetProtoMethodNoSideEffect(
+        tmpl,
+        "getPeerCertificate",
+        GetPeerCertificate);
+    env->SetProtoMethodNoSideEffect(
+        tmpl,
+        "getEphemeralKeyInfo",
+        GetEphemeralKeyInfo);
+    env->SetProtoMethod(tmpl, "destroy", DoDestroy);
+    env->SetProtoMethod(tmpl, "gracefulClose", GracefulClose);
+    env->SetProtoMethod(tmpl, "silentClose", SilentClose);
+    env->SetProtoMethod(tmpl, "updateKey", UpdateKey);
+    env->SetProtoMethod(tmpl, "attachToEndpoint", DoAttachToEndpoint);
+    env->SetProtoMethod(tmpl, "detachFromEndpoint", DoDetachFromEndpoint);
+    env->SetProtoMethod(tmpl, "onClientHelloDone", OnClientHelloDone);
+    env->SetProtoMethod(tmpl, "onOCSPDone", OnOCSPDone);
     state->set_session_constructor_template(env, tmpl);
   }
   return tmpl;
@@ -904,8 +923,7 @@ BaseObjectPtr<Session> Session::CreateClient(
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Config& config,
-    const Options& options,
-    uint32_t version) {
+    const Options& options) {
   Local<Object> obj;
   Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
   CHECK(!tmpl.IsEmpty());
@@ -921,7 +939,7 @@ BaseObjectPtr<Session> Session::CreateClient(
       remote_addr,
       config,
       options,
-      version);
+      config.version);
 }
 
 // Static function to create a new server QuicSession instance
@@ -1632,12 +1650,6 @@ Maybe<stream_id> Session::OpenStream(Stream::Direction direction) {
 void Session::PathValidation(
     const ngtcp2_path* path,
     ngtcp2_path_validation_result res) {
-  if (res == NGTCP2_PATH_VALIDATION_RESULT_SUCCESS) {
-    IncrementStat(&SessionStats::path_validation_success_count);
-  } else {
-    IncrementStat(&SessionStats::path_validation_failure_count);
-  }
-
   if (LIKELY(state_->path_validated_enabled == 0))
     return;
 
@@ -2073,16 +2085,7 @@ bool Session::SubmitHeaders(
     Stream::HeadersKind kind,
     stream_id id,
     v8::Local<v8::Array> headers) {
-  switch (kind) {
-    case Stream::HeadersKind::INFO:
-      return application_->SubmitInformation(id, headers);
-    case Stream::HeadersKind::INITIAL:
-      return application_->SubmitHeaders(id, headers);
-    case Stream::HeadersKind::TRAILING:
-      return application_->SubmitTrailers(id, headers);
-    default:
-      UNREACHABLE();
-  }
+  return application_->SubmitHeaders(id, kind, headers);
 }
 
 void Session::UpdateClosingTimer() {
@@ -2780,6 +2783,111 @@ int Session::OnDatagram(
   return 0;
 }
 
+void Session::DoDestroy(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  session->Destroy();
+}
+
+void Session::GetRemoteAddress(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  CHECK(args[0]->IsObject());
+  args.GetReturnValue().Set(
+      session->remote_address().ToJS(env, args[0].As<Object>()));
+}
+
+void Session::GetCertificate(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  Local<Value> ret;
+  if (session->crypto_context()->cert(env).ToLocal(&ret))
+    args.GetReturnValue().Set(ret);
+}
+
+void Session::GetPeerCertificate(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  Local<Value> ret;
+  if (session->crypto_context()->peer_cert(env).ToLocal(&ret))
+    args.GetReturnValue().Set(ret);
+}
+
+void Session::SilentClose(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  ProcessEmitWarning(
+      session->env(),
+      "Forcing silent close of Session for testing purposes only");
+  session->Close(Session::SessionCloseFlags::SILENT);
+}
+
+void Session::GracefulClose(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  session->StartGracefulClose();
+}
+
+void Session::UpdateKey(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  // Initiating a key update may fail if it is done too early (either
+  // before the TLS handshake has been confirmed or while a previous
+  // key update is being processed). When it fails, InitiateKeyUpdate()
+  // will return false.
+  args.GetReturnValue().Set(session->crypto_context()->InitiateKeyUpdate());
+}
+
+void Session::DoDetachFromEndpoint(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  session->DetachFromEndpoint();
+}
+
+void Session::OnClientHelloDone(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  Local<FunctionTemplate> cons = env->secure_context_constructor_template();
+  crypto::SecureContext* context = nullptr;
+  if (args[0]->IsObject() && cons->HasInstance(args[0]))
+    context = Unwrap<crypto::SecureContext>(args[0].As<Object>());
+  session->crypto_context()->OnClientHelloDone(
+      BaseObjectPtr<crypto::SecureContext>(context));
+}
+
+void Session::OnOCSPDone(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  if (UNLIKELY(args[0]->IsUndefined())) return;
+
+  // TODO(@jasnell): Implement properly
+  // session->crypto_context()->OnOCSPDone(args[0]);
+  session->crypto_context()->OnOCSPDone(std::shared_ptr<BackingStore>());
+}
+
+void Session::GetEphemeralKeyInfo(const FunctionCallbackInfo<Value>& args) {
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  Local<Object> ret;
+  if (session->crypto_context()->ephemeral_key().ToLocal(&ret))
+    args.GetReturnValue().Set(ret);
+}
+
+void Session::DoAttachToEndpoint(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  Session* session;
+  ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
+  CHECK(EndpointWrap::HasInstance(env, args[0]));
+  EndpointWrap* endpoint;
+  ASSIGN_OR_RETURN_UNWRAP(&endpoint, args[0]);
+  args.GetReturnValue().Set(
+      session->AttachToNewEndpoint(endpoint, args[1]->IsTrue()));
+}
+
 void SessionStatsTraits::ToString(const Session& ptr, AddStatsField add_field) {
 #define V(n, name, label) add_field(label, ptr.GetStat(&SessionStats::name));
     SESSION_STATS(V)
@@ -2790,7 +2898,8 @@ void SessionStatsTraits::ToString(const Session& ptr, AddStatsField add_field) {
 // based on the alpn configured for the application. For now, this is
 // determined through configuration when tghe QuicSession is created
 // and is not negotiable. In the future, we may allow it to be negotiated.
-Session::Application* Session::SelectApplication() {
+Session::Application* Session::SelectApplication(
+    const Application::Config& config) {
   // if (alpn == NGHTTP3_ALPN_H3) {
   //   Debug(this, "Selecting HTTP/3 Application");
   //   return new Http3Application(this);
@@ -2800,10 +2909,14 @@ Session::Application* Session::SelectApplication() {
   // QUIC protocols. As they are added, extend the cases
   // here to create and return them.
 
-  return new DefaultApplication(this);
+  return new DefaultApplication(this, config);
 }
 
-Session::Application::Application(Session* session) : session_(session) {}
+Session::Application::Application(
+    Session* session,
+    const Application::Config& config)
+    : session_(session),
+      config_(config) {}
 
 void Session::Application::Acknowledge(
     stream_id id,
@@ -3117,8 +3230,10 @@ std::string Session::RemoteTransportParamsDebug::ToString() const {
   return out;
 }
 
-DefaultApplication::DefaultApplication(Session* session)
-    : Session::Application(session) {
+DefaultApplication::DefaultApplication(
+    Session* session,
+    const Application::Config& config)
+    : Session::Application(session, config) {
   Debug(session, "Using default application");
 }
 

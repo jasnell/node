@@ -1329,6 +1329,10 @@ Local<FunctionTemplate> EndpointWrap::GetConstructorTemplate(
         tmpl,
         "waitingForPendingCallbacks",
         StartWaitForPendingCallbacks);
+    env->SetProtoMethod(
+        tmpl,
+        "createClientSession",
+        CreateClientSession);
     state->set_endpoint_constructor_template(env, tmpl);
   }
   return tmpl;
@@ -1347,6 +1351,13 @@ void EndpointWrap::Initialize(Environment* env, Local<Object> target) {
   ENDPOINT_STATE(V)
   NODE_DEFINE_CONSTANT(target, IDX_STATE_ENDPOINT_COUNT);
 #undef V
+}
+
+void EndpointWrap::CreateClientSession(
+    const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  EndpointWrap* endpoint;
+  ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
 }
 
 void EndpointWrap::CreateEndpoint(const FunctionCallbackInfo<Value>& args) {
