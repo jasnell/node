@@ -1000,7 +1000,7 @@ class EndpointWrap final : public AsyncWrap,
 
   // Called when the Endpoint has encountered an error condition
   // Signals to the JavaScript side.
-  void OnError();
+  void OnError(Local<Value> error = Local<Value>());
 
   // Called when a new Session has been created. Passes the
   // reference to the new session on the JavaScript side for

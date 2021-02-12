@@ -159,7 +159,7 @@ Maybe<bool> ConfigObject::SetOption(
     Local<String> name,
     uint64_t Endpoint::Config::*member) {
   Local<Value> value;
-  if (!object->Get(env()->context(), name).ToLocal(&value))
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
     return Nothing<bool>();
 
   if (value->IsUndefined())
@@ -190,7 +190,7 @@ Maybe<bool> ConfigObject::SetOption(
     Local<String> name,
     double Endpoint::Config::*member) {
   Local<Value> value;
-  if (!object->Get(env()->context(), name).ToLocal(&value))
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
     return Nothing<bool>();
 
   if (value->IsUndefined())
@@ -207,7 +207,7 @@ Maybe<bool> ConfigObject::SetOption(
     Local<String> name,
     ngtcp2_cc_algo Endpoint::Config::*member) {
   Local<Value> value;
-  if (!object->Get(env()->context(), name).ToLocal(&value))
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
     return Nothing<bool>();
 
   if (value->IsUndefined())
@@ -232,7 +232,7 @@ Maybe<bool> ConfigObject::SetOption(
     Local<String> name,
     bool Endpoint::Config::*member) {
   Local<Value> value;
-  if (!object->Get(env()->context(), name).ToLocal(&value))
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
     return Nothing<bool>();
   if (value->IsUndefined())
     return Just(false);
@@ -251,7 +251,7 @@ void ConfigObject::New(const FunctionCallbackInfo<Value>& args) {
   // Set as default
   SocketAddress::New("localhost", 0, &config->data()->local_address);
 
-  if (args[0]->IsObject()) {
+  if (LIKELY(args[0]->IsObject())) {
     BindingState* state = env->GetBindingData<BindingState>(env->context());
     Local<Object> object = args[0].As<Object>();
     if (config->SetOption(
@@ -393,9 +393,9 @@ BaseObjectPtr<BaseObject> ConfigObject::TransferData::Deserialize(
     v8::Local<v8::Context> context,
     std::unique_ptr<worker::TransferData> self) {
   Local<Object> obj;
-  if (!ConfigObject::GetConstructorTemplate(env)
+  if (UNLIKELY(!ConfigObject::GetConstructorTemplate(env)
           ->InstanceTemplate()
-          ->NewInstance(context).ToLocal(&obj)) {
+          ->NewInstance(context).ToLocal(&obj))) {
     return BaseObjectPtr<BaseObject>();
   }
 
@@ -424,9 +424,9 @@ BaseObjectPtr<Endpoint::SendWrap> Endpoint::SendWrap::Create(
     std::unique_ptr<Packet> packet,
     BaseObjectPtr<EndpointWrap> endpoint) {
   Local<Object> obj;
-  if (!GetConstructorTemplate(env)
+  if (UNLIKELY(!GetConstructorTemplate(env)
           ->InstanceTemplate()
-          ->NewInstance(env->context()).ToLocal(&obj)) {
+          ->NewInstance(env->context()).ToLocal(&obj))) {
     return BaseObjectPtr<SendWrap>();
   }
 
@@ -520,10 +520,23 @@ void Endpoint::RemoveCloseListener(CloseListener* listener) {
 void Endpoint::Close(CloseListener::Context context, int status) {
   Lock lock(this);
   env()->RemoveCleanupHook(OnCleanup, this);
+  RecordTimestamp(&EndpointStats::destroyed_at);
+
   udp_.Close();
-  for (const auto listener : close_listeners_) {
+
+  // Cancel any remaining outbound packets. Ideally there wouldn't
+  // be any, but at this point there's nothing else we can do.
+  SendWrap::Queue outbound;
+  outbound_.swap(outbound);
+  for (const auto packet : outbound)
+    packet->Done(UV_ECANCELED);
+  outbound.clear();
+  pending_outbound_ = 0;
+
+  // Notify all of the registered EndpointWrap instances that
+  // this shared endpoint is closed.
+  for (const auto listener : close_listeners_)
     listener->EndpointClosed(context, status);
-  }
 }
 
 bool Endpoint::AcceptInitialPacket(
@@ -764,7 +777,7 @@ void Endpoint::OnReceive(
   // we need to compact it back down
   std::shared_ptr<BackingStore> store = buffer.ReleaseBackingStore();
 
-  if (!store) {
+  if (UNLIKELY(!store)) {
     ProcessReceiveFailure(UV_ENOMEM);
     return;
   }
@@ -969,7 +982,7 @@ bool Endpoint::SendRetry(
           remote_addr,
           token_aead_,
           token_md_);
-  if (!packet) return false;
+  if (UNLIKELY(!packet)) return false;
   return SendPacket(remote_addr, std::move(packet));
 }
 
@@ -1151,9 +1164,9 @@ BaseObjectPtr<Endpoint::UDP> Endpoint::UDP::Create(
     Environment* env,
     Endpoint* endpoint) {
   Local<Object> obj;
-  if (!GetConstructorTemplate(env)
+  if (UNLIKELY(!GetConstructorTemplate(env)
           ->InstanceTemplate()
-          ->NewInstance(env->context()).ToLocal(&obj)) {
+          ->NewInstance(env->context()).ToLocal(&obj))) {
     return BaseObjectPtr<Endpoint::UDP>();
   }
 
@@ -1344,7 +1357,7 @@ void EndpointWrap::CreateEndpoint(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&config, args[0]);
 
   BaseObjectPtr<EndpointWrap> endpoint = Create(env, config->config());
-  if (endpoint)
+  if (LIKELY(endpoint))
     args.GetReturnValue().Set(endpoint->object());
 }
 
@@ -1369,9 +1382,9 @@ BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
     Environment* env,
     const Endpoint::Config& config) {
   Local<Object> obj;
-  if (!GetConstructorTemplate(env)
+  if (UNLIKELY(!GetConstructorTemplate(env)
           ->InstanceTemplate()
-          ->NewInstance(env->context()).ToLocal(&obj)) {
+          ->NewInstance(env->context()).ToLocal(&obj))) {
     return BaseObjectPtr<EndpointWrap>();
   }
 
@@ -1382,9 +1395,9 @@ BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
     Environment* env,
     std::shared_ptr<Endpoint> endpoint) {
   Local<Object> obj;
-  if (!GetConstructorTemplate(env)
+  if (UNLIKELY(!GetConstructorTemplate(env)
           ->InstanceTemplate()
-          ->NewInstance(env->context()).ToLocal(&obj)) {
+          ->NewInstance(env->context()).ToLocal(&obj))) {
     return BaseObjectPtr<EndpointWrap>();
   }
 
@@ -1461,7 +1474,6 @@ void EndpointWrap::EndpointClosed(
     int status) {
   close_context_ = context;
   close_status_ = status;
-  // TODO(@jasnell): Need to capture the statistics...
   close_signal_.Send();
 }
 
@@ -1503,7 +1515,7 @@ void EndpointWrap::AddSession(const CID& cid, BaseObjectPtr<Session> session) {
 }
 
 void EndpointWrap::AssociateCID(const CID& cid, const CID& scid) {
-  if (cid && scid) {
+  if (LIKELY(cid && scid)) {
     Debug(this, "Associating cid %s with %s", cid, scid);
     dcid_to_scid_[cid] = scid;
     Endpoint::Lock lock(inner_);
@@ -1521,7 +1533,7 @@ void EndpointWrap::AssociateStatelessResetToken(
 }
 
 void EndpointWrap::DisassociateCID(const CID& cid) {
-  if (cid) {
+  if (LIKELY(cid)) {
     Debug(this, "Removing association for cid %s", cid);
     dcid_to_scid_.erase(cid);
     Endpoint::Lock lock(inner_);
@@ -1593,11 +1605,15 @@ void EndpointWrap::OnEndpointDone() {
   MakeCallback(state->endpoint_done_callback(env()), 0, nullptr);
 }
 
-void EndpointWrap::OnError() {
+void EndpointWrap::OnError(Local<Value> error) {
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   HandleScope scope(env()->isolate());
+
+  if (UNLIKELY(error.IsEmpty()))
+    error = ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR(env()->isolate());
+
   v8::Context::Scope context_scope(env()->context());
-  MakeCallback(state->endpoint_error_callback(env()), 0, nullptr);
+  MakeCallback(state->endpoint_error_callback(env()), 1, &error);
 }
 
 void EndpointWrap::OnNewSession(const BaseObjectPtr<Session>& session) {
@@ -1653,7 +1669,7 @@ void EndpointWrap::ProcessInitial() {
             packet.config,
             server_options_);
 
-    if (!session)
+    if (UNLIKELY(!session))
       return ProcessInitialFailure();
 
     session->Receive(
@@ -1665,8 +1681,7 @@ void EndpointWrap::ProcessInitial() {
 }
 
 void EndpointWrap::ProcessInitialFailure() {
-  // TODO(@jasnell): Generate an error to report
-  OnError();
+  OnError(ERR_QUIC_ENDPOINT_INITIAL_PACKET_FAILURE(env()->isolate()));
 }
 
 bool EndpointWrap::Receive(
@@ -1743,10 +1758,8 @@ void EndpointWrap::SendPacket(
           remote_addr,
           std::move(packet),
           BaseObjectPtr<EndpointWrap>(this));
-  if (!wrap) {
-    // TODO(@jasnell): Process error
-    return;
-  }
+  if (UNLIKELY(!wrap))
+    return OnError(ERR_QUIC_ENDPOINT_SEND_FAILURE(env()->isolate()));
 
   IncrementPendingCallbacks();
   inner_->SendPacket(std::move(wrap));
