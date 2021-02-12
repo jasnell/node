@@ -1358,6 +1358,41 @@ void EndpointWrap::CreateClientSession(
   Environment* env = Environment::GetCurrent(args);
   EndpointWrap* endpoint;
   ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
+
+  CHECK(args[0]->IsInt32());  // Address family
+  CHECK(args[1]->IsString());  // Address
+  CHECK(args[2]->IsInt32());  // Port
+  CHECK(OptionsObject::HasInstance(env, args[3]));
+
+  uint32_t family = args[0].As<Int32>()->Value();
+  uint32_t port = args[2].As<Int32>()->Value();
+  Utf8Value address(env->isolate(), args[1]);
+
+  SocketAddress remote_address;
+  if (!SocketAddress::New(family, *address, port, &remote_address))
+    return THROW_ERR_QUIC_INVALID_ADDRESS(env);
+
+  OptionsObject* options;
+  ASSIGN_OR_RETURN_UNWRAP(&options, args[3]);
+
+  Session::Config config(
+    endpoint->inner_.get(),
+    NGTCP2_PROTO_VER_MAX);
+
+  BaseObjectPtr<Session> session =
+      Session::CreateClient(
+          endpoint,
+          endpoint->local_address(),
+          remote_address,
+          config,
+          options->options());
+
+  if (!session) {
+    return THROW_ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR(
+        env, "Failure to create new client session");
+  }
+
+  args.GetReturnValue().Set(session->object());
 }
 
 void EndpointWrap::CreateEndpoint(const FunctionCallbackInfo<Value>& args) {

@@ -121,8 +121,8 @@ bool Stream::AddHeader(std::unique_ptr<Header> header) {
   // We cannot add the header if we've either reached
   // * the max number of header pairs or
   // * the max number of header bytes
-  if (headers_.size() == app->max_header_pairs() ||
-      current_headers_length_ + len > app->max_header_length()) {
+  if (headers_.size() == app->config().max_header_pairs ||
+      current_headers_length_ + len > app->config().max_header_length) {
     return false;
   }
 

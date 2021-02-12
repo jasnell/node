@@ -31,24 +31,24 @@ namespace node {
 namespace quic {
 
 #define SESSION_STATS(V)                                                       \
-  V(CREATED_AT, created_at, "Created At")                                      \
-  V(HANDSHAKE_COMPLETED_AT, handshake_completed_at, "Handshake Completed")     \
-  V(HANDSHAKE_CONFIRMED_AT, handshake_confirmed_at, "Handshake Confirmed")     \
-  V(SENT_AT, sent_at, "Last Sent At")                                          \
-  V(RECEIVED_AT, received_at, "Last Received At")                              \
+  V(CREATED_AT, created_at, "Created at")                                      \
+  V(HANDSHAKE_COMPLETED_AT, handshake_completed_at, "Handshake completed")     \
+  V(HANDSHAKE_CONFIRMED_AT, handshake_confirmed_at, "Handshake confirmed")     \
+  V(SENT_AT, sent_at, "Last sent at")                                          \
+  V(RECEIVED_AT, received_at, "Last received at")                              \
   V(CLOSING_AT, closing_at, "Closing")                                         \
-  V(DESTROYED_AT, destroyed_at, "Destroyed At")                                \
-  V(BYTES_RECEIVED, bytes_received, "Bytes Received")                          \
-  V(BYTES_SENT, bytes_sent, "Bytes Sent")                                      \
-  V(BIDI_STREAM_COUNT, bidi_stream_count, "Bidi Stream Count")                 \
-  V(UNI_STREAM_COUNT, uni_stream_count, "Uni Stream Count")                    \
-  V(STREAMS_IN_COUNT, streams_in_count, "Streams In Count")                    \
-  V(STREAMS_OUT_COUNT, streams_out_count, "Streams Out Count")                 \
-  V(KEYUPDATE_COUNT, keyupdate_count, "Key Update Count")                      \
-  V(LOSS_RETRANSMIT_COUNT, loss_retransmit_count, "Loss Retransmit Count")     \
-  V(MAX_BYTES_IN_FLIGHT, max_bytes_in_flight, "Max Bytes In Flight")           \
-  V(BLOCK_COUNT, block_count, "Block Count")                                   \
-  V(BYTES_IN_FLIGHT, bytes_in_flight, "Bytes In Flight")                       \
+  V(DESTROYED_AT, destroyed_at, "Destroyed at")                                \
+  V(BYTES_RECEIVED, bytes_received, "Bytes received")                          \
+  V(BYTES_SENT, bytes_sent, "Bytes sent")                                      \
+  V(BIDI_STREAM_COUNT, bidi_stream_count, "Bidi stream count")                 \
+  V(UNI_STREAM_COUNT, uni_stream_count, "Uni stream count")                    \
+  V(STREAMS_IN_COUNT, streams_in_count, "Streams in count")                    \
+  V(STREAMS_OUT_COUNT, streams_out_count, "Streams out count")                 \
+  V(KEYUPDATE_COUNT, keyupdate_count, "Key update count")                      \
+  V(LOSS_RETRANSMIT_COUNT, loss_retransmit_count, "Loss retransmit count")     \
+  V(MAX_BYTES_IN_FLIGHT, max_bytes_in_flight, "Max bytes in flight")           \
+  V(BLOCK_COUNT, block_count, "Block count")                                   \
+  V(BYTES_IN_FLIGHT, bytes_in_flight, "Bytes in flight")                       \
   V(CONGESTION_RECOVERY_START_TS,                                              \
     congestion_recovery_start_ts,                                              \
     "Congestion recovery start time")                                          \
@@ -56,7 +56,7 @@ namespace quic {
   V(DELIVERY_RATE_SEC, delivery_rate_sec, "Delivery bytes/sec")                \
   V(FIRST_RTT_SAMPLE_TS, first_rtt_sample_ts, "First RTT sample time")         \
   V(INITIAL_RTT, initial_rtt, "Initial RTT")                                   \
-  V(LAST_TX_PKT_TS, last_tx_pkt_ts, "Last TX Packet time")                     \
+  V(LAST_TX_PKT_TS, last_tx_pkt_ts, "Last TX packet time")                     \
   V(LATEST_RTT, latest_rtt, "Latest RTT")                                      \
   V(LOSS_DETECTION_TIMER,                                                      \
     loss_detection_timer,                                                      \
@@ -71,32 +71,31 @@ namespace quic {
   V(RECEIVE_RATE, receive_rate, "Receive Rate / Sec")                          \
   V(SEND_RATE, send_rate, "Send Rate  Sec")
 
-// Every QuicSession instance maintains an AliasedStruct that is used to quickly
-// toggle certain settings back and forth or to access various stats with low
-// cost.
+// Every Session instance maintains an AliasedStruct that is used to quickly
+// toggle certain settings back and forth or to access various details with
+// lower cost.
 #define SESSION_STATE(V)                                                       \
   V(CLIENT_HELLO_ENABLED, client_hello_enabled, uint8_t)                       \
+  V(DATAGRAM_ENABLED, datagram_enabled, uint8_t)                               \
+  V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
+  V(OCSP_ENABLED, ocsp_enabled, uint8_t)                                       \
+  V(PATH_VALIDATED_ENABLED, path_validated_enabled, uint8_t)                   \
+  V(USE_PREFERRED_ADDRESS_ENABLED, use_preferred_address_enabled, uint8_t)     \
   V(CLOSING, closing, uint8_t)                                                 \
   V(CLOSING_TIMER_ENABLED, closing_timer_enabled, uint8_t)                     \
   V(CONNECTION_CLOSE_SCOPE, in_connection_close_scope, uint8_t)                \
-  V(DATAGRAM_ENABLED, datagram_enabled, uint8_t)                               \
   V(DESTROYED, destroyed, uint8_t)                                             \
   V(GRACEFUL_CLOSING, graceful_closing, uint8_t)                               \
   V(HANDSHAKE_CONFIRMED, handshake_confirmed, uint8_t)                         \
   V(IDLE_TIMEOUT, idle_timeout, uint8_t)                                       \
-  V(KEYLOG_ENABLED, keylog_enabled, uint8_t)                                   \
+  V(MAX_DATA_LEFT, max_data_left, uint64_t)                                    \
+  V(MAX_STREAMS_BIDI, max_streams_bidi, uint64_t)                              \
+  V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)                                \
   V(NGTCP2_CALLBACK, in_ngtcp2_callback, uint8_t)                              \
-  V(OCSP_ENABLED, ocsp_enabled, uint8_t)                                       \
-  V(PATH_VALIDATED_ENABLED, path_validated_enabled, uint8_t)                   \
   V(SILENT_CLOSE, silent_close, uint8_t)                                       \
   V(STATELESS_RESET, stateless_reset, uint8_t)                                 \
   V(TRANSPORT_PARAMS_SET, transport_params_set, uint8_t)                       \
-  V(USE_PREFERRED_ADDRESS_ENABLED, use_preferred_address_enabled, uint8_t)     \
-  V(WRAPPED, wrapped, uint8_t)                                                 \
-  V(BYTES_IN_FLIGHT, bytes_in_flight, uint64_t)                                \
-  V(MAX_DATA_LEFT, max_data_left, uint64_t)                                    \
-  V(MAX_STREAMS_BIDI, max_streams_bidi, uint64_t)                              \
-  V(MAX_STREAMS_UNI, max_streams_uni, uint64_t)
+  V(WRAPPED, wrapped, uint8_t)
 
 class Endpoint;
 class EndpointWrap;
@@ -121,11 +120,19 @@ using ConnectionCloseFn =
 static const int kInitialClientBufferLength = 4096;
 
 #define V(name, _, __) IDX_STATS_SESSION_##name,
-enum class SessionStatsIdx : int {
+enum SessionStatsIdx : int {
   SESSION_STATS(V)
   IDX_STATS_SESSION_COUNT
 };
 #undef V
+
+#define V(name, _, __) IDX_STATE_SESSION_##name,
+enum SessionStateIdx {
+  SESSION_STATE(V)
+  IDX_STATE_SESSION_COUNT
+};
+#undef V
+
 
 #define V(_, name, __) uint64_t name;
 struct SessionStats {
@@ -199,6 +206,8 @@ class Session final : public AsyncWrap,
         const CID& dcid,
         const CID& scid,
         uint32_t version);
+
+    Config(Endpoint* endpoint, uint32_t version);
 
     void EnableQLog(const CID& ocid);
   };
@@ -715,11 +724,11 @@ class Session final : public AsyncWrap,
 
     // Signals to the Application that it should serialize and transmit
     // any pending session and stream packets it has accumulated.
-    bool SendPendingData() final;
+    bool SendPendingData();
 
    protected:
-    void set_stream_fin(stream_id id) final;
-    std::unique_ptr<Packet> CreateStreamDataPacket() final;
+    void set_stream_fin(stream_id id);
+    std::unique_ptr<Packet> CreateStreamDataPacket();
 
     struct StreamData {
       size_t count = 0;
@@ -732,7 +741,7 @@ class Session final : public AsyncWrap,
       StreamData() { buf = data; }
     };
 
-    void Acknowledge(stream_id id, uint64_t offset, size_t datalen) final;
+    void Acknowledge(stream_id id, uint64_t offset, size_t datalen);
     virtual int GetStreamData(StreamData* data) = 0;
     virtual bool StreamCommit(StreamData* data, size_t datalen) = 0;
     virtual bool ShouldSetFin(const StreamData& data) = 0;
@@ -753,7 +762,7 @@ class Session final : public AsyncWrap,
   static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
-  static void Initialize(Environment* env);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
 
   static void DoAttachToEndpoint(
       const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -1273,8 +1282,7 @@ class Session final : public AsyncWrap,
   // this as activity occurs to keep the idle timer from firing.
   void UpdateIdleTimer();
 
-  Application* SelectApplication(
-      const Application::Config& config = Application::Config());
+  Application* SelectApplication(const Application::Config& config);
 
   ngtcp2_mem allocator_;
   QuicConnectionPointer connection_;

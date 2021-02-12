@@ -160,6 +160,9 @@ Session::Config::Config(
     ack_thresh = config.unacknowledged_packet_threshold;
 }
 
+Session::Config::Config(Endpoint* endpoint, uint32_t version)
+    : Config(endpoint, CID(), CID(), version) {}
+
 void Session::Config::EnableQLog(const CID& ocid) {
   qlog = { *ocid, OnQlogWrite };
   this->ocid = ocid;
@@ -913,9 +916,20 @@ Local<FunctionTemplate> Session::GetConstructorTemplate(Environment* env) {
   return tmpl;
 }
 
-void Session::Initialize(Environment* env) {
+void Session::Initialize(Environment* env, Local<Object> target) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
   state->set_session_constructor_template(env, GetConstructorTemplate(env));
+
+  OptionsObject::Initialize(env, target);
+
+#define V(name, _, __) NODE_DEFINE_CONSTANT(target, IDX_STATS_SESSION_##name);
+  SESSION_STATS(V)
+  NODE_DEFINE_CONSTANT(target, IDX_STATS_SESSION_COUNT);
+#undef V
+#define V(name, _, __) NODE_DEFINE_CONSTANT(target, IDX_STATE_SESSION_##name);
+  SESSION_STATE(V)
+  NODE_DEFINE_CONSTANT(target, IDX_STATE_SESSION_COUNT);
+#undef V
 }
 
 BaseObjectPtr<Session> Session::CreateClient(
@@ -986,7 +1000,7 @@ Session::Session(
       local_address_(local_addr),
       remote_address_(remote_addr),
       alpn_(options.alpn),
-      application_(SelectApplication()),
+      application_(SelectApplication(Application::Config())),
       crypto_context_(std::make_unique<CryptoContext>(this, options, side)),
       hostname_(options.hostname),
       idle_(endpoint->env(), [this]() { OnIdleTimeout(); }),
@@ -2870,10 +2884,11 @@ void Session::OnOCSPDone(const FunctionCallbackInfo<Value>& args) {
 }
 
 void Session::GetEphemeralKeyInfo(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
   Session* session;
   ASSIGN_OR_RETURN_UNWRAP(&session, args.Holder());
   Local<Object> ret;
-  if (session->crypto_context()->ephemeral_key().ToLocal(&ret))
+  if (session->crypto_context()->ephemeral_key(env).ToLocal(&ret))
     args.GetReturnValue().Set(ret);
 }
 

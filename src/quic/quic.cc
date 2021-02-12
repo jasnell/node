@@ -264,9 +264,8 @@ void Initialize(Local<Object> target,
   env->SetMethod(target, "initializeCallbacks", InitializeCallbacks);
 
   EndpointWrap::Initialize(env, target);
-  Session::Initialize(env);
+  Session::Initialize(env, target);
   Stream::Initialize(env);
-  OptionsObject::Initialize(env, target);
 
   constexpr uint32_t NGTCP2_PREFERRED_ADDRESS_USE =
       static_cast<uint32_t>(PreferredAddress::Policy::USE);
