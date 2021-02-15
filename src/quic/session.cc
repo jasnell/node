@@ -209,25 +209,25 @@ Session::TransportParams::TransportParams(
 }
 
 void Session::TransportParams::SetPreferredAddress(
-    const SocketAddress& address) {
+    const std::shared_ptr<SocketAddress>& address) {
   preferred_address_present = 1;
-  switch (address.family()) {
+  switch (address->family()) {
     case AF_INET: {
       const sockaddr_in* src =
-          reinterpret_cast<const sockaddr_in*>(address.data());
+          reinterpret_cast<const sockaddr_in*>(address->data());
       memcpy(preferred_address.ipv4_addr,
              &src->sin_addr,
              sizeof(preferred_address.ipv4_addr));
-      preferred_address.ipv4_port = address.port();
+      preferred_address.ipv4_port = address->port();
       break;
     }
     case AF_INET6: {
       const sockaddr_in6* src =
-          reinterpret_cast<const sockaddr_in6*>(address.data());
+          reinterpret_cast<const sockaddr_in6*>(address->data());
       memcpy(preferred_address.ipv6_addr,
              &src->sin6_addr,
              sizeof(preferred_address.ipv6_addr));
-      preferred_address.ipv6_port = address.port();
+      preferred_address.ipv6_port = address->port();
       break;
     }
     default:
@@ -3475,29 +3475,20 @@ void OptionsObject::SetPreferredAddress(
   OptionsObject* options;
   ASSIGN_OR_RETURN_UNWRAP(&options, args.Holder());
 
-  CHECK(args[0]->IsInt32());
-  CHECK(args[1]->IsString());
-  CHECK(args[2]->IsInt32());
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  SocketAddressWrap* preferred_addr;
+  ASSIGN_OR_RETURN_UNWRAP(&preferred_addr, args[0]);
 
-  int32_t type = args[0].As<Int32>()->Value();
-  int32_t port = args[2].As<Int32>()->Value();
-  Utf8Value address(env->isolate(), args[1]);
-
-  CHECK_IMPLIES(type != AF_INET, type == AF_INET6);
-
-  SocketAddress* addr = nullptr;
-  switch (type) {
+  switch (preferred_addr->address()->family()) {
     case AF_INET:
-      addr = &options->data()->preferred_address_ipv4;
+      options->data()->preferred_address_ipv4 = preferred_addr->address();
       break;
     case AF_INET6:
-      addr = &options->data()->preferred_address_ipv6;
+      options->data()->preferred_address_ipv6 = preferred_addr->address();
       break;
     default:
       UNREACHABLE();
   }
-
-  args.GetReturnValue().Set(SocketAddress::New(type, *address, port, addr));
 }
 
 Maybe<bool> OptionsObject::SetOption(

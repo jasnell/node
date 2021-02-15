@@ -238,8 +238,8 @@ class Session final : public AsyncWrap,
     // the IP address and port that the server would prefer the client
     // to use when communicating with it. See the QUIC specification for
     // more detail on how the preferred address mechanism works.
-    SocketAddress preferred_address_ipv4;
-    SocketAddress preferred_address_ipv6;
+    std::shared_ptr<SocketAddress> preferred_address_ipv4;
+    std::shared_ptr<SocketAddress> preferred_address_ipv6;
 
     // The initial size of the flow control window of locally initiated
     // streams. This is the maximum number of bytes that the *remote*
@@ -349,7 +349,7 @@ class Session final : public AsyncWrap,
         const CID& scid = CID(),
         const CID& ocid = CID());
 
-    void SetPreferredAddress(const SocketAddress& address);
+    void SetPreferredAddress(const std::shared_ptr<SocketAddress>& address);
     void GenerateStatelessResetToken(EndpointWrap* endpoint, const CID& cid);
     void GeneratePreferredAddressToken(
         ConnectionIDStrategy connection_id_strategy,
