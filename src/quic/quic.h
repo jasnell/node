@@ -267,7 +267,7 @@ class BindingState final : public BaseObject,
  public:
   static ngtcp2_mem GetAllocator(Environment* env);
 
-  static constexpr FastStringKey binding_data_name { "quic" };
+  static constexpr FastStringKey type_name { "quic" };
   BindingState(Environment* env, v8::Local<v8::Object> object);
 
   inline void check_initialized() { CHECK(!initialized_); }

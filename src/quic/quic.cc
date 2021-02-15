@@ -39,7 +39,7 @@ using v8::Value;
 
 namespace quic {
 
-constexpr FastStringKey BindingState::binding_data_name;
+constexpr FastStringKey BindingState::type_name;
 
 AsyncSignal::AsyncSignal(Environment* env, const Callback& fn)
     : env_(env), fn_(fn) {
