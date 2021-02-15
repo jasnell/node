@@ -636,14 +636,21 @@ bool Endpoint::AcceptInitialPacket(
 
 void Endpoint::AssociateCID(const CID& cid, PacketListener* listener) {
   sessions_[cid] = listener;
+  int err = StartReceiving();
+  if (err && err != UV_EALREADY)
+    Close(CloseListener::Context::LISTEN_FAILURE, err);
 }
 
 void Endpoint::DisassociateCID(const CID& cid) {
   sessions_.erase(cid);
+  MaybeStopReceiving();
 }
 
 void Endpoint::AddInitialPacketListener(InitialPacketListener* listener) {
   listeners_.emplace_back(listener);
+  int err = StartReceiving();
+  if (err && err != UV_EALREADY)
+    Close(CloseListener::Context::LISTEN_FAILURE, err);
 }
 
 void Endpoint::ImmediateConnectionClose(
@@ -674,6 +681,7 @@ void Endpoint::RemoveInitialPacketListener(
   auto it = std::find(listeners_.begin(), listeners_.end(), listener);
   if (it != listeners_.end())
     listeners_.erase(it);
+  MaybeStopReceiving();
 }
 
 Endpoint::PacketListener* Endpoint::FindSession(const CID& cid) {
@@ -1071,9 +1079,11 @@ int Endpoint::StartReceiving() {
   return udp_.StartReceiving();
 }
 
-int Endpoint::StopReceiving() {
+void Endpoint::MaybeStopReceiving() {
+  if (!sessions_.empty() || !listeners_.empty())
+    return;
   receiving_ = false;
-  return udp_.StopReceiving();
+  udp_.StopReceiving();
 }
 
 void Endpoint::Unref() {
@@ -1205,9 +1215,9 @@ int Endpoint::UDP::StartReceiving() {
   return err;
 }
 
-int Endpoint::UDP::StopReceiving() {
-  if (IsHandleClosing()) return UV_EBADF;
-  return uv_udp_recv_stop(&handle_);
+void Endpoint::UDP::StopReceiving() {
+  if (!IsHandleClosing())
+    USE(uv_udp_recv_stop(&handle_));
 }
 
 int Endpoint::UDP::SendPacket(BaseObjectPtr<SendWrap> req) {
@@ -1316,6 +1326,10 @@ Local<FunctionTemplate> EndpointWrap::GetConstructorTemplate(
         tmpl,
         "createClientSession",
         CreateClientSession);
+    env->SetProtoMethodNoSideEffect(
+        tmpl,
+        "address",
+        LocalAddress);
     state->set_endpoint_constructor_template(env, tmpl);
   }
   return tmpl;
@@ -1405,6 +1419,18 @@ void EndpointWrap::StartWaitForPendingCallbacks(
   EndpointWrap* endpoint;
   ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
   endpoint->WaitForPendingCallbacks();
+}
+
+void EndpointWrap::LocalAddress(const FunctionCallbackInfo<Value>& args) {
+    Environment* env = Environment::GetCurrent(args);
+    EndpointWrap* endpoint;
+    ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
+    BaseObjectPtr<SocketAddressWrap> addr;
+    SocketAddress address = endpoint->inner_->local_address();
+    if (address)
+      addr = SocketAddressWrap::Create(env, address);
+    if (addr)
+      args.GetReturnValue().Set(addr->object());
 }
 
 BaseObjectPtr<EndpointWrap> EndpointWrap::Create(

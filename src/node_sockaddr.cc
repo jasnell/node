@@ -24,19 +24,6 @@ using v8::Object;
 using v8::Uint32;
 using v8::Value;
 
-namespace {
-template <typename T, typename F>
-SocketAddress FromUVHandle(F fn, const T& handle) {
-  SocketAddress addr;
-  int len = sizeof(sockaddr_storage);
-  if (fn(&handle, addr.storage(), &len) == 0)
-    CHECK_EQ(static_cast<size_t>(len), addr.length());
-  else
-    addr.storage()->sa_family = 0;
-  return addr;
-}
-}  // namespace
-
 bool SocketAddress::ToSockAddr(
     int32_t family,
     const char* host,
@@ -753,6 +740,22 @@ void SocketAddressWrap::Initialize(Environment* env, Local<Object> target) {
       "SocketAddress",
       GetConstructorTemplate(env));
   NODE_DEFINE_CONSTANT(target, kLabelMask);
+}
+
+BaseObjectPtr<SocketAddressWrap> SocketAddressWrap::Create(
+    Environment* env,
+    const SocketAddress& addr) {
+  Local<Object> obj;
+  if (!GetConstructorTemplate(env)
+        ->InstanceTemplate()
+        ->NewInstance(env->context()).ToLocal(&obj)) {
+    return BaseObjectPtr<SocketAddressWrap>();
+  }
+
+  std::shared_ptr<SocketAddress> wrap =
+      std::make_shared<SocketAddress>(addr);
+
+  return MakeBaseObject<SocketAddressWrap>(env, obj, std::move(wrap));
 }
 
 void SocketAddressWrap::New(const FunctionCallbackInfo<Value>& args) {

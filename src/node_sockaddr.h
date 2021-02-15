@@ -148,6 +148,19 @@ class SocketAddress : public MemoryRetainer {
  private:
   bool set_ = false;
   sockaddr_storage address_;
+
+  template <typename T, typename F>
+  static SocketAddress FromUVHandle(F fn, const T& handle) {
+    SocketAddress addr;
+    int len = sizeof(sockaddr_storage);
+    if (fn(&handle, addr.storage(), &len) == 0) {
+      addr.set_ = true;
+      CHECK_EQ(static_cast<size_t>(len), addr.length());
+    } else {
+      addr.storage()->sa_family = 0;
+    }
+    return addr;
+  }
 };
 
 template <typename T>
@@ -353,6 +366,10 @@ class SocketAddressWrap : public BaseObject {
 
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Detail(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  static BaseObjectPtr<SocketAddressWrap> Create(
+      Environment* env,
+      const SocketAddress& addr);
 
   SocketAddressWrap(
       Environment* env,

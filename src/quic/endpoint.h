@@ -375,7 +375,7 @@ class Endpoint final : public MemoryRetainer,
     void Unref();
     void Close();
     int StartReceiving();
-    int StopReceiving();
+    void StopReceiving();
     SocketAddress local_address() const;
 
     int SendPacket(BaseObjectPtr<SendWrap> req);
@@ -426,8 +426,8 @@ class Endpoint final : public MemoryRetainer,
     inline int StartReceiving() {
       return udp_ ? udp_->StartReceiving() : UV_EBADF;
     }
-    inline int StopReceiving() {
-      return udp_ ? udp_->StopReceiving() : UV_EBADF;
+    inline void StopReceiving() {
+      udp_->StopReceiving();
     }
     inline SocketAddress local_address() const {
       return udp_ ? udp_->local_address() : SocketAddress();
@@ -499,6 +499,7 @@ class Endpoint final : public MemoryRetainer,
       CLOSE,
       RECEIVE_FAILURE,
       SEND_FAILURE,
+      LISTEN_FAILURE,
     };
     virtual void EndpointClosed(Context context, int status) = 0;
 
@@ -587,12 +588,6 @@ class Endpoint final : public MemoryRetainer,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr);
 
-  // Bind the UDP port if necessary and start listening for
-  // inbound QUIC packets.
-  int StartReceiving();
-
-  int StopReceiving();
-
   void Ref();
   void Unref();
 
@@ -646,6 +641,9 @@ class Endpoint final : public MemoryRetainer,
       const SocketAddress& remote_addr);
 
   int MaybeBind();
+  int StartReceiving();
+  void MaybeStopReceiving();
+
 
   PacketListener* FindSession(const CID& cid);
 
@@ -810,6 +808,8 @@ class EndpointWrap final : public AsyncWrap,
   static void StartListen(
       const v8::FunctionCallbackInfo<v8::Value>& args);
   static void StartWaitForPendingCallbacks(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void LocalAddress(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
   EndpointWrap(
