@@ -126,6 +126,7 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(initial_max_data, "initialMaxData")                                        \
   V(initial_max_streams_bidi, "initialMaxStreamsBidi")                         \
   V(initial_max_streams_uni, "initialMaxStreamsUni")                           \
+  V(ipv6_only, "ipv6Only")                                                     \
   V(max_idle_timeout, "maxIdleTimeout")                                        \
   V(active_connection_id_limit, "activeConnectionIdLimit")                     \
   V(ack_delay_exponent, "ackDelayExponent")                                    \

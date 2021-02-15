@@ -136,7 +136,7 @@ class Endpoint final : public MemoryRetainer,
       // The port may be 0 to have Node.js select an available port.
       // IPv6 or IPv4 addresses may be used. When using IPv6, dual mode
       // will be supported by default.
-      SocketAddress local_address;
+      std::shared_ptr<SocketAddress> local_address;
 
       // When the local_address specifies an IPv6 local address to bind
       // to, the ipv6_only parameter determines whether dual stack mode
@@ -369,7 +369,7 @@ class Endpoint final : public MemoryRetainer,
     UDP(const UDP&) = delete;
     UDP(UDP&&) = delete;
 
-    int Bind(const SocketAddress& address, int flags);
+    int Bind(const std::shared_ptr<SocketAddress>& address, int flags);
 
     void Ref();
     void Unref();
@@ -417,7 +417,7 @@ class Endpoint final : public MemoryRetainer,
 
     inline ~UDPHandle() { Close(); }
 
-    inline int Bind(const SocketAddress& address, int flags) {
+    inline int Bind(const std::shared_ptr<SocketAddress>& address, int flags) {
       return udp_->Bind(address, flags);
     }
 
@@ -1056,7 +1056,6 @@ class ConfigObject : public BaseObject {
       const v8::FunctionCallbackInfo<v8::Value>& args);
   static void SetResetTokenSecret(
       const v8::FunctionCallbackInfo<v8::Value>& args);
-  static void SetLocalAddress(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   ConfigObject(
       Environment* env,

@@ -138,10 +138,6 @@ Local<FunctionTemplate> ConfigObject::GetConstructorTemplate(
         tmpl,
         "setResetTokenSecret",
         SetResetTokenSecret);
-    env->SetProtoMethod(
-        tmpl,
-        "setLocalAddress",
-        SetLocalAddress);
     state->set_endpoint_config_constructor_template(env, tmpl);
   }
   return tmpl;
@@ -248,10 +244,13 @@ void ConfigObject::New(const FunctionCallbackInfo<Value>& args) {
   ConfigObject* config = new ConfigObject(env, args.This());
   config->data()->GenerateResetTokenSecret();
 
-  // Set as default
-  SocketAddress::New("localhost", 0, &config->data()->local_address);
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  SocketAddressWrap* address;
+  ASSIGN_OR_RETURN_UNWRAP(&address, args[0]);
 
-  if (LIKELY(args[0]->IsObject())) {
+  config->data()->local_address = address->address();
+
+  if (LIKELY(args[1]->IsObject())) {
     BindingState* state = env->GetBindingData<BindingState>(env->context());
     Local<Object> object = args[0].As<Object>();
     if (config->SetOption(
@@ -317,7 +316,11 @@ void ConfigObject::New(const FunctionCallbackInfo<Value>& args) {
         config->SetOption(
             object,
             state->cc_algorithm_string(env),
-            &Endpoint::Config::cc_algorithm).IsNothing()) {
+            &Endpoint::Config::cc_algorithm).IsNothing() ||
+        config->SetOption(
+            object,
+            state->ipv6_only_string(env),
+            &Endpoint::Config::ipv6_only).IsNothing()) {
       // The if block intentionally does nothing. The code is structured
       // like this to shortcircuit if any of the SetOptions() returns Nothing.
     }
@@ -339,27 +342,6 @@ void ConfigObject::SetResetTokenSecret(
   crypto::ArrayBufferOrViewContents<uint8_t> secret(args[0]);
   CHECK_EQ(secret.size(), sizeof(config->data()->reset_token_secret));
   memcpy(config->data()->reset_token_secret, secret.data(), secret.size());
-}
-
-void ConfigObject::SetLocalAddress(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
-  ConfigObject* config;
-  ASSIGN_OR_RETURN_UNWRAP(&config, args.Holder());
-
-  CHECK(args[0]->IsInt32());  // Family
-  CHECK(args[1]->IsString());  // Address
-  CHECK(args[2]->IsInt32());  // Port
-
-  int32_t family = args[0].As<Int32>()->Value();
-  Utf8Value address(env->isolate(), args[1]);
-  int32_t port = args[2].As<Int32>()->Value();
-
-  args.GetReturnValue().Set(
-      SocketAddress::New(
-          family,
-          *address,
-          port,
-          &config->data()->local_address));
 }
 
 ConfigObject::ConfigObject(
@@ -718,7 +700,7 @@ int Endpoint::MaybeBind() {
 
   return udp_.Bind(
       config_.local_address,
-      config_.local_address.family() == AF_INET6 && config_.ipv6_only
+      config_.local_address->family() == AF_INET6 && config_.ipv6_only
           ? UV_UDP_IPV6ONLY : 0);
 }
 
@@ -1191,8 +1173,9 @@ SocketAddress Endpoint::UDP::local_address() const {
   return SocketAddress::FromSockName(handle_);
 }
 
-int Endpoint::UDP::Bind(const SocketAddress& address, int flags) {
-  return uv_udp_bind(&handle_, address.data(), flags);
+int Endpoint::UDP::Bind(
+    const std::shared_ptr<SocketAddress>& address, int flags) {
+  return uv_udp_bind(&handle_, address->data(), flags);
 }
 
 void Endpoint::UDP::Close() {
