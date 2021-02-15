@@ -64,6 +64,8 @@ The `BlockList` object can be used with some network APIs to specify rules for
 disabling inbound or outbound access to specific IP addresses, IP ranges, or
 IP subnets.
 
+All {BlockList} instances are cloneable over {MessagePort}.
+
 ### `blockList.addAddress(address[, type])`
 <!-- YAML
 added: v15.0.0
@@ -1073,6 +1075,55 @@ This property represents the state of the connection as a string.
 * If the stream is readable and writable, it is `open`.
 * If the stream is readable and not writable, it is `readOnly`.
 * If the stream is not readable and writable, it is `writeOnly`.
+
+## Class: `net.SocketAddress`
+<!-- YAML
+added: REPLACEME
+-->
+
+The {SocketAddress} class wraps an IPv4 or IPv6 socket address.
+
+All {SocketAddress} instances are immutable after creation and are
+cloneable over {MessagePort}.
+
+### `new net.SocketAddress([options])`
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {Object}
+  * `family` {string} Either `'ipv4'` or `'ipv6'` (case-insensitive).
+    **Default**: `'ipv4'`.
+  * `address` {string} The IPv4 or IPv6 address. **Default**: `0.0.0.0`.
+  * `port` {number} The IP port. **Default**: `0`
+  * `flowlabel` {number} When `family` is `'ipv6'`, specifies an optional
+    IPv6 flow label to associate with the socket address.
+
+### `socketaddress.address`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string} The IPv4 or IPv6 address.
+### `socketaddress.family`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string} Either `'ipv4'` or `'ipv6'`.
+### `sockaddress.flowlabel`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {number|undefined} The optional IPv6 flowlabel.
+
+### `socketaddress.port`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {number} The IP port.
 
 ## `net.connect()`
 

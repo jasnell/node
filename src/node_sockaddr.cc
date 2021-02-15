@@ -3,6 +3,7 @@
 #include "base64-inl.h"
 #include "base_object-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_errors.h"
 #include "uv.h"
 
 #include <memory>
@@ -15,9 +16,12 @@ using v8::Array;
 using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
+using v8::Int32;
+using v8::Integer;
 using v8::Local;
 using v8::MaybeLocal;
 using v8::Object;
+using v8::Uint32;
 using v8::Value;
 
 namespace {
@@ -389,18 +393,19 @@ SocketAddressBlockList::SocketAddressBlockList(
     : parent_(parent) {}
 
 void SocketAddressBlockList::AddSocketAddress(
-    const SocketAddress& address) {
+    std::shared_ptr<SocketAddress> address) {
+  SocketAddress addr = *address.get();
   std::unique_ptr<Rule> rule =
-      std::make_unique<SocketAddressRule>(address);
+      std::make_unique<SocketAddressRule>(std::move(address));
   Mutex::ScopedLock lock(mutex_);
   rules_.emplace_front(std::move(rule));
-  address_rules_[address] = rules_.begin();
+  address_rules_[addr] = rules_.begin();
 }
 
 void SocketAddressBlockList::RemoveSocketAddress(
-    const SocketAddress& address) {
+    std::shared_ptr<SocketAddress> address) {
   Mutex::ScopedLock lock(mutex_);
-  auto it = address_rules_.find(address);
+  auto it = address_rules_.find(*address.get());
   if (it != std::end(address_rules_)) {
     rules_.erase(it->second);
     address_rules_.erase(it);
@@ -408,19 +413,21 @@ void SocketAddressBlockList::RemoveSocketAddress(
 }
 
 void SocketAddressBlockList::AddSocketAddressRange(
-    const SocketAddress& start,
-    const SocketAddress& end) {
+    std::shared_ptr<SocketAddress> start,
+    std::shared_ptr<SocketAddress> end) {
   std::unique_ptr<Rule> rule =
-      std::make_unique<SocketAddressRangeRule>(start, end);
+      std::make_unique<SocketAddressRangeRule>(
+          std::move(start),
+          std::move(end));
   Mutex::ScopedLock lock(mutex_);
   rules_.emplace_front(std::move(rule));
 }
 
 void SocketAddressBlockList::AddSocketAddressMask(
-    const SocketAddress& network,
+    std::shared_ptr<SocketAddress> network,
     int prefix) {
   std::unique_ptr<Rule> rule =
-      std::make_unique<SocketAddressMaskRule>(network, prefix);
+      std::make_unique<SocketAddressMaskRule>(std::move(network), prefix);
   Mutex::ScopedLock lock(mutex_);
   rules_.emplace_front(std::move(rule));
 }
@@ -435,59 +442,59 @@ bool SocketAddressBlockList::Apply(const SocketAddress& address) {
 }
 
 SocketAddressBlockList::SocketAddressRule::SocketAddressRule(
-    const SocketAddress& address_)
-    : address(address_) {}
+    std::shared_ptr<SocketAddress> address_)
+    : address(std::move(address_)) {}
 
 SocketAddressBlockList::SocketAddressRangeRule::SocketAddressRangeRule(
-    const SocketAddress& start_,
-    const SocketAddress& end_)
-    : start(start_),
-      end(end_) {}
+    std::shared_ptr<SocketAddress> start_,
+    std::shared_ptr<SocketAddress> end_)
+    : start(std::move(start_)),
+      end(std::move(end_)) {}
 
 SocketAddressBlockList::SocketAddressMaskRule::SocketAddressMaskRule(
-    const SocketAddress& network_,
+    std::shared_ptr<SocketAddress> network_,
     int prefix_)
-    : network(network_),
+    : network(std::move(network_)),
       prefix(prefix_) {}
 
 bool SocketAddressBlockList::SocketAddressRule::Apply(
     const SocketAddress& address) {
-  return this->address.is_match(address);
+  return this->address->is_match(address);
 }
 
 std::string SocketAddressBlockList::SocketAddressRule::ToString() {
   std::string ret = "Address: ";
-  ret += address.family() == AF_INET ? "IPv4" : "IPv6";
+  ret += address->family() == AF_INET ? "IPv4" : "IPv6";
   ret += " ";
-  ret += address.address();
+  ret += address->address();
   return ret;
 }
 
 bool SocketAddressBlockList::SocketAddressRangeRule::Apply(
     const SocketAddress& address) {
-  return address >= start && address <= end;
+  return address >= *start.get() && address <= *end.get();
 }
 
 std::string SocketAddressBlockList::SocketAddressRangeRule::ToString() {
   std::string ret = "Range: ";
-  ret += start.family() == AF_INET ? "IPv4" : "IPv6";
+  ret += start->family() == AF_INET ? "IPv4" : "IPv6";
   ret += " ";
-  ret += start.address();
+  ret += start->address();
   ret += "-";
-  ret += end.address();
+  ret += end->address();
   return ret;
 }
 
 bool SocketAddressBlockList::SocketAddressMaskRule::Apply(
     const SocketAddress& address) {
-  return address.is_in_network(network, prefix);
+  return address.is_in_network(*network.get(), prefix);
 }
 
 std::string SocketAddressBlockList::SocketAddressMaskRule::ToString() {
   std::string ret = "Subnet: ";
-  ret += network.family() == AF_INET ? "IPv4" : "IPv6";
+  ret += network->family() == AF_INET ? "IPv4" : "IPv6";
   ret += " ";
-  ret += network.address();
+  ret += network->address();
   ret += "/" + std::to_string(prefix);
   return ret;
 }
@@ -495,6 +502,16 @@ std::string SocketAddressBlockList::SocketAddressMaskRule::ToString() {
 MaybeLocal<Array> SocketAddressBlockList::ListRules(Environment* env) {
   Mutex::ScopedLock lock(mutex_);
   std::vector<Local<Value>> rules;
+
+  if (parent_) {
+    for (const auto& rule : parent_->rules_) {
+      Local<Value> str;
+      if (!rule->ToV8String(env).ToLocal(&str))
+        return MaybeLocal<Array>();
+      rules.push_back(str);
+    }
+  }
+
   for (const auto& rule : rules_) {
     Local<Value> str;
     if (!rule->ToV8String(env).ToLocal(&str))
@@ -534,6 +551,12 @@ SocketAddressBlockListWrap::SocketAddressBlockListWrap(
   MakeWeak();
 }
 
+bool SocketAddressBlockListWrap::HasInstance(
+    Environment* env,
+    Local<Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
 BaseObjectPtr<SocketAddressBlockListWrap> SocketAddressBlockListWrap::New(
     Environment* env) {
   Local<Object> obj;
@@ -552,6 +575,19 @@ void SocketAddressBlockListWrap::New(
     const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
   Environment* env = Environment::GetCurrent(args);
+
+  CHECK_IMPLIES(
+      !args[0]->IsUndefined(),
+      SocketAddressBlockListWrap::HasInstance(env, args[0]));
+  if (!args[0]->IsUndefined()) {
+    SocketAddressBlockListWrap* parent;
+    ASSIGN_OR_RETURN_UNWRAP(&parent, args[0]);
+    std::shared_ptr<SocketAddressBlockList> list =
+        std::make_shared<SocketAddressBlockList>(parent->blocklist_);
+    new SocketAddressBlockListWrap(env, args.This(), std::move(list));
+    return;
+  }
+
   new SocketAddressBlockListWrap(env, args.This());
 }
 
@@ -560,22 +596,10 @@ void SocketAddressBlockListWrap::AddAddress(
   Environment* env = Environment::GetCurrent(args);
   SocketAddressBlockListWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
-
-  CHECK(args[0]->IsString());
-  CHECK(args[1]->IsInt32());
-
-  sockaddr_storage address;
-  Utf8Value value(args.GetIsolate(), args[0]);
-  int32_t family;
-  if (!args[1]->Int32Value(env->context()).To(&family))
-    return;
-
-  if (!SocketAddress::ToSockAddr(family, *value, 0, &address))
-    return;
-
-  wrap->blocklist_->AddSocketAddress(
-      SocketAddress(reinterpret_cast<const sockaddr*>(&address)));
-
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  SocketAddressWrap* addr;
+  ASSIGN_OR_RETURN_UNWRAP(&addr, args[0]);
+  wrap->blocklist_->AddSocketAddress(addr->address());
   args.GetReturnValue().Set(true);
 }
 
@@ -585,30 +609,20 @@ void SocketAddressBlockListWrap::AddRange(
   SocketAddressBlockListWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
 
-  CHECK(args[0]->IsString());
-  CHECK(args[1]->IsString());
-  CHECK(args[2]->IsInt32());
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  CHECK(SocketAddressWrap::HasInstance(env, args[1]));
 
-  sockaddr_storage address[2];
-  Utf8Value start(args.GetIsolate(), args[0]);
-  Utf8Value end(args.GetIsolate(), args[1]);
-  int32_t family;
-  if (!args[2]->Int32Value(env->context()).To(&family))
-    return;
+  SocketAddressWrap* start;
+  SocketAddressWrap* end;
 
-  if (!SocketAddress::ToSockAddr(family, *start, 0, &address[0]) ||
-      !SocketAddress::ToSockAddr(family, *end, 0, &address[1])) {
-    return;
-  }
-
-  SocketAddress start_addr(reinterpret_cast<const sockaddr*>(&address[0]));
-  SocketAddress end_addr(reinterpret_cast<const sockaddr*>(&address[1]));
+  ASSIGN_OR_RETURN_UNWRAP(&start, args[0]);
+  ASSIGN_OR_RETURN_UNWRAP(&end, args[1]);
 
   // Starting address must come before the end address
-  if (start_addr > end_addr)
+  if (*start->address().get() > *end->address().get())
     return args.GetReturnValue().Set(false);
 
-  wrap->blocklist_->AddSocketAddressRange(start_addr, end_addr);
+  wrap->blocklist_->AddSocketAddressRange(start->address(), end->address());
 
   args.GetReturnValue().Set(true);
 }
@@ -619,29 +633,21 @@ void SocketAddressBlockListWrap::AddSubnet(
   SocketAddressBlockListWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
 
-  CHECK(args[0]->IsString());
-  CHECK(args[1]->IsInt32());
-  CHECK(args[2]->IsInt32());
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  CHECK(args[1]->IsInt32());  // Prefix
 
-  sockaddr_storage address;
-  Utf8Value network(args.GetIsolate(), args[0]);
-  int32_t family;
   int32_t prefix;
-  if (!args[1]->Int32Value(env->context()).To(&family) ||
-      !args[2]->Int32Value(env->context()).To(&prefix)) {
-    return;
-  }
-
-  if (!SocketAddress::ToSockAddr(family, *network, 0, &address))
+  if (!args[1]->Int32Value(env->context()).To(&prefix))
     return;
 
-  CHECK_IMPLIES(family == AF_INET, prefix <= 32);
-  CHECK_IMPLIES(family == AF_INET6, prefix <= 128);
+  SocketAddressWrap* addr;
+  ASSIGN_OR_RETURN_UNWRAP(&addr, args[0]);
+
+  CHECK_IMPLIES(addr->address()->family() == AF_INET, prefix <= 32);
+  CHECK_IMPLIES(addr->address()->family() == AF_INET6, prefix <= 128);
   CHECK_GE(prefix, 0);
 
-  wrap->blocklist_->AddSocketAddressMask(
-      SocketAddress(reinterpret_cast<const sockaddr*>(&address)),
-      prefix);
+  wrap->blocklist_->AddSocketAddressMask(addr->address(), prefix);
 
   args.GetReturnValue().Set(true);
 }
@@ -652,21 +658,11 @@ void SocketAddressBlockListWrap::Check(
   SocketAddressBlockListWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
 
-  CHECK(args[0]->IsString());
-  CHECK(args[1]->IsInt32());
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  SocketAddressWrap* addr;
+  ASSIGN_OR_RETURN_UNWRAP(&addr, args[0]);
 
-  sockaddr_storage address;
-  Utf8Value value(args.GetIsolate(), args[0]);
-  int32_t family;
-  if (!args[1]->Int32Value(env->context()).To(&family))
-    return;
-
-  if (!SocketAddress::ToSockAddr(family, *value, 0, &address))
-    return;
-
-  args.GetReturnValue().Set(
-      wrap->blocklist_->Apply(
-          SocketAddress(reinterpret_cast<const sockaddr*>(&address))));
+  args.GetReturnValue().Set(wrap->blocklist_->Apply(addr->address()));
 }
 
 void SocketAddressBlockListWrap::GetRules(
@@ -705,6 +701,7 @@ void SocketAddressBlockListWrap::Initialize(
     void* priv) {
   Environment* env = Environment::GetCurrent(context);
   env->SetConstructorFunction(target, "BlockList", GetConstructorTemplate(env));
+  SocketAddressWrap::Initialize(env, target);
   NODE_DEFINE_CONSTANT(target, AF_INET);
   NODE_DEFINE_CONSTANT(target, AF_INET6);
 }
@@ -729,6 +726,137 @@ BaseObjectPtr<BaseObject> SocketAddressBlockListWrap::TransferData::Deserialize(
       env,
       obj,
       std::move(blocklist_));
+}
+
+bool SocketAddressWrap::HasInstance(Environment* env, Local<Value> value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
+Local<FunctionTemplate> SocketAddressWrap::GetConstructorTemplate(
+    Environment* env) {
+  Local<FunctionTemplate> tmpl = env->socketaddress_constructor_template();
+  if (tmpl.IsEmpty()) {
+    tmpl = env->NewFunctionTemplate(New);
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        SocketAddressWrap::kInternalFieldCount);
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "SocketAddress"));
+    env->SetProtoMethodNoSideEffect(tmpl, "detail", Detail);
+    env->set_socketaddress_constructor_template(tmpl);
+  }
+  return tmpl;
+}
+
+void SocketAddressWrap::Initialize(Environment* env, Local<Object> target) {
+  env->SetConstructorFunction(
+      target,
+      "SocketAddress",
+      GetConstructorTemplate(env));
+  NODE_DEFINE_CONSTANT(target, kLabelMask);
+}
+
+void SocketAddressWrap::New(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+
+  CHECK(args[0]->IsInt32());  // Family
+  CHECK(args[1]->IsString());  // Address
+  CHECK(args[2]->IsInt32());  // Port
+  CHECK_IMPLIES(!args[3]->IsUndefined(), args[3]->IsUint32());
+
+  uint32_t family = args[0].As<Int32>()->Value();
+  uint32_t port = args[2].As<Int32>()->Value();
+  Utf8Value address(env->isolate(), args[1]);
+
+  std::shared_ptr<SocketAddress> addr =
+      std::make_shared<SocketAddress>();
+  CHECK(addr);
+  if (!SocketAddress::New(family, *address, port, addr.get()))
+    return THROW_ERR_INVALID_ADDRESS(env);
+
+  SocketAddressWrap* wrap =
+      new SocketAddressWrap(env, args.This(), std::move(addr));
+
+  if (!args[3]->IsUndefined() && family == AF_INET6) {
+    uint32_t flow_label = args[3].As<Uint32>()->Value();
+    wrap->address_->set_flow_label(flow_label);
+  }
+}
+
+SocketAddressWrap::SocketAddressWrap(
+    Environment* env,
+    Local<Object> object,
+    std::shared_ptr<SocketAddress> addr)
+    : BaseObject(env, object),
+      address_(std::move(addr)) {
+  MakeWeak();
+}
+
+void SocketAddressWrap::Detail(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  SocketAddressWrap* wrap;
+  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+  CHECK(args[0]->IsObject());
+  Local<Object> obj = args[0].As<Object>();
+
+  Local<Value> address;
+  if (!ToV8Value(env->context(), wrap->address_->address()).ToLocal(&address))
+    return;
+
+  if (wrap->address_->family() == AF_INET6 &&
+      !obj->Set(
+          env->context(),
+          env->flowlabel_string(),
+          Integer::NewFromUnsigned(
+              env->isolate(),
+              wrap->address_->flow_label())).FromJust()) {
+    return;
+  }
+
+  if (!obj->Set(
+          env->context(),
+          env->family_string(),
+          FIXED_ONE_BYTE_STRING(
+              env->isolate(),
+              wrap->address_->family() == AF_INET ? "ipv4" : "ipv6"))
+                  .FromJust() ||
+      !obj->Set(env->context(), env->host_string(), address).FromJust() ||
+      !obj->Set(
+          env->context(),
+          env->port_string(),
+          Integer::NewFromUnsigned(
+              env->isolate(),
+              wrap->address_->port())).FromJust()) {
+    // Intentionally empty block. The If statements are structured to
+    // short circuit if any of the statements return false.
+  }
+
+  args.GetReturnValue().Set(obj);
+}
+
+void SocketAddressWrap::MemoryInfo(
+    node::MemoryTracker* tracker) const {
+  if (address_)
+    tracker->TrackField("address", address_);
+}
+
+void SocketAddressWrap::TransferData::MemoryInfo(
+    node::MemoryTracker* tracker) const {
+  if (address_)
+    tracker->TrackField("address", address_);
+}
+
+BaseObjectPtr<BaseObject> SocketAddressWrap::TransferData::Deserialize(
+    Environment* env,
+    v8::Local<v8::Context> context,
+    std::unique_ptr<worker::TransferData> self) {
+  Local<Object> obj;
+  if (!GetConstructorTemplate(env)
+          ->InstanceTemplate()
+          ->NewInstance(context).ToLocal(&obj)) {
+    return BaseObjectPtr<BaseObject>();
+  }
+  return MakeBaseObject<SocketAddressWrap>(env, obj, std::move(address_));
 }
 
 }  // namespace node

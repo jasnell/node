@@ -1,5 +1,6 @@
 #include "node_sockaddr-inl.h"
 #include "gtest/gtest.h"
+#include <memory>
 
 using node::SocketAddress;
 using node::SocketAddressBlockList;
@@ -194,20 +195,22 @@ TEST(SocketAddress, Comparison) {
 TEST(SocketAddressBlockList, Simple) {
   SocketAddressBlockList bl;
 
-  sockaddr_storage storage[2];
-  SocketAddress::ToSockAddr(AF_INET, "10.0.0.1", 0, &storage[0]);
-  SocketAddress::ToSockAddr(AF_INET, "10.0.0.2", 0, &storage[1]);
-  SocketAddress addr1(reinterpret_cast<const sockaddr*>(&storage[0]));
-  SocketAddress addr2(reinterpret_cast<const sockaddr*>(&storage[1]));
+  std::shared_ptr<SocketAddress> addr1 =
+      std::make_shared<SocketAddress>();
+  std::shared_ptr<SocketAddress> addr2 =
+      std::make_shared<SocketAddress>();
+
+  SocketAddress::New(AF_INET, "10.0.0.1", 0, addr1.get());
+  SocketAddress::New(AF_INET, "10.0.0.2", 0, addr2.get());
 
   bl.AddSocketAddress(addr1);
   bl.AddSocketAddress(addr2);
 
   CHECK(bl.Apply(addr1));
-  CHECK(bl.Apply(addr2));
+  CHECK(bl.Apply(*addr2.get()));
 
   bl.RemoveSocketAddress(addr1);
 
-  CHECK(!bl.Apply(addr1));
-  CHECK(bl.Apply(addr2));
+  CHECK(!bl.Apply(*addr1.get()));
+  CHECK(bl.Apply(*addr2.get()));
 }

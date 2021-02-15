@@ -1370,7 +1370,7 @@ void EndpointWrap::CreateClientSession(
 
   SocketAddress remote_address;
   if (!SocketAddress::New(family, *address, port, &remote_address))
-    return THROW_ERR_QUIC_INVALID_ADDRESS(env);
+    return THROW_ERR_INVALID_ADDRESS(env);
 
   OptionsObject* options;
   ASSIGN_OR_RETURN_UNWRAP(&options, args[3]);

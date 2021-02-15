@@ -195,20 +195,23 @@ class SocketAddressBlockList : public MemoryRetainer {
   ~SocketAddressBlockList() = default;
 
   void AddSocketAddress(
-      const SocketAddress& address);
+      std::shared_ptr<SocketAddress> address);
 
   void RemoveSocketAddress(
-      const SocketAddress& address);
+      std::shared_ptr<SocketAddress> address);
 
   void AddSocketAddressRange(
-      const SocketAddress& start,
-      const SocketAddress& end);
+      std::shared_ptr<SocketAddress> start,
+      std::shared_ptr<SocketAddress> end);
 
   void AddSocketAddressMask(
-      const SocketAddress& address,
+      std::shared_ptr<SocketAddress> address,
       int prefix);
 
   bool Apply(const SocketAddress& address);
+  inline bool Apply(std::shared_ptr<SocketAddress> address) {
+    return address ? Apply(*address.get()) : false;
+  }
 
   size_t size() const { return rules_.size(); }
 
@@ -221,9 +224,9 @@ class SocketAddressBlockList : public MemoryRetainer {
   };
 
   struct SocketAddressRule final : Rule {
-    SocketAddress address;
+    std::shared_ptr<SocketAddress> address;
 
-    explicit SocketAddressRule(const SocketAddress& address);
+    explicit SocketAddressRule(std::shared_ptr<SocketAddress> address);
 
     bool Apply(const SocketAddress& address) override;
     std::string ToString() override;
@@ -234,12 +237,12 @@ class SocketAddressBlockList : public MemoryRetainer {
   };
 
   struct SocketAddressRangeRule final : Rule {
-    SocketAddress start;
-    SocketAddress end;
+    std::shared_ptr<SocketAddress> start;
+    std::shared_ptr<SocketAddress> end;
 
     SocketAddressRangeRule(
-        const SocketAddress& start,
-        const SocketAddress& end);
+        std::shared_ptr<SocketAddress> start,
+        std::shared_ptr<SocketAddress> end);
 
     bool Apply(const SocketAddress& address) override;
     std::string ToString() override;
@@ -250,11 +253,11 @@ class SocketAddressBlockList : public MemoryRetainer {
   };
 
   struct SocketAddressMaskRule final : Rule {
-    SocketAddress network;
+    std::shared_ptr<SocketAddress> network;
     int prefix;
 
     SocketAddressMaskRule(
-        const SocketAddress& address,
+        std::shared_ptr<SocketAddress> address,
         int prefix);
 
     bool Apply(const SocketAddress& address) override;
@@ -279,6 +282,7 @@ class SocketAddressBlockList : public MemoryRetainer {
 
 class SocketAddressBlockListWrap : public BaseObject {
  public:
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
 
@@ -338,6 +342,60 @@ class SocketAddressBlockListWrap : public BaseObject {
 
  private:
   std::shared_ptr<SocketAddressBlockList> blocklist_;
+};
+
+class SocketAddressWrap : public BaseObject {
+ public:
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void Detail(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  SocketAddressWrap(
+      Environment* env,
+      v8::Local<v8::Object> obj,
+      std::shared_ptr<SocketAddress> addr = std::make_shared<SocketAddress>());
+
+  void MemoryInfo(MemoryTracker* tracker) const override;
+  SET_MEMORY_INFO_NAME(SocketAddressWrap)
+  SET_SELF_SIZE(SocketAddressWrap)
+
+  TransferMode GetTransferMode() const override {
+    return TransferMode::kCloneable;
+  }
+
+  std::unique_ptr<worker::TransferData> CloneForMessaging() const {
+    return std::make_unique<TransferData>(address_);
+  }
+
+  class TransferData : public worker::TransferData {
+   public:
+    explicit inline TransferData(std::shared_ptr<SocketAddress> addr)
+        : address_(std::move(addr)) {}
+
+    BaseObjectPtr<BaseObject> Deserialize(
+        Environment* env,
+        v8::Local<v8::Context> context,
+        std::unique_ptr<worker::TransferData> self) override;
+
+    void MemoryInfo(node::MemoryTracker* tracker) const override;
+
+    SET_MEMORY_INFO_NAME(SocketAddress::TransferData)
+    SET_SELF_SIZE(TransferData)
+
+   private:
+    std::shared_ptr<SocketAddress> address_;
+  };
+
+  inline const std::shared_ptr<SocketAddress> address() const {
+    return address_;
+  }
+
+ private:
+  std::shared_ptr<SocketAddress> address_;
 };
 
 }  // namespace node

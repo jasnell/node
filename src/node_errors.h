@@ -83,7 +83,7 @@ void OnFatalError(const char* location, const char* message);
   V(ERR_QUIC_FAILURE_SETTING_SNI_CONTEXT, Error)                               \
   V(ERR_QUIC_ENDPOINT_INITIAL_PACKET_FAILURE, Error)                           \
   V(ERR_QUIC_ENDPOINT_SEND_FAILURE, Error)                                     \
-  V(ERR_QUIC_INVALID_ADDRESS, Error)                                           \
+  V(ERR_INVALID_ADDRESS, Error)                                                \
   V(ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR, Error)
 
 #define V(code, type)                                                         \
@@ -168,7 +168,7 @@ void OnFatalError(const char* location, const char* message);
   V(ERR_QUIC_ENDPOINT_INITIAL_PACKET_FAILURE,                                  \
     "Failure to process initial QUIC packet")                                  \
   V(ERR_QUIC_ENDPOINT_SEND_FAILURE, "Failure to send QUIC packet")             \
-  V(ERR_QUIC_INVALID_ADDRESS, "Invalid socket address")                        \
+  V(ERR_INVALID_ADDRESS, "Invalid socket address")                             \
   V(ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR, "Unspecified QUIC internal error")
 
 #define V(code, message)                                                     \

@@ -110,7 +110,6 @@ const util = require('util');
     'Address: IPv4 1.1.1.1'
   ];
   assert.deepStrictEqual(blockList.rules, rulesCheck);
-  console.log(blockList);
 
   assert(blockList.check('1.1.1.1'));
   assert(blockList.check('10.0.0.5'));
@@ -165,7 +164,7 @@ const util = require('util');
   const blockList = new BlockList();
   assert.throws(() => blockList.check(1), /ERR_INVALID_ARG_TYPE/);
   assert.throws(() => blockList.check('', 1), /ERR_INVALID_ARG_TYPE/);
-  assert.throws(() => blockList.check('', ''), /ERR_INVALID_ARG_VALUE/);
+  assert(!blockList.check('', ''));
 }
 
 {
@@ -178,4 +177,12 @@ const util = require('util');
   const blockList = new BlockList();
   const ret = util.inspect(blockList, { depth: null });
   assert(ret.includes('rules: []'));
+}
+
+{
+  const b1 = new BlockList();
+  const b2 = new BlockList(b1);
+  b1.addAddress('123.123.123.123');
+  assert(b2.check('123.123.123.123'));
+  assert.deepStrictEqual(b1.rules, b2.rules);
 }
