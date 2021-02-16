@@ -366,9 +366,7 @@ class Endpoint final : public MemoryRetainer,
     static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
         Environment* env);
 
-    static BaseObjectPtr<UDP> Create(
-        Environment* env,
-        Endpoint* endpoint);
+    static UDP* Create(Environment* env, Endpoint* endpoint);
 
     UDP(Environment* env,
         v8::Local<v8::Object> object,
@@ -455,7 +453,7 @@ class Endpoint final : public MemoryRetainer,
    private:
     static void CleanupHook(void* data);
     Environment* env_;
-    BaseObjectPtr<UDP> udp_;
+    UDP* udp_;
   };
 
   // The InitialPacketListener is an interface implemented by EndpointWrap
@@ -711,6 +709,8 @@ class Endpoint final : public MemoryRetainer,
   AsyncSignalHandle outbound_signal_;
   size_t pending_outbound_ = 0;
 
+  size_t ref_count_ = 0;
+
   uint8_t token_secret_[kTokenSecretLen];
   ngtcp2_crypto_aead token_aead_;
   ngtcp2_crypto_md token_md_;
@@ -819,6 +819,8 @@ class EndpointWrap final : public AsyncWrap,
       const v8::FunctionCallbackInfo<v8::Value>& args);
   static void LocalAddress(
       const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void Ref(const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void Unref(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   EndpointWrap(
       Environment* env,

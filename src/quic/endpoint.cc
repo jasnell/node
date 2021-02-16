@@ -973,6 +973,7 @@ void Endpoint::ProcessSendFailure(int status) {
 }
 
 void Endpoint::Ref() {
+  ref_count_++;
   udp_.Ref();
 }
 
@@ -1133,7 +1134,10 @@ void Endpoint::MaybeStopReceiving() {
 }
 
 void Endpoint::Unref() {
-  udp_.Unref();
+  ref_count_--;
+
+  // Only Unref if the ref_count_ actually falls below
+  if (!ref_count_) udp_.Unref();
 }
 
 bool Endpoint::is_diagnostic_packet_loss(double prob) const {
@@ -1198,17 +1202,17 @@ Local<FunctionTemplate> Endpoint::UDP::GetConstructorTemplate(
   return tmpl;
 }
 
-BaseObjectPtr<Endpoint::UDP> Endpoint::UDP::Create(
+Endpoint::UDP* Endpoint::UDP::Create(
     Environment* env,
     Endpoint* endpoint) {
   Local<Object> obj;
   if (UNLIKELY(!GetConstructorTemplate(env)
           ->InstanceTemplate()
           ->NewInstance(env->context()).ToLocal(&obj))) {
-    return BaseObjectPtr<Endpoint::UDP>();
+    return nullptr;
   }
 
-  return MakeDetachedBaseObject<Endpoint::UDP>(env, obj, endpoint);
+  return new Endpoint::UDP(env, obj, endpoint);
 }
 
 Endpoint::UDP::UDP(
@@ -1357,16 +1361,16 @@ Endpoint::UDPHandle::UDPHandle(
     Endpoint* endpoint)
     : env_(env),
       udp_(Endpoint::UDP::Create(env, endpoint)) {
-  CHECK(udp_);
+  CHECK_NOT_NULL(udp_);
   env->AddCleanupHook(CleanupHook, this);
 }
 
 void Endpoint::UDPHandle::Close() {
-  if (udp_) {
+  if (udp_ != nullptr) {
     env_->RemoveCleanupHook(CleanupHook, this);
     udp_->Close();
   }
-  udp_.reset();
+  udp_ = nullptr;
 }
 
 void Endpoint::UDPHandle::MemoryInfo(MemoryTracker* tracker) const {
@@ -1398,7 +1402,7 @@ Local<FunctionTemplate> EndpointWrap::GetConstructorTemplate(
         StartListen);
     env->SetProtoMethod(
         tmpl,
-        "waitingForPendingCallbacks",
+        "waitForPendingCallbacks",
         StartWaitForPendingCallbacks);
     env->SetProtoMethod(
         tmpl,
@@ -1408,6 +1412,8 @@ Local<FunctionTemplate> EndpointWrap::GetConstructorTemplate(
         tmpl,
         "address",
         LocalAddress);
+    env->SetProtoMethod(tmpl, "ref", Ref);
+    env->SetProtoMethod(tmpl, "unref", Unref);
     state->set_endpoint_constructor_template(env, tmpl);
   }
   return tmpl;
@@ -1509,6 +1515,20 @@ void EndpointWrap::LocalAddress(const FunctionCallbackInfo<Value>& args) {
       addr = SocketAddressWrap::Create(env, address);
     if (addr)
       args.GetReturnValue().Set(addr->object());
+}
+
+void EndpointWrap::Ref(const FunctionCallbackInfo<Value>& args) {
+  EndpointWrap* wrap;
+  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+  Endpoint::Lock lock(wrap->inner_);
+  wrap->inner_->Ref();
+}
+
+void EndpointWrap::Unref(const FunctionCallbackInfo<Value>& args) {
+  EndpointWrap* wrap;
+  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+  Endpoint::Lock lock(wrap->inner_);
+  wrap->inner_->Unref();
 }
 
 BaseObjectPtr<EndpointWrap> EndpointWrap::Create(
