@@ -104,7 +104,6 @@ class Session;
 
 using StreamsMap = std::unordered_map<stream_id, BaseObjectPtr<Stream>>;
 
-using ConnectionIDStrategy = void(*)(Session*, ngtcp2_cid*, size_t);
 using PreferredAddressStrategy = void(*)(Session*, const PreferredAddress&);
 using ConnectionCloseFn =
     ssize_t(*)(
@@ -177,13 +176,6 @@ class Session final : public AsyncWrap,
   static void UsePreferredAddressStrategy(
       Session* session,
       const PreferredAddress& preferred_address);
-
-  // Generates new Connection ID's using the cryptographic
-  // pseudo-random number generator.
-  static void RandomConnectionIDStrategy(
-      Session* session,
-      ngtcp2_cid* cid,
-      size_t cidlen);
 
   // A utility that wraps the configuration settings for the
   // Session and the underlying ngtcp2_conn. This struct is

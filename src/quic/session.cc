@@ -858,21 +858,6 @@ void Session::UsePreferredAddressStrategy(
     session->UsePreferredAddress(address);
 }
 
-// Generates a new random connection ID.
-void Session::RandomConnectionIDStrategy(
-    Session* session,
-    ngtcp2_cid* cid,
-    size_t cidlen) {
-  // CID min and max length is determined by the QUIC specification.
-  CHECK_LE(cidlen, NGTCP2_MAX_CIDLEN);
-  CHECK_GE(cidlen, NGTCP2_MIN_CIDLEN);
-  cid->datalen = cidlen;
-  // cidlen shouldn't ever be zero here but just in case that
-  // behavior changes in ngtcp2 in the future...
-  if (LIKELY(cidlen > 0))
-    crypto::EntropySource(cid->data, cidlen);
-}
-
 bool Session::HasInstance(Environment* env, v8::Local<v8::Value> value) {
   return GetConstructorTemplate(env)->HasInstance(value);
 }
