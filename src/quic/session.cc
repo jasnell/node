@@ -247,11 +247,11 @@ void Session::TransportParams::GenerateStatelessResetToken(
 }
 
 void Session::TransportParams::GeneratePreferredAddressToken(
-    ConnectionIDStrategy connection_id_strategy,
+    RoutableConnectionIDStrategy* connection_id_strategy,
     Session* session,
     CID* pscid) {
   CHECK(pscid);
-  connection_id_strategy(session, pscid->cid(), NGTCP2_MAX_CIDLEN);
+  connection_id_strategy->NewConnectionID(pscid);
   preferred_address.cid = **pscid;
   StatelessResetToken(
     preferred_address.stateless_reset_token,
@@ -1007,10 +1007,11 @@ Session::Session(
       retransmit_(endpoint->env(), [this]() { OnRetransmitTimeout(); }),
       dcid_(dcid),
       max_pkt_len_(get_max_pkt_len(remote_addr)),
+      cid_strategy_(options.cid_strategy->NewInstance(this)),
       preferred_address_strategy_(options.preferred_address_strategy) {
   MakeWeak();
 
-  connection_id_strategy_(this, scid_.cid(), NGTCP2_MAX_CIDLEN);
+  cid_strategy_->NewConnectionID(&scid_);
   ExtendMaxStreamsBidi(DEFAULT_MAX_STREAMS_BIDI);
   ExtendMaxStreamsUni(DEFAULT_MAX_STREAMS_UNI);
 
@@ -1059,7 +1060,9 @@ Session::Session(
   transport_params.GenerateStatelessResetToken(endpoint, scid_);
   if (transport_params.preferred_address_present) {
     transport_params.GeneratePreferredAddressToken(
-        connection_id_strategy_, this, &pscid_);
+        cid_strategy_.get(),
+        this,
+        &pscid_);
   }
 
   Path path(local_addr, remote_addr);
@@ -1097,7 +1100,7 @@ Session::Session(
   if (options.dcid) {
     dcid = options.dcid;
   } else {
-    connection_id_strategy_(this, dcid.cid(), NGTCP2_MAX_CIDLEN);
+    cid_strategy_->NewConnectionID(&dcid);
   }
   CHECK(dcid);
 
@@ -1517,8 +1520,8 @@ void Session::GetNewConnectionID(
     ngtcp2_cid* cid,
     uint8_t* token,
     size_t cidlen) {
-  CHECK_NOT_NULL(connection_id_strategy_);
-  connection_id_strategy_(this, cid, cidlen);
+  CHECK(cid_strategy_);
+  cid_strategy_->NewConnectionID(cid, cidlen);
   CID cid_(cid);
   StatelessResetToken(
       token,
@@ -3433,6 +3436,16 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
   OptionsObject* options = new OptionsObject(env, args.This());
   options->data()->alpn = *alpn;
   options->data()->context.reset(context);
+
+  // Add support for the other strategies once implemented
+  if (RandomConnectionIDBase::HasInstance(env, args[5])) {
+    RandomConnectionIDBase* cid_strategy;
+    ASSIGN_OR_RETURN_UNWRAP(&cid_strategy, args[5]);
+    options->data()->cid_strategy = cid_strategy->strategy();
+    options->data()->cid_strategy_strong_ref.reset(cid_strategy);
+  } else {
+    UNREACHABLE();
+  }
 
   if (!args[2]->IsUndefined()) {
     Utf8Value hostname(env->isolate(), args[2]);

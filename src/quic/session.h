@@ -229,6 +229,9 @@ class Session final : public AsyncWrap,
     // for this Session.
     BaseObjectPtr<crypto::SecureContext> context;
 
+    RoutableConnectionIDConfig* cid_strategy;
+    BaseObjectPtr<BaseObject> cid_strategy_strong_ref;
+
     CID dcid {};
 
     PreferredAddressStrategy preferred_address_strategy =
@@ -352,7 +355,7 @@ class Session final : public AsyncWrap,
     void SetPreferredAddress(const std::shared_ptr<SocketAddress>& address);
     void GenerateStatelessResetToken(EndpointWrap* endpoint, const CID& cid);
     void GeneratePreferredAddressToken(
-        ConnectionIDStrategy connection_id_strategy,
+        RoutableConnectionIDStrategy* connection_id_strategy,
         Session* session,
         CID* pscid);
   };
@@ -1317,7 +1320,7 @@ class Session final : public AsyncWrap,
   size_t connection_close_attempts_ = 0;
   size_t connection_close_limit_ = 1;
 
-  ConnectionIDStrategy connection_id_strategy_ = RandomConnectionIDStrategy;
+  std::unique_ptr<RoutableConnectionIDStrategy> cid_strategy_;
   PreferredAddressStrategy preferred_address_strategy_ = nullptr;
   BaseObjectPtr<QLogStream> qlogstream_;
 

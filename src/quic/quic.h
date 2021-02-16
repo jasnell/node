@@ -3,7 +3,7 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 #ifndef OPENSSL_NO_QUIC
 
-#include "base_object-inl.h"
+#include "base_object.h"
 #include "env.h"
 #include "memory_tracker.h"
 #include "node_mem.h"
@@ -38,6 +38,8 @@ constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 constexpr size_t kDefaultMaxPacketLength =
     std::max<size_t>(NGTCP2_MAX_PKTLEN_IPV4, NGTCP2_MAX_PKTLEN_IPV6);
 constexpr size_t kTokenSecretLen = 16;
+constexpr size_t kMaxDynamicServerIDLength = 7;
+constexpr size_t kMinDynamicServerIDLength = 1;
 
 constexpr uint64_t DEFAULT_ACTIVE_CONNECTION_ID_LIMIT = 2;
 constexpr uint64_t DEFAULT_MAX_STREAM_DATA_BIDI_LOCAL = 256 * 1024;
@@ -81,6 +83,7 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(endpoint)                                                                  \
   V(endpoint_config)                                                           \
   V(qlogstream)                                                                \
+  V(random_connection_id_strategy)                                             \
   V(send_wrap)                                                                 \
   V(session)                                                                   \
   V(session_options)                                                           \
@@ -153,7 +156,10 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(disable_stateless_reset, "disableStatelessReset")                          \
   V(rx_packet_loss, "rxPacketLoss")                                            \
   V(tx_packet_loss, "txPacketLoss")                                            \
-  V(cc_algorithm, "ccAlgorithm")
+  V(cc_algorithm, "ccAlgorithm")                                               \
+  V(udp_receive_buffer_size, "receiveBufferSize")                              \
+  V(udp_send_buffer_size, "sendBufferSize")                                    \
+  V(udp_ttl, "ttl")
 
 // If users do happen to get ahold of the prototype constructor for certain
 // objects, we want to make sure they are unable to new up new instances.
@@ -656,6 +662,204 @@ class PreferredAddress final {
   mutable ngtcp2_addr* dest_;
   const ngtcp2_preferred_addr* paddr_;
 };
+
+class RoutableConnectionIDStrategy {
+ public:
+  virtual void NewConnectionID(
+      ngtcp2_cid* cid,
+      size_t length_hint = NGTCP2_MAX_CIDLEN) = 0;
+  void NewConnectionID(
+      CID* cid,
+      size_t length_hint = NGTCP2_MAX_CIDLEN) {
+    NewConnectionID(cid->cid(), length_hint);
+  }
+  virtual void UpdateCIDState(const CID& cid) = 0;
+};
+
+template <typename Traits>
+class RoutableConnectionIDStrategyImpl final
+    : public RoutableConnectionIDStrategy,
+      public MemoryRetainer {
+ public:
+  using Options = typename Traits::Options;
+  using State = typename Traits::State;
+  RoutableConnectionIDStrategyImpl(
+      Session* session,
+      const Options& options)
+      : session_(session),
+        options_(options) {}
+
+  void NewConnectionID(
+      ngtcp2_cid* cid,
+      size_t length_hint = NGTCP2_MAX_CIDLEN) override {
+    Traits::NewConnectionID(
+        options_,
+        &state_,
+        session_,
+        cid,
+        length_hint);
+  }
+
+  void UpdateCIDState(const CID& cid) override {
+    Traits::UpdateCIDState(options_, &state_, session_, cid);
+  }
+
+  const Options& options() const { return options_; }
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(RoutableConnectionIDStrategy)
+  SET_SELF_SIZE(RoutableConnectionIDStrategyImpl<Traits>)
+
+ private:
+  Session* session_;
+  const Options options_;
+  State state_;
+};
+
+class RoutableConnectionIDConfig {
+ public:
+  virtual std::unique_ptr<RoutableConnectionIDStrategy> NewInstance(
+      Session* session) = 0;
+};
+
+template <typename Traits>
+class RoutableConnectionIDConfigImpl final
+    : public RoutableConnectionIDConfig,
+      public MemoryRetainer {
+ public:
+  using Options = typename Traits::Options;
+
+  std::unique_ptr<RoutableConnectionIDStrategy> NewInstance(
+      Session* session) override {
+    return std::make_unique<RoutableConnectionIDStrategyImpl<Traits>>(
+        session, options());
+  }
+
+  Options& operator*() { return options_; }
+  Options* operator->() { return &options_; }
+  const Options& options() const { return options_; }
+
+  SET_NO_MEMORY_INFO()
+  SET_MEMORY_INFO_NAME(RoutableConnectionIDConfig)
+  SET_SELF_SIZE(RoutableConnectionIDConfigImpl<Traits>)
+
+ private:
+  Options options_;
+};
+
+struct RandomConnectionIDTraits final {
+  struct Options {};
+  struct State {};
+
+  static void NewConnectionID(
+      const Options& options,
+      State* state,
+      Session* session,
+      ngtcp2_cid* cid,
+      size_t length_hint);
+
+  static void UpdateCIDState(
+      const Options& options,
+      State* state,
+      Session* session,
+      const CID& cid) {}
+
+  static constexpr const char* name = "RandomConnectionIDStrategy";
+
+  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
+};
+
+template <typename Traits>
+class RoutableConnectionIDStrategyBase final : public BaseObject {
+ public:
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env) {
+    return Traits::GetConstructorTemplate(env);
+  }
+
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value) {
+    return GetConstructorTemplate(env)->HasInstance(value);
+  }
+
+  static void Initialize(Environment* env, v8::Local<v8::Object> target) {
+    env->SetConstructorFunction(
+        target,
+        Traits::name,
+        GetConstructorTemplate(env));
+  }
+
+  RoutableConnectionIDStrategyBase(
+      Environment* env,
+      v8::Local<v8::Object> object,
+      std::shared_ptr<RoutableConnectionIDConfigImpl<Traits>> strategy =
+          std::make_shared<RoutableConnectionIDConfigImpl<Traits>>())
+      : BaseObject(env, object),
+        strategy_(std::move(strategy)) {
+    MakeWeak();
+  }
+
+  RoutableConnectionIDConfig* strategy() const {
+    return strategy_.get();
+  }
+
+  void MemoryInfo(MemoryTracker* tracker) const override {
+    tracker->TrackField("strategy", strategy_);
+  }
+
+  SET_MEMORY_INFO_NAME(RoutableConnectionIDStrategyBase)
+  SET_SELF_SIZE(RoutableConnectionIDStrategyBase<Traits>)
+
+  class TransferData final : public worker::TransferData {
+   public:
+     TransferData(
+         std::shared_ptr<RoutableConnectionIDConfigImpl<Traits>> strategy)
+         : strategy_(strategy) {}
+
+      BaseObjectPtr<BaseObject> Deserialize(
+          Environment* env,
+          v8::Local<v8::Context> context,
+          std::unique_ptr<worker::TransferData> self) {
+        v8::Local<v8::Object> obj;
+        if (!GetConstructorTemplate(env)
+                ->InstanceTemplate()
+                ->NewInstance(context).ToLocal(&obj)) {
+          return BaseObjectPtr<BaseObject>();
+        }
+        return MakeBaseObject<RoutableConnectionIDStrategyBase<Traits>>(
+            env, obj, std::move(strategy_));
+      }
+
+      void MemoryInfo(MemoryTracker* tracker) const override {
+        tracker->TrackField("strategy", strategy_);
+      }
+
+      SET_MEMORY_INFO_NAME(RoutableConnectionIDStrategyBase::TransferData)
+      SET_SELF_SIZE(TransferData)
+
+   private:
+     std::shared_ptr<RoutableConnectionIDConfigImpl<Traits>> strategy_;
+  };
+
+  TransferMode GetTransferMode() const override {
+    return TransferMode::kCloneable;
+  }
+
+  std::unique_ptr<worker::TransferData> CloneForMessaging() const override {
+    return std::make_unique<TransferData>(strategy_);
+  }
+
+ private:
+  std::shared_ptr<RoutableConnectionIDConfigImpl<Traits>> strategy_;
+};
+
+using RandomConnectionIDBase =
+    RoutableConnectionIDStrategyBase<RandomConnectionIDTraits>;
+
+using RandomConnectionIDConfig =
+    RoutableConnectionIDConfigImpl<RandomConnectionIDTraits>;
 
 // A Stateless Reset Token is a mechanism by which a QUIC
 // endpoint can discreetly signal to a peer that it has

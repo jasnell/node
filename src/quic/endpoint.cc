@@ -42,6 +42,7 @@ using v8::Number;
 using v8::Object;
 using v8::PropertyAttribute;
 using v8::String;
+using v8::Uint32;
 using v8::Value;
 
 namespace quic {
@@ -184,6 +185,43 @@ Maybe<bool> ConfigObject::SetOption(
 Maybe<bool> ConfigObject::SetOption(
     Local<Object> object,
     Local<String> name,
+    uint32_t Endpoint::Config::*member) {
+  Local<Value> value;
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK(value->IsUint32());
+
+  uint32_t val = value.As<Uint32>()->Value();
+  config_.get()->*member = val;
+  return Just(true);
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    uint8_t Endpoint::Config::*member) {
+  Local<Value> value;
+  if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK(value->IsUint32());
+
+  uint32_t val = value.As<Uint32>()->Value();
+  if (val > 255) return Just(false);
+  config_.get()->*member = static_cast<uint8_t>(val);
+  return Just(true);
+}
+
+Maybe<bool> ConfigObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
     double Endpoint::Config::*member) {
   Local<Value> value;
   if (UNLIKELY(!object->Get(env()->context(), name).ToLocal(&value)))
@@ -320,7 +358,19 @@ void ConfigObject::New(const FunctionCallbackInfo<Value>& args) {
         config->SetOption(
             object,
             state->ipv6_only_string(env),
-            &Endpoint::Config::ipv6_only).IsNothing()) {
+            &Endpoint::Config::ipv6_only).IsNothing() ||
+        config->SetOption(
+            object,
+            state->udp_receive_buffer_size_string(env),
+            &Endpoint::Config::udp_receive_buffer_size).IsNothing() ||
+        config->SetOption(
+            object,
+            state->udp_send_buffer_size_string(env),
+            &Endpoint::Config::udp_send_buffer_size).IsNothing() ||
+        config->SetOption(
+            object,
+            state->udp_ttl_string(env),
+            &Endpoint::Config::udp_ttl).IsNothing()) {
       // The if block intentionally does nothing. The code is structured
       // like this to shortcircuit if any of the SetOptions() returns Nothing.
     }
@@ -705,11 +755,7 @@ void Endpoint::AssociateStatelessResetToken(
 int Endpoint::MaybeBind() {
   if (bound_) return 0;
   bound_ = true;
-
-  return udp_.Bind(
-      config_.local_address,
-      config_.local_address->family() == AF_INET6 && config_.ipv6_only
-          ? UV_UDP_IPV6ONLY : 0);
+  return udp_.Bind(config_);
 }
 
 bool Endpoint::MaybeStatelessReset(
@@ -1183,9 +1229,41 @@ SocketAddress Endpoint::UDP::local_address() const {
   return SocketAddress::FromSockName(handle_);
 }
 
-int Endpoint::UDP::Bind(
-    const std::shared_ptr<SocketAddress>& address, int flags) {
-  return uv_udp_bind(&handle_, address->data(), flags);
+int Endpoint::UDP::Bind(const Endpoint::Config& config) {
+  int flags = 0;
+  if (config.local_address->family() == AF_INET6 && config.ipv6_only)
+    flags |= UV_UDP_IPV6ONLY;
+
+  int err = uv_udp_bind(
+      &handle_,
+      config.local_address->data(), flags);
+  int size;
+
+  if (!err) {
+    size = static_cast<int>(config.udp_receive_buffer_size);
+    if (size > 0) {
+      err = uv_recv_buffer_size(
+          reinterpret_cast<uv_handle_t*>(&handle_),
+          &size);
+      if (err) return err;
+    }
+
+    size = static_cast<int>(config.udp_send_buffer_size);
+    if (size > 0) {
+      err = uv_send_buffer_size(
+          reinterpret_cast<uv_handle_t*>(&handle_),
+          &size);
+      if (err) return err;
+    }
+
+    size = static_cast<int>(config.udp_ttl);
+    if (size > 0) {
+      err = uv_udp_set_ttl(&handle_, size);
+      if (err) return err;
+    }
+  }
+
+  return err;
 }
 
 void Endpoint::UDP::Close() {
@@ -1532,10 +1610,6 @@ void EndpointWrap::EndpointClosed(
   close_signal_.Send();
 }
 
-// The underlying endpoint has been closed. Clean everything up and notify.
-// No further packets will be sent at this point. This can happen abruptly
-// so we have to make sure we cycle out through the JavaScript side to free
-// up everything there.
 void EndpointWrap::Close() {
   HandleScope scope(env()->isolate());
   v8::Context::Scope context_scope(env()->context());
@@ -1830,6 +1904,12 @@ bool EndpointWrap::SendRetry(
 }
 
 void EndpointWrap::WaitForPendingCallbacks() {
+  // If this EndpointWrap is listening for incoming initial packets,
+  // unregister the listener now so that the Endpoint does not try
+  // to forward on new initial packets while we're waiting for the
+  // existing writes to clear.
+  inner_->RemoveInitialPacketListener(this);
+
   if (!is_done_waiting_for_callbacks()) {
     OnEndpointDone();
     return;

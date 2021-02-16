@@ -262,6 +262,14 @@ class Endpoint final : public MemoryRetainer,
       // a future iteration.
       uint8_t reset_token_secret[NGTCP2_STATELESS_RESET_TOKENLEN];
 
+      uint32_t udp_receive_buffer_size = 0;
+      uint32_t udp_send_buffer_size = 0;
+
+      // The UDP TTL configuration is the number of network hops a packet
+      // will be forwarded through. The default is 64. The value is in the
+      // range 1 to 255. Setting to 0 uses the default.
+      uint8_t udp_ttl = 0;
+
       Config() = default;
       inline Config(const Config& other)
           : local_address(other.local_address),
@@ -369,7 +377,7 @@ class Endpoint final : public MemoryRetainer,
     UDP(const UDP&) = delete;
     UDP(UDP&&) = delete;
 
-    int Bind(const std::shared_ptr<SocketAddress>& address, int flags);
+    int Bind(const Endpoint::Config& config);
 
     void Ref();
     void Unref();
@@ -417,8 +425,8 @@ class Endpoint final : public MemoryRetainer,
 
     inline ~UDPHandle() { Close(); }
 
-    inline int Bind(const std::shared_ptr<SocketAddress>& address, int flags) {
-      return udp_->Bind(address, flags);
+    inline int Bind(const Endpoint::Config& config) {
+      return udp_->Bind(config);
     }
 
     inline void Ref() { if (udp_) udp_->Ref(); }
@@ -993,6 +1001,10 @@ class EndpointWrap final : public AsyncWrap,
   std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
 
  private:
+  // The underlying endpoint has been closed. Clean everything up and notify.
+  // No further packets will be sent at this point. This can happen abruptly
+  // so we have to make sure we cycle out through the JavaScript side to free
+  // up everything there.
    void Close();
 
   // Called after the endpoint has been closed and the final
@@ -1098,6 +1110,16 @@ class ConfigObject : public BaseObject {
       v8::Local<v8::Object> object,
       v8::Local<v8::String> name,
       uint64_t Endpoint::Config::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      uint32_t Endpoint::Config::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      uint8_t Endpoint::Config::*member);
 
   v8::Maybe<bool> SetOption(
       v8::Local<v8::Object> object,

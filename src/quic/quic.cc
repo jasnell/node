@@ -223,6 +223,43 @@ StatelessResetToken::StatelessResetToken(
   GenerateResetToken(buf_, secret, cid);
 }
 
+void RandomConnectionIDTraits::NewConnectionID(
+  const Options& options,
+  State* state,
+  Session* session,
+  ngtcp2_cid* cid,
+  size_t length_hint) {
+  CHECK_NOT_NULL(cid);
+  crypto::EntropySource(
+      reinterpret_cast<unsigned char*>(cid->data),
+      length_hint);
+  cid->data[0] |= 0xc0;
+  cid->datalen = length_hint;
+}
+
+void RandomConnectionIDTraits::New(
+    const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+  new RandomConnectionIDBase(env, args.This());
+}
+
+Local<FunctionTemplate> RandomConnectionIDTraits::GetConstructorTemplate(
+    Environment* env) {
+  BindingState* state = env->GetBindingData<BindingState>(env->context());
+  Local<FunctionTemplate> tmpl =
+      state->random_connection_id_strategy_constructor_template(env);
+  if (tmpl.IsEmpty()) {
+    tmpl = env->NewFunctionTemplate(New);
+    tmpl->SetClassName(OneByteString(env->isolate(), name));
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        BaseObject::kInternalFieldCount);
+    state->set_random_connection_id_strategy_constructor_template(env, tmpl);
+  }
+  return tmpl;
+}
+
 namespace {
 void InitializeCallbacks(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
@@ -238,7 +275,7 @@ void InitializeCallbacks(const FunctionCallbackInfo<Value>& args) {
             env->context(),                                                    \
             FIXED_ONE_BYTE_STRING(env->isolate(), #key)).ToLocal(&val) ||      \
         !val->IsFunction()) {                                                  \
-      return THROW_ERR_MISSING_ARGS(                                           \
+      return THROW_ERR_MISSING_ARGS(                                             \
           env->isolate(),                                                      \
           "Missing Callback: " # key);                                         \
     }                                                                          \
@@ -266,6 +303,7 @@ void Initialize(Local<Object> target,
   EndpointWrap::Initialize(env, target);
   Session::Initialize(env, target);
   Stream::Initialize(env);
+  RandomConnectionIDBase::Initialize(env, target);
 
   constexpr uint32_t NGTCP2_PREFERRED_ADDRESS_USE =
       static_cast<uint32_t>(PreferredAddress::Policy::USE);
