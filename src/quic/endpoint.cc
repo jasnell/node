@@ -431,7 +431,7 @@ BaseObjectPtr<BaseObject> ConfigObject::TransferData::Deserialize(
     return BaseObjectPtr<BaseObject>();
   }
 
-  return MakeDetachedBaseObject<ConfigObject>(env, obj, std::move(config_));
+  return MakeBaseObject<ConfigObject>(env, obj, std::move(config_));
 }
 
 Local<FunctionTemplate> Endpoint::SendWrap::GetConstructorTemplate(
@@ -462,7 +462,7 @@ BaseObjectPtr<Endpoint::SendWrap> Endpoint::SendWrap::Create(
     return BaseObjectPtr<SendWrap>();
   }
 
-  return MakeDetachedBaseObject<SendWrap>(
+  return MakeBaseObject<SendWrap>(
       env,
       obj,
       destination,
@@ -524,6 +524,7 @@ Endpoint::~Endpoint() {
   CHECK(outbound_.empty());
   CHECK(listeners_.empty());
   outbound_signal_.Close();
+  env()->RemoveCleanupHook(OnCleanup, this);
 }
 
 void Endpoint::OnCleanup(void* data) {
@@ -551,7 +552,6 @@ void Endpoint::RemoveCloseListener(CloseListener* listener) {
 
 void Endpoint::Close(CloseListener::Context context, int status) {
   Lock lock(this);
-  env()->RemoveCleanupHook(OnCleanup, this);
   RecordTimestamp(&EndpointStats::destroyed_at);
 
   udp_.Close();
@@ -1586,13 +1586,6 @@ EndpointWrap::EndpointWrap(
 
   Endpoint::Lock lock(inner_);
   inner_->AddCloseListener(this);
-
-  // TODO(@jasnell): Re-enable
-  // object->DefineOwnProperty(
-  //     env->context(),
-  //     env->block_list_string(),
-  //     block_list_->object(),
-  //     PropertyAttribute::ReadOnly).Check();
 
   object->DefineOwnProperty(
       env->context(),
