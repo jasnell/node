@@ -551,7 +551,6 @@ void Endpoint::RemoveCloseListener(CloseListener* listener) {
 }
 
 void Endpoint::Close(CloseListener::Context context, int status) {
-  Lock lock(this);
   RecordTimestamp(&EndpointStats::destroyed_at);
 
   udp_.Close();
