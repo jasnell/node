@@ -407,33 +407,6 @@ void ConfigObject::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("config", config_);
 }
 
-ConfigObject::TransferData::TransferData(
-    std::shared_ptr<Endpoint::Config> config)
-    : config_(std::move(config)) {}
-
-std::unique_ptr<worker::TransferData>
-ConfigObject::CloneForMessaging() const {
-  return std::make_unique<ConfigObject::TransferData>(config_);
-}
-
-void ConfigObject::TransferData::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("config", config_);
-}
-
-BaseObjectPtr<BaseObject> ConfigObject::TransferData::Deserialize(
-    Environment* env,
-    v8::Local<v8::Context> context,
-    std::unique_ptr<worker::TransferData> self) {
-  Local<Object> obj;
-  if (UNLIKELY(!ConfigObject::GetConstructorTemplate(env)
-          ->InstanceTemplate()
-          ->NewInstance(context).ToLocal(&obj))) {
-    return BaseObjectPtr<BaseObject>();
-  }
-
-  return MakeBaseObject<ConfigObject>(env, obj, std::move(config_));
-}
-
 Local<FunctionTemplate> Endpoint::SendWrap::GetConstructorTemplate(
     Environment* env) {
   BindingState* state = env->GetBindingData<BindingState>(env->context());
@@ -1439,21 +1412,14 @@ void EndpointWrap::CreateClientSession(
   EndpointWrap* endpoint;
   ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
 
-  CHECK(args[0]->IsInt32());  // Address family
-  CHECK(args[1]->IsString());  // Address
-  CHECK(args[2]->IsInt32());  // Port
-  CHECK(OptionsObject::HasInstance(env, args[3]));
+  CHECK(SocketAddressWrap::HasInstance(env, args[0]));
+  CHECK(OptionsObject::HasInstance(env, args[1]));
 
-  uint32_t family = args[0].As<Int32>()->Value();
-  uint32_t port = args[2].As<Int32>()->Value();
-  Utf8Value address(env->isolate(), args[1]);
-
-  SocketAddress remote_address;
-  if (!SocketAddress::New(family, *address, port, &remote_address))
-    return THROW_ERR_INVALID_ADDRESS(env);
-
+  SocketAddressWrap* address;
   OptionsObject* options;
-  ASSIGN_OR_RETURN_UNWRAP(&options, args[3]);
+
+  ASSIGN_OR_RETURN_UNWRAP(&address, args[0]);
+  ASSIGN_OR_RETURN_UNWRAP(&options, args[1]);
 
   Session::Config config(
     endpoint->inner_.get(),
@@ -1463,7 +1429,7 @@ void EndpointWrap::CreateClientSession(
       Session::CreateClient(
           endpoint,
           endpoint->local_address(),
-          remote_address,
+          *address->address().get(),
           config,
           options->options());
 

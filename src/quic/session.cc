@@ -931,7 +931,7 @@ BaseObjectPtr<Session> Session::CreateClient(
     return BaseObjectPtr<Session>();
   }
 
-  return MakeDetachedBaseObject<Session>(
+  return MakeBaseObject<Session>(
       endpoint,
       obj,
       local_addr,
@@ -3635,20 +3635,6 @@ void OptionsObject::SetSessionResume(const FunctionCallbackInfo<Value>& args) {
   // TODO(@jasnell): Implement
 }
 
-BaseObjectPtr<BaseObject> OptionsObject::TransferData::Deserialize(
-    Environment* env,
-    Local<Context> context,
-    std::unique_ptr<worker::TransferData> self) {
-  Local<Object> obj;
-  if (!OptionsObject::GetConstructorTemplate(env)
-          ->InstanceTemplate()
-          ->NewInstance(context).ToLocal(&obj)) {
-    return BaseObjectPtr<BaseObject>();
-  }
-
-  return MakeDetachedBaseObject<OptionsObject>(env, obj, std::move(options_));
-}
-
 OptionsObject::OptionsObject(
     Environment* env,
     Local<Object> object,
@@ -3665,10 +3651,6 @@ void Session::Options::MemoryInfo(MemoryTracker* tracker) const {
 }
 
 void OptionsObject::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("options", options_);
-}
-
-void OptionsObject::TransferData::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackField("options", options_);
 }
 

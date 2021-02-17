@@ -99,7 +99,7 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(endpoint_close, onEndpointClose)                                           \
   V(endpoint_done, onEndpointDone)                                             \
   V(endpoint_error, onEndpointError)                                           \
-  V(session_new, onSessionReady)                                               \
+  V(session_new, onSessionNew)                                                 \
   V(session_cert, onSessionCert)                                               \
   V(session_client_hello, onSessionClientHello)                                \
   V(session_close, onSessionClose)                                             \

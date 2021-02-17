@@ -1645,32 +1645,6 @@ class OptionsObject : public BaseObject {
   SET_MEMORY_INFO_NAME(OptionsObject)
   SET_SELF_SIZE(OptionsObject)
 
-  class TransferData : public worker::TransferData {
-   public:
-    inline explicit TransferData(std::shared_ptr<Session::Options> options)
-        : options_(std::move(options)) {}
-
-    BaseObjectPtr<BaseObject> Deserialize(
-        Environment* env,
-        v8::Local<v8::Context> context,
-        std::unique_ptr<worker::TransferData> self);
-
-    void MemoryInfo(MemoryTracker* tracker) const override;
-    SET_MEMORY_INFO_NAME(OptionsObject::TransferData)
-    SET_SELF_SIZE(TransferData)
-
-   private:
-    std::shared_ptr<Session::Options> options_;
-  };
-
-  TransferMode GetTransferMode() const override {
-    return TransferMode::kCloneable;
-  }
-
-  std::unique_ptr<worker::TransferData> CloneForMessaging() const override {
-    return std::make_unique<TransferData>(options_);
-  }
-
  private:
   v8::Maybe<bool> SetOption(
       v8::Local<v8::Object> object,

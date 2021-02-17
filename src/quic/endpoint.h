@@ -1084,29 +1084,6 @@ class ConfigObject : public BaseObject {
   SET_MEMORY_INFO_NAME(ConfigObject)
   SET_SELF_SIZE(ConfigObject)
 
-  class TransferData : public worker::TransferData {
-   public:
-    explicit TransferData(std::shared_ptr<Endpoint::Config> config);
-
-    BaseObjectPtr<BaseObject> Deserialize(
-        Environment* env,
-        v8::Local<v8::Context> context,
-        std::unique_ptr<worker::TransferData> self);
-
-    void MemoryInfo(MemoryTracker* tracker) const override;
-    SET_MEMORY_INFO_NAME(ConfigObject::TransferData)
-    SET_SELF_SIZE(TransferData)
-
-   private:
-    std::shared_ptr<Endpoint::Config> config_;
-  };
-
-  TransferMode GetTransferMode() const override {
-    return TransferMode::kCloneable;
-  }
-
-  std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
-
  private:
   v8::Maybe<bool> SetOption(
       v8::Local<v8::Object> object,
