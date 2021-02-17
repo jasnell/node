@@ -283,26 +283,21 @@ Session::CryptoContext::~CryptoContext() {
 
 void Session::CryptoContext::MaybeSetEarlySession(const Options& options) {
   crypto::SSLSessionPointer ticket(options.early_session_ticket);
-
-  if (session()->is_server() ||
-      options.early_transport_params == nullptr ||
-      !ticket) {
+  if (options.early_transport_params == nullptr || !ticket)
     return;
-  }
 
   early_data_ =
       SSL_SESSION_get_max_early_data(ticket.get()) == 0xffffffffUL;
 
-  if (!early_data())
-    return;
+  if (LIKELY(early_data())) {
+    ngtcp2_conn_set_early_remote_transport_params(
+        session()->connection(),
+        options.early_transport_params);
 
-  ngtcp2_conn_set_early_remote_transport_params(
-      session()->connection(),
-      options.early_transport_params);
-
-  // We don't care about the return value here. The early
-  // data will just be ignored if it's invalid.
-  USE(crypto::SetTLSSession(ssl_, ticket));
+    // We don't care about the return value here. The early
+    // data will just be ignored if it's invalid.
+    USE(crypto::SetTLSSession(ssl_, ticket));
+  }
 }
 
 void Session::CryptoContext::AcknowledgeCryptoData(
@@ -995,7 +990,6 @@ Session::Session(
       cid_strategy_(options.cid_strategy->NewInstance(this)),
       preferred_address_strategy_(options.preferred_address_strategy) {
   MakeWeak();
-
   cid_strategy_->NewConnectionID(&scid_);
   ExtendMaxStreamsBidi(DEFAULT_MAX_STREAMS_BIDI);
   ExtendMaxStreamsUni(DEFAULT_MAX_STREAMS_UNI);
@@ -1015,8 +1009,6 @@ Session::Session(
       env()->stats_string(),
       ToBigUint64Array(env()),
       PropertyAttribute::ReadOnly).Check();
-
-  AttachToEndpoint();
 
   idle_.Unref();
   retransmit_.Unref();
@@ -1068,6 +1060,8 @@ Session::Session(
   connection_.reset(conn);
   crypto_context_->Initialize();
 
+  AttachToEndpoint();
+
   UpdateDataStats();
   UpdateIdleTimer();
 }
@@ -1108,6 +1102,8 @@ Session::Session(
   connection_.reset(conn);
 
   crypto_context_->Initialize();
+
+  AttachToEndpoint();
 
   UpdateIdleTimer();
   UpdateDataStats();
