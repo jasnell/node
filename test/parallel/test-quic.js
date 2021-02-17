@@ -19,6 +19,8 @@ const { address, port } = endpoint.address;
 
 console.log(`listening at ${address} on port ${port}`)
 
-endpoint.connect('https://example.org').then(console.log);
+endpoint.connect('https://example.org').then((session) => {
+  console.log(session.open());
+});
 
 setTimeout(() => endpoint.close(), 10000);
