@@ -69,6 +69,7 @@
       'lib/inspector.js',
       'lib/module.js',
       'lib/net.js',
+      'lib/net/quic.js',
       'lib/os.js',
       'lib/path.js',
       'lib/path/posix.js',

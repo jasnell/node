@@ -1623,6 +1623,8 @@ void EndpointWrap::EndpointClosed(
 }
 
 void EndpointWrap::Close() {
+  MakeWeak();
+  state_->listening = 0;
   HandleScope scope(env()->isolate());
   v8::Context::Scope context_scope(env()->context());
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
@@ -1653,6 +1655,7 @@ void EndpointWrap::AddSession(const CID& cid, BaseObjectPtr<Session> session) {
       session->is_server()
           ? &EndpointStats::server_sessions
           : &EndpointStats::client_sessions);
+  ClearWeak();
 }
 
 void EndpointWrap::AssociateCID(const CID& cid, const CID& scid) {
@@ -1737,23 +1740,29 @@ void EndpointWrap::Listen(const Session::Options& options) {
   state_->listening = 1;
   Endpoint::Lock lock(inner_);
   inner_->AddInitialPacketListener(this);
+  // While listening, this shouldn't be weak
+  this->ClearWeak();
 }
 
 void EndpointWrap::OnEndpointDone() {
+  MakeWeak();
   HandleScope scope(env()->isolate());
   v8::Context::Scope context_scope(env()->context());
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
+  BaseObjectPtr<EndpointWrap> ptr(this);
   MakeCallback(state->endpoint_done_callback(env()), 0, nullptr);
 }
 
 void EndpointWrap::OnError(Local<Value> error) {
+  MakeWeak();
   BindingState* state = env()->GetBindingData<BindingState>(env()->context());
   HandleScope scope(env()->isolate());
+  v8::Context::Scope context_scope(env()->context());
 
   if (UNLIKELY(error.IsEmpty()))
     error = ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR(env()->isolate());
 
-  v8::Context::Scope context_scope(env()->context());
+  BaseObjectPtr<EndpointWrap> ptr(this);
   MakeCallback(state->endpoint_error_callback(env()), 1, &error);
 }
 
@@ -1877,6 +1886,8 @@ void EndpointWrap::RemoveSession(const CID& cid, const SocketAddress& addr) {
   Endpoint::Lock lock(inner_);
   inner_->DisassociateCID(cid);
   inner_->DecrementSocketAddressCounter(addr);
+  if (!state_->listening && sessions_.empty())
+    MakeWeak();
 }
 
 void EndpointWrap::SendPacket(
@@ -1921,6 +1932,7 @@ void EndpointWrap::WaitForPendingCallbacks() {
   // to forward on new initial packets while we're waiting for the
   // existing writes to clear.
   inner_->RemoveInitialPacketListener(this);
+  state_->listening = 0;
 
   if (!is_done_waiting_for_callbacks()) {
     OnEndpointDone();
