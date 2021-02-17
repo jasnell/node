@@ -6,21 +6,24 @@ const {
   createEndpoint
 } = require('net/quic');
 
-const endpoint = createEndpoint();
+(async () => {
 
-endpoint.listen({
-  alpn: 'abc',
-  async onSession(session) {
-    console.log(session);
-  },
-});
+  const endpoint = createEndpoint();
 
-const { address, port } = endpoint.address;
+  endpoint.listen({
+    alpn: 'abc',
+    async onSession(session) {
+      console.log(session);
+    },
+  });
 
-console.log(`listening at ${address} on port ${port}`)
+  const { address, port } = endpoint.address;
 
-endpoint.connect('https://example.org').then((session) => {
+  console.log(`listening at ${address} on port ${port}`)
+
+  const session = await endpoint.connect('https://example.org');
   console.log(session.open());
-});
 
-setTimeout(() => endpoint.close(), 10000);
+  setTimeout(() => endpoint.close(), 10000);
+
+})()
