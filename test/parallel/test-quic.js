@@ -21,7 +21,7 @@ const {
 
   console.log(`listening at ${address} on port ${port}`)
 
-  const session = await endpoint.connect('https://example.org');
+  const session = await endpoint.connect(endpoint.address);
   console.log(session.open());
 
   setTimeout(() => endpoint.close(), 10000);

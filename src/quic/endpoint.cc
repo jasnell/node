@@ -630,7 +630,7 @@ bool Endpoint::AcceptInitialPacket(
         break;
       case NGTCP2_PKT_0RTT:
         SendRetry(version, dcid, scid, local_addr, remote_addr);
-        return {};
+        return BaseObjectPtr<Session>();
     }
   }
 
@@ -768,7 +768,6 @@ void Endpoint::OnReceive(
     const uv_buf_t& buf,
     const SocketAddress& remote_address) {
   AllocatedBuffer buffer(env(), buf);
-
   // When diagnostic packet loss is enabled, the packet will be randomly
   // dropped based on the rx_loss probability.
   if (UNLIKELY(is_diagnostic_packet_loss(config_.rx_loss)))
@@ -965,9 +964,9 @@ bool Endpoint::SendPacket(
 void Endpoint::SendPacket(BaseObjectPtr<SendWrap> packet) {
   {
     Lock lock(this);
-    outbound_.emplace_back(std::move(packet));
     IncrementStat(&EndpointStats::bytes_sent, packet->packet()->length());
     IncrementStat(&EndpointStats::packets_sent);
+    outbound_.emplace_back(std::move(packet));
   }
   outbound_signal_.Send();
 }
@@ -1316,6 +1315,10 @@ void Endpoint::UDP::OnReceive(
     udp->endpoint_->ProcessReceiveFailure(static_cast<int>(nread));
     return;
   }
+
+  // Nothing to do it in this case.
+  if (nread == 0) return;
+  CHECK_NOT_NULL(addr);
 
   if (UNLIKELY(flags & UV_UDP_PARTIAL)) {
     udp->endpoint_->ProcessReceiveFailure(UV_ENOBUFS);
@@ -1876,6 +1879,9 @@ void EndpointWrap::SendPacket(
     BaseObjectPtr<Session> session) {
   if (UNLIKELY(packet->length() == 0))
     return;
+
+  // Make certain we're in a handle scope.
+  HandleScope scope(env()->isolate());
 
   Debug(this, "Sending %" PRIu64 " bytes to %s from %s (label: %s)",
         packet->length(),

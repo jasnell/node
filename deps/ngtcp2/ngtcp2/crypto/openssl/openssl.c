@@ -409,7 +409,7 @@ int ngtcp2_crypto_read_write_crypto_data(ngtcp2_conn *conn,
   int rv;
   int err;
 
-  if (SSL_provide_quic_data(
+  if (datalen > 0 && SSL_provide_quic_data(
           ssl, ngtcp2_crypto_openssl_from_ngtcp2_crypto_level(crypto_level),
           data, datalen) != 1) {
     return -1;

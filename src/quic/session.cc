@@ -929,15 +929,18 @@ BaseObjectPtr<Session> Session::CreateClient(
     return BaseObjectPtr<Session>();
   }
 
-  return MakeBaseObject<Session>(
-      endpoint,
-      obj,
-      local_addr,
-      remote_addr,
-      config,
-      options,
-      std::move(context),
-      config.version);
+  BaseObjectPtr<Session> session =
+      MakeBaseObject<Session>(
+          endpoint,
+          obj,
+          local_addr,
+          remote_addr,
+          config,
+          options,
+          std::move(context),
+          config.version);
+  if (session) session->SendPendingData();
+  return session;
 }
 
 // Static function to create a new server QuicSession instance
