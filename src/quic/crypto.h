@@ -32,7 +32,7 @@ class Session;
 // given SecureContext with the defaults for the given
 // QUIC side (client or server).
 void InitializeSecureContext(
-    BaseObjectPtr<crypto::SecureContext> sc,
+    crypto::SecureContext* sc,
     bool early_data,
     ngtcp2_crypto_side side);
 

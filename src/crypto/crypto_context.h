@@ -32,9 +32,14 @@ class SecureContext final : public BaseObject {
   using NewSessionCb = int (*)(SSL*, SSL_SESSION*);
   using SelectSNIContextCb = int (*)(SSL*, int*, void*);
 
+  SecureContext(Environment* env, v8::Local<v8::Object> wrap);
   ~SecureContext() override;
 
+  static bool HasInstance(Environment* env, v8::Local<v8::Value> value);
+  static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
+      Environment* env);
   static void Initialize(Environment* env, v8::Local<v8::Object> target);
+  static SecureContext* Create(Environment* env);
 
   SSL_CTX* operator*() const { return ctx_.get(); }
 
@@ -132,7 +137,6 @@ class SecureContext final : public BaseObject {
                                          HMAC_CTX* hctx,
                                          int enc);
 
-  SecureContext(Environment* env, v8::Local<v8::Object> wrap);
   void Reset();
 };
 

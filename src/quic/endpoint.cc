@@ -1414,12 +1414,15 @@ void EndpointWrap::CreateClientSession(
 
   CHECK(SocketAddressWrap::HasInstance(env, args[0]));
   CHECK(OptionsObject::HasInstance(env, args[1]));
+  CHECK(crypto::SecureContext::HasInstance(env, args[2]));
 
   SocketAddressWrap* address;
   OptionsObject* options;
+  crypto::SecureContext* context;
 
   ASSIGN_OR_RETURN_UNWRAP(&address, args[0]);
   ASSIGN_OR_RETURN_UNWRAP(&options, args[1]);
+  ASSIGN_OR_RETURN_UNWRAP(&context, args[2]);
 
   Session::Config config(
     endpoint->inner_.get(),
@@ -1431,7 +1434,8 @@ void EndpointWrap::CreateClientSession(
           endpoint->local_address(),
           *address->address().get(),
           config,
-          options->options());
+          options->options(),
+          BaseObjectPtr<crypto::SecureContext>(context));
 
   if (!session) {
     return THROW_ERR_QUIC_UNSPECIFIED_INTERNAL_ERROR(
@@ -1460,7 +1464,12 @@ void EndpointWrap::StartListen(const FunctionCallbackInfo<Value>& args) {
   CHECK(OptionsObject::HasInstance(env, args[0]));
   OptionsObject* options;
   ASSIGN_OR_RETURN_UNWRAP(&options, args[0].As<Object>());
-  endpoint->Listen(options->options());
+  CHECK(crypto::SecureContext::HasInstance(env, args[1]));
+  crypto::SecureContext* context;
+  ASSIGN_OR_RETURN_UNWRAP(&context, args[1]);
+  endpoint->Listen(
+      options->options(),
+      BaseObjectPtr<crypto::SecureContext>(context));
 }
 
 void EndpointWrap::StartWaitForPendingCallbacks(
@@ -1698,11 +1707,14 @@ void EndpointWrap::ImmediateConnectionClose(
       reason);
 }
 
-void EndpointWrap::Listen(const Session::Options& options) {
+void EndpointWrap::Listen(
+    const Session::Options& options,
+    BaseObjectPtr<crypto::SecureContext> context) {
   if (state_->listening == 1) return;
-  CHECK(options.context);
+  CHECK(context);
   Debug(this, "Starting to listen");
   server_options_ = options;
+  server_context_ = std::move(context);
   state_->listening = 1;
   Endpoint::Lock lock(inner_);
   inner_->AddInitialPacketListener(this);
@@ -1783,7 +1795,8 @@ void EndpointWrap::ProcessInitial() {
             packet.local_address,
             packet.remote_address,
             packet.config,
-            server_options_);
+            server_options_,
+            server_context_);
 
     if (UNLIKELY(!session))
       return ProcessInitialFailure();

@@ -44,6 +44,7 @@ using v8::Number;
 using v8::Object;
 using v8::PropertyAttribute;
 using v8::String;
+using v8::Uint32;
 using v8::Undefined;
 using v8::Value;
 
@@ -262,9 +263,10 @@ void Session::TransportParams::GeneratePreferredAddressToken(
 Session::CryptoContext::CryptoContext(
     Session* session,
     const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context,
     ngtcp2_crypto_side side) :
     session_(session),
-    secure_context_(options.context),
+    secure_context_(std::move(context)),
     side_(side),
     reject_unauthorized_(options.reject_unauthorized),
     enable_tls_trace_(options.enable_tls_trace),
@@ -917,7 +919,8 @@ BaseObjectPtr<Session> Session::CreateClient(
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Config& config,
-    const Options& options) {
+    const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context) {
   Local<Object> obj;
   Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
   CHECK(!tmpl.IsEmpty());
@@ -933,6 +936,7 @@ BaseObjectPtr<Session> Session::CreateClient(
       remote_addr,
       config,
       options,
+      std::move(context),
       config.version);
 }
 
@@ -942,7 +946,8 @@ BaseObjectPtr<Session> Session::CreateServer(
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Config& config,
-    const Options& options) {
+    const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context) {
   Local<Object> obj;
   Local<FunctionTemplate> tmpl = GetConstructorTemplate(endpoint->env());
   CHECK(!tmpl.IsEmpty());
@@ -958,6 +963,7 @@ BaseObjectPtr<Session> Session::CreateServer(
       remote_addr,
       config,
       options,
+      std::move(context),
       config.dcid,
       config.scid,
       config.ocid,
@@ -970,6 +976,7 @@ Session::Session(
     const SocketAddress& local_addr,
     const SocketAddress& remote_addr,
     const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context,
     const CID& dcid,
     ngtcp2_crypto_side side)
     : AsyncWrap(endpoint->env(), object, AsyncWrap::PROVIDER_QUICSESSION),
@@ -981,7 +988,11 @@ Session::Session(
       remote_address_(remote_addr),
       alpn_(options.alpn),
       application_(SelectApplication(Application::Config())),
-      crypto_context_(std::make_unique<CryptoContext>(this, options, side)),
+      crypto_context_(std::make_unique<CryptoContext>(
+          this,
+          options,
+          std::move(context),
+          side)),
       hostname_(options.hostname),
       idle_(endpoint->env(), [this]() { OnIdleTimeout(); }),
       retransmit_(endpoint->env(), [this]() { OnRetransmitTimeout(); }),
@@ -1021,6 +1032,7 @@ Session::Session(
     const SocketAddress& remote_addr,
     const Config& config,
     const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context,
     const CID& dcid,
     const CID& scid,
     const CID& ocid,
@@ -1031,6 +1043,7 @@ Session::Session(
           local_addr,
           remote_addr,
           options,
+          std::move(context),
           dcid,
           NGTCP2_CRYPTO_SIDE_SERVER) {
   TransportParams transport_params(options, scid, ocid);
@@ -1073,8 +1086,15 @@ Session::Session(
     const SocketAddress& remote_addr,
     const Config& config,
     const Options& options,
+    BaseObjectPtr<crypto::SecureContext> context,
     uint32_t version)
-    : Session(endpoint, object, local_addr, remote_addr, options) {
+    : Session(
+          endpoint,
+          object,
+          local_addr,
+          remote_addr,
+          options,
+          std::move(context)) {
   CID dcid;
   if (options.dcid) {
     dcid = options.dcid;
@@ -3399,42 +3419,38 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
   CHECK(args[0]->IsString());  // ALPN
-  CHECK(args[1]->IsObject());  // SecureContext
   CHECK_IMPLIES(
-      !args[2]->IsUndefined(),
-      args[2]->IsString());  // Hostname
+      !args[1]->IsUndefined(),
+      args[1]->IsString());  // Hostname
   CHECK_IMPLIES(  // CID
-      !args[3]->IsUndefined(),
-      args[3]->IsArrayBuffer() || args[3]->IsArrayBufferView());
+      !args[2]->IsUndefined(),
+      args[2]->IsArrayBuffer() || args[2]->IsArrayBufferView());
   CHECK_IMPLIES(  // Preferred address strategy
-      !args[4]->IsUndefined(),
-      args[4]->IsInt32());
+      !args[3]->IsUndefined(),
+      args[3]->IsInt32());
 
   Utf8Value alpn(env->isolate(), args[0]);
-  crypto::SecureContext* context;
-  ASSIGN_OR_RETURN_UNWRAP(&context, args[1].As<Object>());
 
   OptionsObject* options = new OptionsObject(env, args.This());
   options->data()->alpn = *alpn;
-  options->data()->context.reset(context);
 
   // Add support for the other strategies once implemented
-  if (RandomConnectionIDBase::HasInstance(env, args[5])) {
+  if (RandomConnectionIDBase::HasInstance(env, args[4])) {
     RandomConnectionIDBase* cid_strategy;
-    ASSIGN_OR_RETURN_UNWRAP(&cid_strategy, args[5]);
+    ASSIGN_OR_RETURN_UNWRAP(&cid_strategy, args[4]);
     options->data()->cid_strategy = cid_strategy->strategy();
     options->data()->cid_strategy_strong_ref.reset(cid_strategy);
   } else {
     UNREACHABLE();
   }
 
-  if (!args[2]->IsUndefined()) {
-    Utf8Value hostname(env->isolate(), args[2]);
+  if (!args[1]->IsUndefined()) {
+    Utf8Value hostname(env->isolate(), args[1]);
     options->data()->hostname = *hostname;
   }
 
-  if (!args[3]->IsUndefined()) {
-    crypto::ArrayBufferOrViewContents<uint8_t> cid(args[3]);
+  if (!args[2]->IsUndefined()) {
+    crypto::ArrayBufferOrViewContents<uint8_t> cid(args[2]);
     // CHECK_LE(cid.size(), NGTCP2_MAX_CIDLEN);
     if (cid.size() > 0) {
       memcpy(
@@ -3445,9 +3461,9 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
     }
   }
 
-  if (!args[4]->IsUndefined()) {
+  if (!args[3]->IsUndefined()) {
     PreferredAddress::Policy policy =
-        static_cast<PreferredAddress::Policy>(args[4].As<Int32>()->Value());
+        static_cast<PreferredAddress::Policy>(args[3].As<Int32>()->Value());
     switch (policy) {
       case PreferredAddress::Policy::USE:
         options->data()->preferred_address_strategy =
@@ -3512,6 +3528,23 @@ Maybe<bool> OptionsObject::SetOption(
   } else {
     val = static_cast<int64_t>(value.As<Number>()->Value());
   }
+  options_.get()->*member = val;
+  return Just(true);
+}
+
+Maybe<bool> OptionsObject::SetOption(
+    Local<Object> object,
+    Local<String> name,
+    uint32_t Session::Options::*member) {
+  Local<Value> value;
+  if (!object->Get(env()->context(), name).ToLocal(&value))
+    return Nothing<bool>();
+
+  if (value->IsUndefined())
+    return Just(false);
+
+  CHECK(value->IsUint32());
+  uint32_t val = value.As<Uint32>()->Value();
   options_.get()->*member = val;
   return Just(true);
 }
@@ -3621,10 +3654,23 @@ void OptionsObject::SetTLSOptions(const FunctionCallbackInfo<Value>& args) {
       options->SetOption(
           obj,
           state->verify_hostname_identity_string(env),
-          &Session::Options::verify_hostname_identity).IsNothing()) {
+          &Session::Options::verify_hostname_identity).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->handshake_timeout_string(env),
+          &Session::Options::handshake_timeout).IsNothing() ||
+      options->SetOption(
+          obj,
+          state->min_dh_size_string(env),
+          &Session::Options::min_dh_size).IsNothing()) {
     // The if block intentionally does nothing. The code is structured
     // like this to shortcircuit if any of the SetOptions() returns Nothing.
   }
+
+  Local<Value> val;
+  options->data()->psk_callback_present =
+      obj->Get(env->context(), state->pskcallback_string(env)).ToLocal(&val) &&
+      val->IsFunction();
 }
 
 void OptionsObject::SetSessionResume(const FunctionCallbackInfo<Value>& args) {
@@ -3643,7 +3689,6 @@ OptionsObject::OptionsObject(
 void Session::Options::MemoryInfo(MemoryTracker* tracker) const {
   tracker->TrackFieldWithSize("alpn", alpn.length());
   tracker->TrackFieldWithSize("hostname", hostname.length());
-  tracker->TrackField("context", context);
 }
 
 void OptionsObject::MemoryInfo(MemoryTracker* tracker) const {

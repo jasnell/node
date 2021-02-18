@@ -217,10 +217,6 @@ class Session final : public AsyncWrap,
     // message.
     std::string hostname = "";
 
-    // The crypto::SecureContext used to configure the TLS context
-    // for this Session.
-    BaseObjectPtr<crypto::SecureContext> context;
-
     RoutableConnectionIDConfig* cid_strategy;
     BaseObjectPtr<BaseObject> cid_strategy_strong_ref;
 
@@ -319,6 +315,20 @@ class Session final : public AsyncWrap,
     // by default. We allow disabling it only for debugging.
     bool verify_hostname_identity = true;
 
+    // The TLS handshake completion timeout.
+    // TODO(@jasnell): implement support
+    uint32_t handshake_timeout = 120000;
+
+    // The minimum diffie-hellman size.
+    // TODO(@jasnell): implement support
+    uint32_t min_dh_size = 0;
+
+    // True if a PSK callback was given.
+    bool psk_callback_present = false;
+
+    // The TLS session ID context (only used on the server)
+    std::string session_id_ctx = "node.js quic server";
+
     // When set, instructs the client session to perform
     // additional checks on TLS session resumption.
     bool resume = false;
@@ -362,6 +372,7 @@ class Session final : public AsyncWrap,
     CryptoContext(
         Session* session,
         const Options& options,
+        BaseObjectPtr<crypto::SecureContext> context,
         ngtcp2_crypto_side side);
     ~CryptoContext() override;
 
@@ -789,14 +800,16 @@ class Session final : public AsyncWrap,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Config& config,
-      const Options& options);
+      const Options& options,
+      BaseObjectPtr<crypto::SecureContext> context);
 
   static BaseObjectPtr<Session> CreateClient(
       EndpointWrap* endpoint,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Config& config,
-      const Options& options);
+      const Options& options,
+      BaseObjectPtr<crypto::SecureContext> context);
 
   Session(
       EndpointWrap* endpoint,
@@ -805,6 +818,7 @@ class Session final : public AsyncWrap,
       const SocketAddress& remote_addr,
       const Config& config,
       const Options& options,
+      BaseObjectPtr<crypto::SecureContext> context,
       const CID& dcid,
       const CID& scid,
       const CID& ocid,
@@ -817,6 +831,7 @@ class Session final : public AsyncWrap,
       const SocketAddress& remote_addr,
       const Config& config,
       const Options& options,
+      BaseObjectPtr<crypto::SecureContext> context,
       uint32_t version);
 
   ~Session() override;
@@ -1129,6 +1144,7 @@ class Session final : public AsyncWrap,
       const SocketAddress& local_addr,
       const SocketAddress& remote_addr,
       const Options& options,
+      BaseObjectPtr<crypto::SecureContext> context,
       const CID& dcid = CID(),
       ngtcp2_crypto_side side = NGTCP2_CRYPTO_SIDE_CLIENT);
   void UsePreferredAddress(const PreferredAddress::Address& address);
@@ -1650,6 +1666,11 @@ class OptionsObject : public BaseObject {
       v8::Local<v8::Object> object,
       v8::Local<v8::String> name,
       uint64_t Session::Options::*member);
+
+  v8::Maybe<bool> SetOption(
+      v8::Local<v8::Object> object,
+      v8::Local<v8::String> name,
+      uint32_t Session::Options::*member);
 
   v8::Maybe<bool> SetOption(
       v8::Local<v8::Object> object,

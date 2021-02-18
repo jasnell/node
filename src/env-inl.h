@@ -1031,15 +1031,23 @@ inline void Environment::SetInstanceMethod(v8::Local<v8::FunctionTemplate> that,
 inline void Environment::SetConstructorFunction(
     v8::Local<v8::Object> that,
     const char* name,
-    v8::Local<v8::FunctionTemplate> tmpl) {
-  SetConstructorFunction(that, OneByteString(isolate(), name), tmpl);
+    v8::Local<v8::FunctionTemplate> tmpl,
+    bool set_class_name) {
+  SetConstructorFunction(
+      that,
+      name != nullptr
+          ? OneByteString(isolate(), name)
+          : v8::Local<v8::String>(),
+      tmpl,
+      set_class_name);
 }
 
 inline void Environment::SetConstructorFunction(
     v8::Local<v8::Object> that,
     v8::Local<v8::String> name,
-    v8::Local<v8::FunctionTemplate> tmpl) {
-  tmpl->SetClassName(name);
+    v8::Local<v8::FunctionTemplate> tmpl,
+    bool set_class_name) {
+  if (set_class_name) tmpl->SetClassName(name);
   that->Set(
       context(),
       name,

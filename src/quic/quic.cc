@@ -285,6 +285,23 @@ void InitializeCallbacks(const FunctionCallbackInfo<Value>& args) {
 #undef V
   state->set_initialized();
 }
+
+void CreateClientSecureContext(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  crypto::SecureContext* context = crypto::SecureContext::Create(env);
+  if (!context) return;
+
+  InitializeSecureContext(context, true, NGTCP2_CRYPTO_SIDE_CLIENT);
+  args.GetReturnValue().Set(context->object());
+}
+
+void CreateServerSecureContext(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  crypto::SecureContext* context = crypto::SecureContext::Create(env);
+  if (context == nullptr) return;
+  InitializeSecureContext(context, true, NGTCP2_CRYPTO_SIDE_SERVER);
+  args.GetReturnValue().Set(context->object());
+}
 }  // namespace
 
 void Initialize(Local<Object> target,
@@ -299,6 +316,10 @@ void Initialize(Local<Object> target,
     return;
 
   env->SetMethod(target, "initializeCallbacks", InitializeCallbacks);
+  env->SetMethod(target, "createClientSecureContext",
+                 CreateClientSecureContext);
+  env->SetMethod(target, "createServerSecureContext",
+                 CreateServerSecureContext);
 
   EndpointWrap::Initialize(env, target);
   Session::Initialize(env, target);

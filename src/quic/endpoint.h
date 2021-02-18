@@ -918,7 +918,9 @@ class EndpointWrap final : public AsyncWrap,
   // there is no associated Session, the Endpoint will iterate through
   // it's registered listening EndpointWrap instances to find one willing
   // to accept the packet.
-  void Listen(const Session::Options& options);
+  void Listen(
+      const Session::Options& options,
+      BaseObjectPtr<crypto::SecureContext> context);
 
   void OnSendDone(int status);
 
@@ -1038,6 +1040,7 @@ class EndpointWrap final : public AsyncWrap,
   std::shared_ptr<Endpoint> inner_;
 
   Session::Options server_options_;
+  BaseObjectPtr<crypto::SecureContext> server_context_;
 
   StatelessResetToken::Map<BaseObjectPtr<Session>> token_map_;
   CID::Map<BaseObjectPtr<Session>> sessions_;

@@ -653,39 +653,32 @@ void InitializeTLS(Session* session, const crypto::SSLPointer& ssl) {
 }
 
 void InitializeSecureContext(
-    BaseObjectPtr<crypto::SecureContext> sc,
+    crypto::SecureContext* sc,
     bool early_data,
     ngtcp2_crypto_side side) {
-  constexpr static unsigned char session_id_ctx[] = "node.js quic server";
+  sc->ctx_.reset(SSL_CTX_new(TLS_method()));
+  SSL_CTX_set_app_data(**sc, sc);
+  int options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+
   switch (side) {
     case NGTCP2_CRYPTO_SIDE_SERVER:
-      SSL_CTX_set_options(
-          **sc,
+      options =
           (SSL_OP_ALL & ~SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS) |
           SSL_OP_SINGLE_ECDH_USE |
           SSL_OP_CIPHER_SERVER_PREFERENCE |
-          SSL_OP_NO_ANTI_REPLAY);
-
+          SSL_OP_NO_ANTI_REPLAY;
       SSL_CTX_set_mode(**sc, SSL_MODE_RELEASE_BUFFERS);
-
       SSL_CTX_set_alpn_select_cb(**sc, AlpnSelection, nullptr);
       SSL_CTX_set_client_hello_cb(**sc, Client_Hello_CB, nullptr);
-
       SSL_CTX_set_session_ticket_cb(
           **sc,
           GenerateSessionTicket,
           DecryptSessionTicket,
           nullptr);
-
       if (early_data) {
         SSL_CTX_set_max_early_data(**sc, 0xffffffff);
         SSL_CTX_set_allow_early_data_cb(**sc, AllowEarlyDataCB, nullptr);
       }
-
-      SSL_CTX_set_session_id_context(
-          **sc,
-          session_id_ctx,
-          sizeof(session_id_ctx) - 1);
       break;
     case NGTCP2_CRYPTO_SIDE_CLIENT:
       SSL_CTX_set_session_cache_mode(
@@ -697,6 +690,8 @@ void InitializeSecureContext(
     default:
       UNREACHABLE();
   }
+  SSL_CTX_set_options(**sc, options);
+  SSL_CTX_clear_mode(**sc, SSL_MODE_NO_AUTO_CHAIN);
   SSL_CTX_set_min_proto_version(**sc, TLS1_3_VERSION);
   SSL_CTX_set_max_proto_version(**sc, TLS1_3_VERSION);
   SSL_CTX_set_default_verify_paths(**sc);

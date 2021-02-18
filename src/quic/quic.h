@@ -123,6 +123,7 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
 // The strings are persistent/eternal v8::Strings that are set in
 // the quic::BindingState.
 #define QUIC_STRINGS(V)                                                        \
+  V(handshake_timeout, "handshakeTimeout")                                     \
   V(initial_max_stream_data_bidi_local, "initialMaxStreamDataBidiLocal")       \
   V(initial_max_stream_data_bidi_remote, "initialMaxStreamDataBidiRemote")     \
   V(initial_max_stream_data_uni, "initialMaxStreamDataUni")                    \
@@ -147,7 +148,9 @@ inline size_t get_max_pkt_len(const SocketAddress& addr) {
   V(max_connections_per_host, "maxConnectionsPerHost")                         \
   V(max_connections_total, "maxConnectionsTotal")                              \
   V(max_stateless_resets, "maxStatelessResets")                                \
+  V(min_dh_size, "minDHSize")                                                  \
   V(address_lru_size, "addressLRUSize")                                        \
+  V(pskcallback, "pskCallback")                                                \
   V(retry_limit, "retryLimit")                                                 \
   V(max_payload_size, "maxPayloadSize")                                        \
   V(unacknowledged_packet_threshold, "unacknowledgedPacketThreshold")          \

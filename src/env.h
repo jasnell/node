@@ -1209,11 +1209,13 @@ class Environment : public MemoryRetainer {
 
   inline void SetConstructorFunction(v8::Local<v8::Object> that,
                           const char* name,
-                          v8::Local<v8::FunctionTemplate> tmpl);
+                          v8::Local<v8::FunctionTemplate> tmpl,
+                          bool set_class_name = true);
 
   inline void SetConstructorFunction(v8::Local<v8::Object> that,
                           v8::Local<v8::String> name,
-                          v8::Local<v8::FunctionTemplate> tmpl);
+                          v8::Local<v8::FunctionTemplate> tmpl,
+                          bool set_class_name = true);
 
   void AtExit(void (*cb)(void* arg), void* arg);
   void RunAtExitCallbacks();
