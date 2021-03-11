@@ -258,6 +258,7 @@ constexpr size_t kFsStatsBufferLength =
   V(fingerprint256_string, "fingerprint256")                                   \
   V(fingerprint_string, "fingerprint")                                         \
   V(flags_string, "flags")                                                     \
+  V(flowlabel_string, "flowlabel")                                             \
   V(fragment_string, "fragment")                                               \
   V(frames_received_string, "framesReceived")                                  \
   V(frames_sent_string, "framesSent")                                          \
@@ -475,6 +476,7 @@ constexpr size_t kFsStatsBufferLength =
   V(script_context_constructor_template, v8::FunctionTemplate)                 \
   V(secure_context_constructor_template, v8::FunctionTemplate)                 \
   V(shutdown_wrap_template, v8::ObjectTemplate)                                \
+  V(socketaddress_constructor_template, v8::FunctionTemplate)                  \
   V(streambaseoutputstream_constructor_template, v8::ObjectTemplate)           \
   V(qlogoutputstream_constructor_template, v8::ObjectTemplate)                 \
   V(tcp_constructor_template, v8::FunctionTemplate)                            \
@@ -1237,11 +1239,13 @@ class Environment : public MemoryRetainer {
 
   inline void SetConstructorFunction(v8::Local<v8::Object> that,
                           const char* name,
-                          v8::Local<v8::FunctionTemplate> tmpl);
+                          v8::Local<v8::FunctionTemplate> tmpl,
+                          bool set_class_name = true);
 
   inline void SetConstructorFunction(v8::Local<v8::Object> that,
                           v8::Local<v8::String> name,
-                          v8::Local<v8::FunctionTemplate> tmpl);
+                          v8::Local<v8::FunctionTemplate> tmpl,
+                          bool set_class_name = true);
 
   void AtExit(void (*cb)(void* arg), void* arg);
   void RunAtExitCallbacks();

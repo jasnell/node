@@ -3,6 +3,7 @@
 #include "base64-inl.h"
 #include "base_object-inl.h"
 #include "memory_tracker-inl.h"
+#include "node_errors.h"
 #include "uv.h"
 
 #include <memory>
@@ -15,23 +16,13 @@ using v8::Array;
 using v8::Context;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
+using v8::Int32;
+using v8::Integer;
 using v8::Local;
 using v8::MaybeLocal;
 using v8::Object;
+using v8::Uint32;
 using v8::Value;
-
-namespace {
-template <typename T, typename F>
-SocketAddress FromUVHandle(F fn, const T& handle) {
-  SocketAddress addr;
-  int len = sizeof(sockaddr_storage);
-  if (fn(&handle, addr.storage(), &len) == 0)
-    CHECK_EQ(static_cast<size_t>(len), addr.length());
-  else
-    addr.storage()->sa_family = 0;
-  return addr;
-}
-}  // namespace
 
 bool SocketAddress::ToSockAddr(
     int32_t family,
@@ -674,6 +665,8 @@ void SocketAddressBlockListWrap::Initialize(
     void* priv) {
   Environment* env = Environment::GetCurrent(context);
 
+  SocketAddressWrap::Initialize(env, target);
+
   Local<FunctionTemplate> t =
       env->NewFunctionTemplate(SocketAddressBlockListWrap::New);
   t->InstanceTemplate()->SetInternalFieldCount(BaseObject::kInternalFieldCount);
@@ -689,6 +682,152 @@ void SocketAddressBlockListWrap::Initialize(
 
   NODE_DEFINE_CONSTANT(target, AF_INET);
   NODE_DEFINE_CONSTANT(target, AF_INET6);
+}
+
+bool SocketAddressWrap::HasInstance(
+    Environment* env,
+    const Local<Value>& value) {
+  return GetConstructorTemplate(env)->HasInstance(value);
+}
+
+Local<FunctionTemplate> SocketAddressWrap::GetConstructorTemplate(
+    Environment* env) {
+  Local<FunctionTemplate> tmpl = env->socketaddress_constructor_template();
+  if (tmpl.IsEmpty()) {
+    tmpl = env->NewFunctionTemplate(New);
+    tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+    tmpl->InstanceTemplate()->SetInternalFieldCount(
+        SocketAddressWrap::kInternalFieldCount);
+    tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "SocketAddress"));
+    env->SetProtoMethodNoSideEffect(tmpl, "detail", Detail);
+    env->set_socketaddress_constructor_template(tmpl);
+  }
+  return tmpl;
+}
+
+void SocketAddressWrap::Initialize(Environment* env, Local<Object> target) {
+  env->SetConstructorFunction(
+      target,
+      "SocketAddress",
+      GetConstructorTemplate(env));
+  NODE_DEFINE_CONSTANT(target, kLabelMask);
+}
+
+BaseObjectPtr<SocketAddressWrap> SocketAddressWrap::Create(
+    Environment* env,
+    const SocketAddress& addr) {
+  Local<Object> obj;
+  if (!GetConstructorTemplate(env)
+        ->InstanceTemplate()
+        ->NewInstance(env->context()).ToLocal(&obj)) {
+    return BaseObjectPtr<SocketAddressWrap>();
+  }
+
+  std::shared_ptr<SocketAddress> wrap =
+      std::make_shared<SocketAddress>(addr);
+
+  return MakeBaseObject<SocketAddressWrap>(env, obj, std::move(wrap));
+}
+
+void SocketAddressWrap::New(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args.IsConstructCall());
+  Environment* env = Environment::GetCurrent(args);
+
+  CHECK(args[0]->IsInt32());  // Family
+  CHECK(args[1]->IsString());  // Address
+  CHECK(args[2]->IsInt32());  // Port
+  CHECK_IMPLIES(!args[3]->IsUndefined(), args[3]->IsUint32());
+
+  uint32_t family = args[0].As<Int32>()->Value();
+  uint32_t port = args[2].As<Int32>()->Value();
+  Utf8Value address(env->isolate(), args[1]);
+
+  std::shared_ptr<SocketAddress> addr =
+      std::make_shared<SocketAddress>();
+  CHECK(addr);
+  if (!SocketAddress::New(family, *address, port, addr.get()))
+    return THROW_ERR_INVALID_ADDRESS(env);
+
+  SocketAddressWrap* wrap =
+      new SocketAddressWrap(env, args.This(), std::move(addr));
+
+  if (!args[3]->IsUndefined() && family == AF_INET6) {
+    uint32_t flow_label = args[3].As<Uint32>()->Value();
+    wrap->address_->set_flow_label(flow_label);
+  }
+}
+
+SocketAddressWrap::SocketAddressWrap(
+    Environment* env,
+    Local<Object> object,
+    std::shared_ptr<SocketAddress> addr)
+    : BaseObject(env, object),
+      address_(std::move(addr)) {
+  MakeWeak();
+}
+
+void SocketAddressWrap::Detail(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  SocketAddressWrap* wrap;
+  ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
+  CHECK(args[0]->IsObject());
+  Local<Object> obj = args[0].As<Object>();
+
+  Local<Value> address;
+  if (!ToV8Value(env->context(), wrap->address_->address()).ToLocal(&address))
+    return;
+
+  if (wrap->address_->family() == AF_INET6 &&
+      !obj->Set(
+          env->context(),
+          env->flowlabel_string(),
+          Integer::NewFromUnsigned(
+              env->isolate(),
+              wrap->address_->flow_label())).FromJust()) {
+    return;
+  }
+
+  if (!obj->Set(
+          env->context(),
+          env->family_string(),
+          FIXED_ONE_BYTE_STRING(
+              env->isolate(),
+              wrap->address_->family() == AF_INET ? "ipv4" : "ipv6"))
+                  .FromJust() ||
+      !obj->Set(env->context(), env->host_string(), address).FromJust() ||
+      !obj->Set(
+          env->context(),
+          env->port_string(),
+          Integer::NewFromUnsigned(
+              env->isolate(),
+              wrap->address_->port())).FromJust()) {
+    // Intentionally empty block. The If statements are structured to
+    // short circuit if any of the statements return false.
+  }
+
+  args.GetReturnValue().Set(obj);
+}
+
+void SocketAddressWrap::MemoryInfo(node::MemoryTracker* tracker) const {
+  if (address_) tracker->TrackField("address", address_);
+}
+
+void SocketAddressWrap::TransferData::MemoryInfo(
+    node::MemoryTracker* tracker) const {
+  if (address_) tracker->TrackField("address", address_);
+}
+
+BaseObjectPtr<BaseObject> SocketAddressWrap::TransferData::Deserialize(
+    Environment* env,
+    v8::Local<v8::Context> context,
+    std::unique_ptr<worker::TransferData> self) {
+  Local<Object> obj;
+  if (!GetConstructorTemplate(env)
+          ->InstanceTemplate()
+          ->NewInstance(context).ToLocal(&obj)) {
+    return BaseObjectPtr<BaseObject>();
+  }
+  return MakeBaseObject<SocketAddressWrap>(env, obj, std::move(address_));
 }
 
 }  // namespace node

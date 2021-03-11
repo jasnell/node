@@ -175,6 +175,18 @@ const customTypesMap = {
   'net.BlockList': 'net.html#net_class_net_blocklist',
   'net.Server': 'net.html#net_class_net_server',
   'net.Socket': 'net.html#net_class_net_socket',
+  'net.SocketAddress': 'net.html#net_class_net_socketaddress',
+  'net.SocketAddressOptions': 'net.html#net_new_net_socketaddress_options',
+
+  'quic.EndpointConfig': 'quic.html#quic_class_quic_endpointconfig',
+  'quic.EndpointConfigOptions':
+    'quic.html#quic_new_quic_endpointconfig_options',
+  'quic.SessionConfig': 'quic.html#quic_class_quic_sessionconfig',
+  'quic.SessionConfigOptions':
+    'quic.html#quic_new_quic_sessionconfig_options',
+  'quic.Session': 'quic.html#quic_class_session',
+  'quic.Endpoint': 'quic.html#quic_class_endpoint',
+  'quic.Stream': 'quic.html#quic_class_stream',
 
   'NodeEventTarget':
     'events.html#events_class_nodeeventtarget',

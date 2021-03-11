@@ -214,11 +214,14 @@
       'lib/internal/process/signal.js',
       'lib/internal/process/task_queues.js',
       'lib/internal/querystring.js',
+      'lib/internal/quic/config.js',
+      'lib/internal/quic/quic.js',
       'lib/internal/readline/utils.js',
       'lib/internal/repl.js',
       'lib/internal/repl/await.js',
       'lib/internal/repl/history.js',
       'lib/internal/repl/utils.js',
+      'lib/internal/socketaddress.js',
       'lib/internal/socket_list.js',
       'lib/internal/source_map/prepare_stack_trace.js',
       'lib/internal/source_map/source_map.js',
@@ -760,6 +763,7 @@
         'src/node_watchdog.h',
         'src/node_worker.h',
         'src/pipe_wrap.h',
+        'src/quic/quic.cc',
         'src/req_wrap.h',
         'src/req_wrap-inl.h',
         'src/spawn_sync.h',
@@ -810,6 +814,25 @@
       'msvs_disabled_warnings!': [4244],
 
       'conditions': [
+        [
+          'openssl_quic=="true" and node_use_openssl=="true"', {
+            'sources': [
+              'src/quic/buffer.h',
+              'src/quic/crypto.h',
+              'src/quic/endpoint.h',
+              'src/quic/qlog.h',
+              'src/quic/quic.h',
+              'src/quic/session.h',
+              'src/quic/stats.h',
+              'src/quic/stream.h',
+              'src/quic/buffer.cc',
+              'src/quic/crypto.cc',
+              'src/quic/endpoint.cc',
+              'src/quic/session.cc',
+              'src/quic/stream.cc'
+            ]
+          }
+        ],
         [ 'openssl_default_cipher_list!=""', {
           'defines': [
             'NODE_OPENSSL_DEFAULT_CIPHER_LIST="<(openssl_default_cipher_list)"'

@@ -1074,6 +1074,59 @@ This property represents the state of the connection as a string.
 * If the stream is readable and not writable, it is `readOnly`.
 * If the stream is not readable and writable, it is `writeOnly`.
 
+## Class: `net.SocketAddress`
+<!-- YAML
+added: REPLACEME
+-->
+
+### `new net.SocketAddress([options])`
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {net.SocketAddressOptions}
+  * `address` {string} A string encoding an IPv4 or IPv6 socket address.
+    **Default**: `0.0.0.0`.
+  * `port` {integer} An IP port number. **Default**: `0`.
+  * `family` {string} One of either `'ipv4'` or `'ipv6'`. **Default**: `'ipv4'`.
+  * `flowlabel` {integer} When `family` is `'ipv6'`, encodes an IPv6 flow label.
+
+### `socketaddress.address`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string} A string encoding an IPv4 or IPv6 socket address.
+
+Read-only.
+
+### `socketaddress.family`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string} One of either `'ipv4'` or `'ipv6'`.
+
+Read-only.
+
+### `socketaddress.flowlabel`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {integer} When `socketaddress.family` is `'ipv6'`, encodes an IPv6 flow label.
+
+Read-only.
+
+### `socketaddress.port`
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {integer} An IP port number.
+
+Read-only.
+
 ## `net.connect()`
 
 Aliases to
