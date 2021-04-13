@@ -36,7 +36,7 @@ class Blob : public BaseObject {
 
   static BaseObjectPtr<Blob> Create(
       Environment* env,
-      const std::vector<BlobEntry> store,
+      const std::vector<BlobEntry>& store,
       size_t length);
 
   static bool HasInstance(Environment* env, v8::Local<v8::Value> object);
