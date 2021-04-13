@@ -218,6 +218,10 @@
       'lib/internal/process/signal.js',
       'lib/internal/process/task_queues.js',
       'lib/internal/querystring.js',
+      'lib/internal/quic/binding.js',
+      'lib/internal/quic/config.js',
+      'lib/internal/quic/stats.js',
+      'lib/internal/quic/quic.js',
       'lib/internal/readline/utils.js',
       'lib/internal/repl.js',
       'lib/internal/repl/await.js',
@@ -765,6 +769,7 @@
         'src/node_watchdog.h',
         'src/node_worker.h',
         'src/pipe_wrap.h',
+        'src/quic/quic.cc',
         'src/req_wrap.h',
         'src/req_wrap-inl.h',
         'src/spawn_sync.h',
@@ -930,6 +935,23 @@
             }
           ] ]
         } ],
+        [ 'openssl_quic=="true"', {
+          'sources': [
+            'src/quic/buffer.cc',
+            'src/quic/crypto.cc',
+            'src/quic/endpoint.cc',
+            'src/quic/session.cc',
+            'src/quic/stream.cc',
+            'src/quic/buffer.h',
+            'src/quic/crypto.h',
+            'src/quic/endpoint.h',
+            'src/quic/qlog.h',
+            'src/quic/quic.h',
+            'src/quic/session.h',
+            'src/quic/stats.h',
+            'src/quic/stream.h'
+          ]
+        }],
         [ 'node_use_openssl=="true"', {
           'sources': [
             'src/crypto/crypto_aes.cc',
