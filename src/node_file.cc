@@ -345,44 +345,48 @@ MaybeLocal<Promise> FileHandle::ClosePromise() {
   Isolate* isolate = env()->isolate();
   EscapableHandleScope scope(isolate);
   Local<Context> context = env()->context();
+
+  Local<Promise::Resolver> close_resolver = close_promise_.Get(isolate);
+  if (!close_resolver.IsEmpty())
+    return close_resolver.As<Promise>();
+
+  CHECK(!closed_);
+  CHECK(!closing_);
+  CHECK(!reading_);
+
   auto maybe_resolver = Promise::Resolver::New(context);
   CHECK(!maybe_resolver.IsEmpty());
   Local<Promise::Resolver> resolver = maybe_resolver.ToLocalChecked();
   Local<Promise> promise = resolver.As<Promise>();
-  CHECK(!reading_);
-  if (!closed_ && !closing_) {
-    closing_ = true;
-    Local<Object> close_req_obj;
-    if (!env()
-             ->fdclose_constructor_template()
-             ->NewInstance(env()->context())
-             .ToLocal(&close_req_obj)) {
-      return MaybeLocal<Promise>();
-    }
-    CloseReq* req = new CloseReq(env(), close_req_obj, promise, object());
-    auto AfterClose = uv_fs_callback_t{[](uv_fs_t* req) {
-      std::unique_ptr<CloseReq> close(CloseReq::from_req(req));
-      CHECK_NOT_NULL(close);
-      close->file_handle()->AfterClose();
-      Isolate* isolate = close->env()->isolate();
-      if (req->result < 0) {
-        HandleScope handle_scope(isolate);
-        close->Reject(
-            UVException(isolate, static_cast<int>(req->result), "close"));
-      } else {
-        close->Resolve();
-      }
-    }};
-    int ret = req->Dispatch(uv_fs_close, fd_, AfterClose);
-    if (ret < 0) {
-      req->Reject(UVException(isolate, ret, "close"));
-      delete req;
-    }
-  } else {
-    // Already closed. Just reject the promise immediately
-    resolver->Reject(context, UVException(isolate, UV_EBADF, "close"))
-        .Check();
+
+  Local<Object> close_req_obj;
+  if (!env()->fdclose_constructor_template()
+          ->NewInstance(env()->context()).ToLocal(&close_req_obj)) {
+    return MaybeLocal<Promise>();
   }
+  closing_ = true;
+  close_promise_.Reset(isolate, resolver);
+
+  CloseReq* req = new CloseReq(env(), close_req_obj, promise, object());
+  auto AfterClose = uv_fs_callback_t{[](uv_fs_t* req) {
+    std::unique_ptr<CloseReq> close(CloseReq::from_req(req));
+    CHECK_NOT_NULL(close);
+    close->file_handle()->AfterClose();
+    Isolate* isolate = close->env()->isolate();
+    if (req->result < 0) {
+      HandleScope handle_scope(isolate);
+      close->Reject(
+          UVException(isolate, static_cast<int>(req->result), "close"));
+    } else {
+      close->Resolve();
+    }
+  }};
+  int ret = req->Dispatch(uv_fs_close, fd_, AfterClose);
+  if (ret < 0) {
+    req->Reject(UVException(isolate, ret, "close"));
+    delete req;
+  }
+
   return scope.Escape(promise);
 }
 

@@ -351,6 +351,8 @@ class FileHandle final : public AsyncWrap, public StreamBase {
   BaseObjectPtr<FileHandleReadWrap> current_read_;
 
   BaseObjectPtr<BindingData> binding_data_;
+
+  v8::Global<v8::Promise::Resolver> close_promise_{};
 };
 
 int MKDirpSync(uv_loop_t* loop,
