@@ -464,9 +464,12 @@ The `quic.ResponseOptionsInit` is an ordinary JavaScript object
 with the following properties:
 
 <!--lint disable maximum-line-length remark-lint-->
-* `headers` {Object|Map} If supported by the application protocol, the headers
+* `headers` {Object|Promise} If supported by the application protocol, the headers
   to be transmitted at the start of the stream.
-* `trailers` {Object|Map} If supported by the application protocol, the trailing
+* `hints` {Object} If supported by the application protocol, early informational
+  headers (or hints) to be transmitted before the initial `headers` at the start
+  of the stream.
+* `trailers` {Object|Promise} If supported by the application protocol, the trailing
   headers to be transmitted after the stream body.
 * `body` {string|ArrayBuffer|TypedArray|DataView|Buffer|stream.Readable|ReadableStream|Blob|Promise|Function}
 <!--lint enable maximum-line-length remark-lint-->
@@ -1033,7 +1036,12 @@ or outbound data is lost. The `stream.closed` promise will be fulfilled.
   `stream.streamReadable()` has been called to acquire a consumer for
   this `Stream`'s inbound data.
 
-#### `stream.readableStream()`
+#### `stream.readableNodeStream()`
+
+* Returns: {stream.Readable} A `stream.Readable` that may be used to
+  consume this `Stream`'s inbound data.
+
+#### `stream.readableWebStream()`
 
 * Returns: {ReadableStream} A `ReadableStream` that may be used to consume the
   inbound `Stream` data received from the peer.
@@ -1041,16 +1049,6 @@ or outbound data is lost. The `stream.closed` promise will be fulfilled.
 #### `stream.respondWith(options)`
 
 * `options` {quic.ResponseOptions}
-
-#### `stream.responseHints([headers])`
-
-* `headers` {Object}
-
-When supported by the protocol, send response hints (for instance,
-HTTP 1xx status headers) that preceed the actual response. If
-`stream.respondWith()` has already been called, or the protocol
-does not support hints, calling `responseHints()` will cause an
-error to be thrown.
 
 #### `stream.serverInitiated`
 
@@ -1060,11 +1058,6 @@ error to be thrown.
 #### `stream.stats`
 
 * Type: {quic.StreamStats}
-
-#### `stream.streamReadable()`
-
-* Returns: {stream.Readable} A `stream.Readable` that may be used to
-  consume this `Stream`'s inbound data.
 
 #### `stream.trailers()`
 
