@@ -1,4 +1,3 @@
-// Flags: --expose-internals
 'use strict';
 
 const common = require('../common');
@@ -54,6 +53,7 @@ req.handshake.then(common.mustCall(() => {
   stream.readableNodeStream().pipe(process.stdout);
 
   stream.closed.then(common.mustCall(() => {
+    client.close();
     endpoint.close();
   }));
 }));
