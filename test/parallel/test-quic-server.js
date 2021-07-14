@@ -107,7 +107,7 @@ endpoint.onsession = common.mustCall(({ session }) => {
 
   session.onstream = ({ stream, respondWith }) => {
     respondWith({ body: 'right back at you' });
-    const readable = stream.streamReadable();
+    const readable = stream.readableNodeStream();
     readable.on('error', common.mustCall());
     readable.on('close', common.mustCall());
     readable.pipe(process.stdout);

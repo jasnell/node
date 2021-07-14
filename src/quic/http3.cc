@@ -281,19 +281,19 @@ bool Http3Application::Initialize() {
 // trigger the invocation of the various nghttp3 callbacks.
 bool Http3Application::ReceiveStreamData(
     uint32_t flags,
-    stream_id stream_id,
+    stream_id id,
     const uint8_t* data,
     size_t datalen,
     uint64_t offset) {
   Debug(session(),
         "Receiving %" PRIu64 " bytes for HTTP/3 stream %" PRIu64 "%s",
         datalen,
-        stream_id,
+        id,
         flags & NGTCP2_STREAM_DATA_FLAG_FIN ? " (fin)" : "");
   ssize_t nread =
       nghttp3_conn_read_stream(
           connection_.get(),
-          stream_id,
+          id,
           data,
           datalen,
           flags & NGTCP2_STREAM_DATA_FLAG_FIN);
