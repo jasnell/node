@@ -234,6 +234,12 @@ class FileHandleReadWrap final : public ReqWrap<uv_fs_t> {
 // the object is garbage collected
 class FileHandle final : public AsyncWrap, public StreamBase {
  public:
+  enum InternalFields {
+    kModuleWrapBaseField = StreamBase::kInternalFieldCount,
+    kClosingPromiseSlot,
+    kInternalFieldCount
+  };
+
   static FileHandle* New(BindingData* binding_data,
                          int fd,
                          v8::Local<v8::Object> obj = v8::Local<v8::Object>());
@@ -351,8 +357,6 @@ class FileHandle final : public AsyncWrap, public StreamBase {
   BaseObjectPtr<FileHandleReadWrap> current_read_;
 
   BaseObjectPtr<BindingData> binding_data_;
-
-  v8::Global<v8::Promise::Resolver> close_promise_{};
 };
 
 int MKDirpSync(uv_loop_t* loop,

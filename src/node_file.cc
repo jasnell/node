@@ -346,9 +346,12 @@ MaybeLocal<Promise> FileHandle::ClosePromise() {
   EscapableHandleScope scope(isolate);
   Local<Context> context = env()->context();
 
-  Local<Promise::Resolver> close_resolver = close_promise_.Get(isolate);
-  if (!close_resolver.IsEmpty())
+  Local<Value> close_resolver =
+      object()->GetInternalField(FileHandle::kClosingPromiseSlot);
+  if (!close_resolver.IsEmpty() && !close_resolver->IsUndefined()) {
+    CHECK(close_resolver->IsPromise());
     return close_resolver.As<Promise>();
+  }
 
   CHECK(!closed_);
   CHECK(!closing_);
@@ -365,7 +368,7 @@ MaybeLocal<Promise> FileHandle::ClosePromise() {
     return MaybeLocal<Promise>();
   }
   closing_ = true;
-  close_promise_.Reset(isolate, resolver);
+  object()->SetInternalField(FileHandle::kClosingPromiseSlot, promise);
 
   CloseReq* req = new CloseReq(env(), close_req_obj, promise, object());
   auto AfterClose = uv_fs_callback_t{[](uv_fs_t* req) {
@@ -2542,7 +2545,7 @@ void Initialize(Local<Object> target,
   env->SetProtoMethod(fd, "close", FileHandle::Close);
   env->SetProtoMethod(fd, "releaseFD", FileHandle::ReleaseFD);
   Local<ObjectTemplate> fdt = fd->InstanceTemplate();
-  fdt->SetInternalFieldCount(StreamBase::kInternalFieldCount);
+  fdt->SetInternalFieldCount(FileHandle::kInternalFieldCount);
   StreamBase::AddMethods(env, fd);
   env->SetConstructorFunction(target, "FileHandle", fd);
   env->set_fd_constructor_template(fdt);
