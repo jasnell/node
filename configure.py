@@ -1478,7 +1478,13 @@ def configure_openssl(o):
     o['defines'] += ['OPENSSL_FIPS']
 
   if options.shared_openssl:
-    variables['openssl_quic'] = b(getsharedopensslhasquic.get_has_quic(options.__dict__['shared_openssl_includes']))
+    has_quic = getsharedopensslhasquic.get_has_quic(options.__dict__['shared_openssl_includes'])
+  else:
+    has_quic = getsharedopensslhasquic.get_has_quic('deps/openssl/openssl/include')
+
+  variables['openssl_quic'] = b(has_quic)
+  if has_quic:
+    o['defines'] += ['NODE_OPENSSL_HAS_QUIC']
 
   configure_library('openssl', o)
 
