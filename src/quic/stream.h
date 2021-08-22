@@ -316,6 +316,16 @@ class Stream final : public AsyncWrap,
   ListNode<Stream> stream_queue_;
 
  public:
+  // The Queue/Schedule/Unschedule here are part of the mechanism used
+  // to determine which streams have data to send on the session. When
+  // a stream potentially has data available, it will be scheduled in
+  // the Queue. Then, when the Session::Application starts sending
+  // pending data, it will check the queue to see if there are streams
+  // wait. If there are, it will grab one and check to see if there is
+  // data to send. When a stream does not have data to send (such as
+  // when it is initially created or is using an async source that is
+  // still waiting for data to be pushed) it will not appear in the
+  // queue.
   using Queue = ListHead<Stream, &Stream::stream_queue_>;
 
   void Schedule(Queue* queue);

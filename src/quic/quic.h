@@ -619,6 +619,8 @@ class StatelessResetToken final : public MemoryRetainer {
 // routing QUIC packets and sessions.
 class RoutableConnectionIDStrategy {
  public:
+  virtual ~RoutableConnectionIDStrategy() {}
+
   virtual void NewConnectionID(
       ngtcp2_cid* cid,
       size_t length_hint = NGTCP2_MAX_CIDLEN) = 0;
@@ -779,7 +781,7 @@ class RoutableConnectionIDStrategyBase final : public BaseObject {
       BaseObjectPtr<BaseObject> Deserialize(
           Environment* env,
           v8::Local<v8::Context> context,
-          std::unique_ptr<worker::TransferData> self) {
+          std::unique_ptr<worker::TransferData> self) override {
         v8::Local<v8::Object> obj;
         if (!GetConstructorTemplate(env)
                 ->InstanceTemplate()

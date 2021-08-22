@@ -79,11 +79,20 @@ class Buffer final : public bob::SourceImpl<ngtcp2_vec>,
   // deque in Buffer which manages the aggregate collection of all chunks.
   class Chunk final : public MemoryRetainer {
    public:
+    // Copies len bytes from data into a new Chunk.
     static std::unique_ptr<Chunk> Create(
         Environment* env,
         const uint8_t* data,
         size_t len);
 
+    // Stores the given BackingStore directly without copying.
+    // One important thing here is the fact the data is not
+    // immutable. If user code passes a TypedArray or ArrayBuffer
+    // in, the user code can continue to modify it after. For now
+    // that's an acceptable risk as it is definitely an edge case.
+    // Later, we might want to consider allowing for a copy with
+    // the understanding that doing so will introduce a small
+    // performance hit.
     static std::unique_ptr<Chunk> Create(
         const std::shared_ptr<v8::BackingStore>& data,
         size_t offset,
@@ -128,9 +137,9 @@ class Buffer final : public bob::SourceImpl<ngtcp2_vec>,
 
    private:
     Chunk(
-      const std::shared_ptr<v8::BackingStore>& data,
-      size_t length,
-      size_t offset = 0);
+        const std::shared_ptr<v8::BackingStore>& data,
+        size_t length,
+        size_t offset = 0);
 
     std::shared_ptr<v8::BackingStore> data_;
     size_t offset_ = 0;
@@ -158,6 +167,8 @@ class Buffer final : public bob::SourceImpl<ngtcp2_vec>,
 
     inline explicit Source(Environment* env) : env_(env) {}
 
+    // If the Source is a BaseObject, then GetStrongPtr will return
+    // a BaseObjectPtr that can be used to maintain a strong pointer.
     virtual BaseObjectPtr<BaseObject> GetStrongPtr() {
       return BaseObjectPtr<BaseObject>();
     }
@@ -277,6 +288,13 @@ class Buffer final : public bob::SourceImpl<ngtcp2_vec>,
 // The JSQuicBufferConsumer receives inbound data for a Stream
 // and forwards that up as Uint8Array instances to the JavaScript
 // API.
+//
+// Someone reviewing this code might notice that this is definitely
+// not a StreamBase although it serves a similar purpose -- pushing
+// chunks of data out to the JavaScript side. In this case, StreamBase
+// would be way too complicated for what is strictly needed here.
+// We don't need all of the mechanism that StreamBase brings along
+// with it so we don't use it.
 class JSQuicBufferConsumer final : public Buffer::Consumer,
                                    public AsyncWrap {
  public:
@@ -286,6 +304,10 @@ class JSQuicBufferConsumer final : public Buffer::Consumer,
   static void Initialize(Environment* env, v8::Local<v8::Object> target);
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Pushes the entire queue out to JavaScript as an array of
+  // ArrayBuffer instances. The Process() takes ownership of
+  // the queue here and ensures that once the contents have been
+  // passed on the JS, the data is freed.
   v8::Maybe<size_t> Process(
       Buffer::Chunk::Queue queue,
       bool ended = false) override;
