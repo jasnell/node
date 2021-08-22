@@ -34,7 +34,7 @@ through these draft specifications before continuing on:
 The IETF working group is working on a number of other documents that you'll
 also want to get familiar with. Check those out here:
 
-* https://datatracker.ietf.org/wg/quic/documents/
+* [https://datatracker.ietf.org/wg/quic/documents/]()
 
 This guide will first deal with explaining QUIC and the QUIC implementation in
 general, and then will address HTTP/3.
@@ -169,8 +169,8 @@ be acting as a client or a server. The `Endpoint` manages a local binding to a
 `uv_udp_t` UDP socket handle. It controls the full lifecycle of that socket and
 manages the flow of data through that socket. If you're already familiar with
 Node.js internals, the `Endpoint` has many similarities to the `UDPWrap` class
-that underlies Node.js' UDP/Datagram module. However, there are a some
-important differences.
+that underlies the UDP/Datagram module. However, there are a some important
+differences.
 
 First, and most importantly, the QUIC `Endpoint` class is designed to be
 *shareable across Node.js Worker Threads*.
@@ -183,9 +183,9 @@ elements:
 * An `node::quic::Endpoint` object that owns the `Endpoint::UDP` instance and
   performs all of the protocol-specific work.
 * And an `node::quic::EndpointWrap` object that inherits from `BaseObject` and
-  connects the `Endpoint` to a specific Node.js Environment/v8::Isolate
+  connects the `Endpoint` to a specific Node.js `Environment`/`v8::Isolate`
   (remember, the Node.js main thread, and each individual Worker Thread, all
-  have their own separate Environment and v8::Isolate).
+  have their own separate `Environment` and `v8::Isolate`).
 
 I'm going to simplify things a bit here and say that, in the following
 description, whenever I say "thread" that applies to both the Node.js main
@@ -343,9 +343,10 @@ More specifically, the `Session` wraps the `ngtcp2_connection` object. We'll
 get to that in a bit.
 
 Unlike `Endpoint`, a `Session` is always limited to a single thread. It is
-always associated with an owning `node::quic::EndpointWrap`. `Session` instances
-cannot be cloned or transferred to other threads. When the owning
-`node::quic::EndpointWrap` is destroyed, all owned `Session`s are also destroyed.
+always associated with an owning `node::quic::EndpointWrap`. `Session`
+instances cannot be cloned or transferred to other threads. When the owning
+`node::quic::EndpointWrap` is destroyed, all owned `Session`s are also
+destroyed.
 
 `Session` instances have a fairly large API surface API but they are actually
 fairly simple. They are composed of a couple of key elements:
@@ -422,7 +423,8 @@ we call this "early data".
 ### `Stream`
 
 A `Stream` is a undirectional or bidirectional data flow within a `Session`.
-They are conceptually similar to a `Duplex` but are implemented very differently.
+They are conceptually similar to a `Duplex` but are implemented very
+differently.
 
 There are two main elements of a `Stream`: the `Source` and the `Consumer`.
 Before we get into the details of each, let's talk a bit about the lifecycle of
@@ -432,8 +434,8 @@ a `Stream`.
 
 Once a QUIC Connection has been established, either peer is permitted to open a
 `Stream`, subject to limits set by the receiving peer. Specifically, the remote
-peer sets a limit on the number of open unidirectional and bidirectional `Stream`s
-that the peer can concurrently create.
+peer sets a limit on the number of open unidirectional and bidirectional
+`Stream`s that the peer can concurrently create.
 
 A `Stream` is created by sending data. If no data is sent, the `Stream` is never
 created.
@@ -443,8 +445,8 @@ the peer that initiated it) or bidirectional (data can be sent by both peers).
 
 Every `Stream` has a numeric identifier that uniquely identifies it only within
 the scope of the owning `Session`. The stream ID indentifies whether the stream
-was initiated by the client or server, and identifies whether it is bidirectional
-or unidirectional.
+was initiated by the client or server, and identifies whether it is
+bidirectional or unidirectional.
 
 A peer can transmit data indefinitely on a `Stream`. The final packet of data
 will include `FIN` flag that signals the peer is done. Alternatively, the
@@ -482,9 +484,9 @@ will immediately forward that data on to the `node::quic::Buffer::Consumer`.
 If a `node::quic::Buffer::Consumer` has not been attached, the received
 data will be accumulated in an internal queue until a Consumer is attached.
 
-Note that this queue will be retained even after the `Stream`, and even the
-`Session` has been closed. The data will be freed only after it is consumed
-or the `Stream` is garbage collected and destroyed.
+This queue will be retained even after the `Stream`, and even the `Session`
+has been closed. The data will be freed only after it is consumed or the
+`Stream` is garbage collected and destroyed.
 
 Currently, there is only one `node::quic::Buffer::Consumer` implemented
 (the `node::quic::JSQuicBufferConsumer`). All it does is take the received
@@ -666,10 +668,10 @@ successfully sent.
 
 By default, QUIC connection IDs are random byte sequences and they are generally
 considered to be opaque, carrying no identifying information about either of the
-two peers. However, the IETF is working on [draft-ietf-quic-load-balancers-07][],
-a specification for creating "Routable Connection IDs" that make it possible for
-intelligent QUIC intermedaries to encode routing information within a Connection
-ID.
+two peers. However, the IETF is working on
+[draft-ietf-quic-load-balancers-07][], a specification for creating "Routable
+Connection IDs" that make it possible for intelligent QUIC intermedaries to
+encode routing information within a Connection ID.
 
 At the time I am writing this, I have not yet fully implemented support for this
 draft QUIC extension, but the fundamental mechanism necessary to support it has
@@ -686,9 +688,9 @@ diagnostic keylog and QLog data out to the JavaScript API.
 QLog is a QUIC-specific logging format being defined by the IETF working group.
 You can read more about it here:
 
-* https://www.ietf.org/archive/id/draft-ietf-quic-load-balancers-07.html
-* https://www.ietf.org/archive/id/draft-ietf-quic-qlog-quic-events-00.html
-* https://www.ietf.org/archive/id/draft-ietf-quic-qlog-h3-events-00.html
+* [https://www.ietf.org/archive/id/draft-ietf-quic-load-balancers-07.html]()
+* [https://www.ietf.org/archive/id/draft-ietf-quic-qlog-quic-events-00.html]()
+* [https://www.ietf.org/archive/id/draft-ietf-quic-qlog-h3-events-00.html]()
 
 These are disabled by default. A `Session` can be configured to emit diagnostic
 logs.
@@ -706,7 +708,7 @@ the server. The HTTP request headers, payload, and trailing footers will be
 transmitted using that bidirectional stream with some associated control data
 being sent over the unidirectional control streams.
 
-It's important to note that the unidirectional control streams are handled
+It's important to understand the unidirectional control streams are handled
 completely internally by the `node::quic::Session` and the
 `node::quic::Http2Application`. They are never exposed to the JavaScript
 API layer.
@@ -730,9 +732,9 @@ The QUIC JavaScript API closely follows the structure laid out by the internals.
 There are the same three fundamental components: `Endpoint`, `Session`, and
 `Stream`.
 
-Unlike older Node.js APIs, these build on more modern Web Platform API compatible
-pieces such as `EventTarget`, Web Streams, and Promises. Overall, the API style
-diverges quite a bit from the older, more specific `net` module.
+Unlike older Node.js APIs, these build on more modern Web Platform API
+compatible pieces such as `EventTarget`, Web Streams, and Promises. Overall,
+the API style diverges quite a bit from the older, more specific `net` module.
 
 The best way to get familiar with the JavaScript API is to read the user docs in
 `doc/api/quic.md`. Here I'll just hit a few of the high points.

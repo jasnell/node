@@ -577,7 +577,7 @@ void Endpoint::Close(CloseListener::Context context, int status) {
   for (const auto listener : close_listeners_)
     listener->EndpointClosed(context, status);
 
-  udp_.Close();
+  udp_.CloseHandle();
 }
 
 bool Endpoint::AcceptInitialPacket(
@@ -1422,7 +1422,7 @@ int Endpoint::UDP::Bind(const Endpoint::Config& config) {
   return err;
 }
 
-void Endpoint::UDP::Close() {
+void Endpoint::UDP::CloseHandle() {
   Debug(this, "Closing...");
   if (is_closing()) return;
   env()->CloseHandle(reinterpret_cast<uv_handle_t*>(&handle_), ClosedCb);
@@ -1527,10 +1527,10 @@ Endpoint::UDPHandle::UDPHandle(Environment* env, Endpoint* endpoint)
   env->AddCleanupHook(CleanupHook, this);
 }
 
-void Endpoint::UDPHandle::Close() {
+void Endpoint::UDPHandle::CloseHandle() {
   if (udp_ != nullptr) {
     env_->RemoveCleanupHook(CleanupHook, this);
-    udp_->Close();
+    udp_->CloseHandle();
   }
   udp_ = nullptr;
 }
@@ -1541,7 +1541,7 @@ void Endpoint::UDPHandle::MemoryInfo(MemoryTracker* tracker) const {
 }
 
 void Endpoint::UDPHandle::CleanupHook(void* data) {
-  static_cast<UDPHandle*>(data)->Close();
+  static_cast<UDPHandle*>(data)->CloseHandle();
 }
 
 bool EndpointWrap::HasInstance(Environment* env, const Local<Value>& value) {

@@ -1047,7 +1047,7 @@ class Session final : public AsyncWrap,
   // via user configuration: use the preferred address or ignore it.
   void SelectPreferredAddress(const PreferredAddress& preferred_address);
 
-  void MemoryInfo(MemoryTracker* tracker) const;
+  void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(Session)
   SET_SELF_SIZE(Session)
 
@@ -1618,9 +1618,9 @@ class Session final : public AsyncWrap,
       size_t datalen,
       void* user_data);
 
-  friend class Session::CallbackScope;
-  friend class Session::NgCallbackScope;
-  friend class Session::SendSessionScope;
+  friend struct Session::CallbackScope;
+  friend struct Session::NgCallbackScope;
+  friend struct Session::SendSessionScope;
   friend class Session::CryptoContext;
 };
 

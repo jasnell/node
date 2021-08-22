@@ -355,7 +355,7 @@ class Endpoint final : public MemoryRetainer,
 
     void Ref();
     void Unref();
-    void Close();
+    void CloseHandle();
     int StartReceiving();
     void StopReceiving();
     std::shared_ptr<SocketAddress> local_address() const;
@@ -397,7 +397,7 @@ class Endpoint final : public MemoryRetainer,
    public:
     UDPHandle(Environment* env, Endpoint* endpoint);
 
-    inline ~UDPHandle() { Close(); }
+    inline ~UDPHandle() { CloseHandle(); }
 
     inline int Bind(const Endpoint::Config& config) {
       return udp_->Bind(config);
@@ -414,7 +414,7 @@ class Endpoint final : public MemoryRetainer,
     inline std::shared_ptr<SocketAddress> local_address() const {
       return udp_ ? udp_->local_address() : std::make_shared<SocketAddress>();
     }
-    void Close();
+    void CloseHandle();
 
     inline int SendPacket(BaseObjectPtr<SendWrap> req) {
       return udp_ ? udp_->SendPacket(std::move(req)) : UV_EBADF;
@@ -835,7 +835,9 @@ class EndpointWrap final : public AsyncWrap,
   EndpointWrap& operator=(const Endpoint& other) = delete;
   EndpointWrap& operator=(const Endpoint&& other) = delete;
 
-  void EndpointClosed(Endpoint::CloseListener::Context context, int status);
+  void EndpointClosed(
+      Endpoint::CloseListener::Context context,
+      int status) override;
 
   // Returns the default Session::Options used for new server
   // sessions accepted by this EndpointWrap. The server_options_
@@ -1007,7 +1009,7 @@ class EndpointWrap final : public AsyncWrap,
     BaseObjectPtr<BaseObject> Deserialize(
         Environment* env,
         v8::Local<v8::Context> context,
-        std::unique_ptr<worker::TransferData> self);
+        std::unique_ptr<worker::TransferData> self) override;
 
     void MemoryInfo(MemoryTracker* tracker) const override;
     SET_MEMORY_INFO_NAME(EndpointWrap::TransferData)
