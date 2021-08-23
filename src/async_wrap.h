@@ -27,8 +27,8 @@
 #include "base_object.h"
 #include "v8.h"
 
-#if HAVE_OPENSSL
-# include <openssl/crypto.h>
+#if NODE_OPENSSL_HAS_QUIC
+#include <openssl/quic.h>
 #endif
 
 #include <cstdint>
@@ -107,7 +107,7 @@ namespace node {
 #define NODE_ASYNC_INSPECTOR_PROVIDER_TYPES(V)
 #endif  // HAVE_INSPECTOR
 
-#ifdef OPENSSL_INFO_QUIC
+#if NODE_OPENSSL_HAS_QUIC
 #define NODE_ASYNC_QUIC_PROVIDER_TYPES(V)                                     \
   V(BLOBSOURCE)                                                               \
   V(JSQUICBUFFERCONSUMER)                                                     \

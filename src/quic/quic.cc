@@ -3,14 +3,14 @@
 #include <openssl/crypto.h>
 #endif  // HAVE_OPENSSL
 
-#ifdef OPENSSL_INFO_QUIC
+#if NODE_OPENSSL_HAS_QUIC
 # include "quic/quic.h"
 # include "quic/endpoint.h"
 # include "quic/session.h"
 # include "quic/stream.h"
 # include "crypto/crypto_random.h"
 # include "crypto/crypto_context.h"
-#endif  // OPENSSL_INFO_QUIC
+#endif  // NODE_OPENSSL_HAS_QUIC
 
 #include "async_wrap-inl.h"
 #include "base_object-inl.h"
@@ -36,7 +36,7 @@ using v8::String;
 using v8::Value;
 
 namespace quic {
-#ifdef OPENSSL_INFO_QUIC
+#if NODE_OPENSSL_HAS_QUIC
 
 constexpr FastStringKey BindingState::type_name;
 
@@ -335,14 +335,14 @@ void CreateSecureContext(const FunctionCallbackInfo<Value>& args) {
 }
 }  // namespace
 
-#endif  // OPENSSL_INFO_QUIC
+#endif  // NODE_OPENSSL_HAS_QUIC
 
 void Initialize(
     Local<Object> target,
     Local<Value> unused,
     Local<Context> context,
     void* priv) {
-#ifdef OPENSSL_INFO_QUIC
+#if NODE_OPENSSL_HAS_QUIC
   Environment* env = Environment::GetCurrent(context);
 
   if (UNLIKELY(!BindingState::Initialize(env, target)))
@@ -397,7 +397,7 @@ void Initialize(
   NODE_DEFINE_CONSTANT(target, NGHTTP3_H3_NO_ERROR);
   NODE_DEFINE_CONSTANT(target, QUICERROR_TYPE_TRANSPORT);
   NODE_DEFINE_CONSTANT(target, QUICERROR_TYPE_APPLICATION);
-#endif  // OPENSSL_INFO_QUIC
+#endif  // NODE_OPENSSL_HAS_QUIC
 }
 
 }  // namespace quic
