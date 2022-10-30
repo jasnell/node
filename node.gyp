@@ -471,6 +471,7 @@
         'src/cleanup_queue.cc',
         'src/connect_wrap.cc',
         'src/connection_wrap.cc',
+        'src/dataqueue/queue.cc',
         'src/debug_utils.cc',
         'src/env.cc',
         'src/fs_event_wrap.cc',
@@ -574,6 +575,7 @@
         'src/cleanup_queue-inl.h',
         'src/connect_wrap.h',
         'src/connection_wrap.h',
+        'src/dataqueue/queue.h',
         'src/debug_utils.h',
         'src/debug_utils-inl.h',
         'src/env_properties.h',
@@ -1010,6 +1012,7 @@
         'test/cctest/test_traced_value.cc',
         'test/cctest/test_util.cc',
         'test/cctest/test_url.cc',
+        'test/cctest/test_dataqueue.cc',
       ],
 
       'conditions': [

@@ -72,6 +72,7 @@ using Next = std::function<void(int, const T*, size_t count, Done done)>;
 template <typename T>
 class Source {
  public:
+  virtual ~Source() = default;
   virtual int Pull(
       Next<T> next,
       int options,

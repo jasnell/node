@@ -47,7 +47,7 @@ void Blob::Initialize(
   SetMethod(context, target, "storeDataObject", StoreDataObject);
   SetMethod(context, target, "getDataObject", GetDataObject);
   SetMethod(context, target, "revokeDataObject", RevokeDataObject);
-  FixedSizeBlobCopyJob::Initialize(env, target);
+  //FixedSizeBlobCopyJob::Initialize(env, target);
 }
 
 Local<FunctionTemplate> Blob::GetConstructorTemplate(Environment* env) {
@@ -71,9 +71,7 @@ bool Blob::HasInstance(Environment* env, v8::Local<v8::Value> object) {
   return GetConstructorTemplate(env)->HasInstance(object);
 }
 
-BaseObjectPtr<Blob> Blob::Create(Environment* env,
-                                 const std::vector<BlobEntry>& store,
-                                 size_t length) {
+BaseObjectPtr<Blob> Blob::Create(Environment* env, std::shared_ptr<DataQueue> data_queue) {
   HandleScope scope(env->isolate());
 
   Local<Function> ctor;
@@ -84,7 +82,7 @@ BaseObjectPtr<Blob> Blob::Create(Environment* env,
   if (!ctor->NewInstance(env->context()).ToLocal(&obj))
     return BaseObjectPtr<Blob>();
 
-  return MakeBaseObject<Blob>(env, obj, store, length);
+  return MakeBaseObject<Blob>(env, obj, data_queue);
 }
 
 void Blob::New(const FunctionCallbackInfo<Value>& args) {
@@ -92,35 +90,39 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsArray());  // sources
   CHECK(args[1]->IsUint32());  // length
 
-  std::vector<BlobEntry> entries;
+  // TODO(@flakey5): revisit when DataQueue is complete
+  //std::vector<BlobEntry> entries;
 
-  size_t length = args[1].As<Uint32>()->Value();
-  size_t len = 0;
-  Local<Array> ary = args[0].As<Array>();
-  for (size_t n = 0; n < ary->Length(); n++) {
-    Local<Value> entry;
-    if (!ary->Get(env->context(), n).ToLocal(&entry))
-      return;
-    CHECK(entry->IsArrayBufferView() || Blob::HasInstance(env, entry));
-    if (entry->IsArrayBufferView()) {
-      Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
-      CHECK_EQ(view->ByteOffset(), 0);
-      std::shared_ptr<BackingStore> store = view->Buffer()->GetBackingStore();
-      size_t byte_length = view->ByteLength();
-      view->Buffer()->Detach();  // The Blob will own the backing store now.
-      entries.emplace_back(BlobEntry{std::move(store), byte_length, 0});
-      len += byte_length;
-    } else {
-      Blob* blob;
-      ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
-      auto source = blob->entries();
-      entries.insert(entries.end(), source.begin(), source.end());
-      len += blob->length();
-    }
-  }
-  CHECK_EQ(length, len);
+  //size_t length = args[1].As<Uint32>()->Value();
+  //size_t len = 0;
+  //Local<Array> ary = args[0].As<Array>();
+  //for (size_t n = 0; n < ary->Length(); n++) {
+  //  Local<Value> entry;
+  //  if (!ary->Get(env->context(), n).ToLocal(&entry))
+  //    return;
+  //  CHECK(entry->IsArrayBufferView() || Blob::HasInstance(env, entry));
+  //  if (entry->IsArrayBufferView()) {
+  //    Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
+  //    CHECK_EQ(view->ByteOffset(), 0);
+  //    std::shared_ptr<BackingStore> store = view->Buffer()->GetBackingStore();
+  //    size_t byte_length = view->ByteLength();
+  //    view->Buffer()->Detach();  // The Blob will own the backing store now.
+  //    entries.emplace_back(BlobEntry{std::move(store), byte_length, 0});
+  //    len += byte_length;
+  //  } else {
+  //    Blob* blob;
+  //    ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
+  //    auto source = blob->entries();
+  //    entries.insert(entries.end(), source.begin(), source.end());
+  //    len += blob->length();
+  //  }
+  //}
+  //CHECK_EQ(length, len);
 
-  BaseObjectPtr<Blob> blob = Create(env, entries, length);
+  // TODO(@flakey5): get dataqueue from js
+  std::shared_ptr<DataQueue> data_queue = nullptr;
+
+  BaseObjectPtr<Blob> blob = Create(env, data_queue);
   if (blob)
     args.GetReturnValue().Set(blob->object());
 }
@@ -148,15 +150,16 @@ void Blob::ToSlice(const FunctionCallbackInfo<Value>& args) {
 }
 
 void Blob::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackFieldWithSize("store", length_);
+  tracker->TrackFieldWithSize("store", length());
 }
 
 MaybeLocal<Value> Blob::GetArrayBuffer(Environment* env) {
+  // TODO(@flakey5): figure out how this'll work
   EscapableHandleScope scope(env->isolate());
   size_t len = length();
   std::shared_ptr<BackingStore> store =
       ArrayBuffer::NewBackingStore(env->isolate(), len);
-  if (len > 0) {
+  /*if (len > 0) {
     unsigned char* dest = static_cast<unsigned char*>(store->Data());
     size_t total = 0;
     for (const auto& entry : entries()) {
@@ -167,50 +170,21 @@ MaybeLocal<Value> Blob::GetArrayBuffer(Environment* env) {
       total += entry.length;
       CHECK_LE(total, len);
     }
-  }
+  }*/
 
   return scope.Escape(ArrayBuffer::New(env->isolate(), store));
 }
 
 BaseObjectPtr<Blob> Blob::Slice(Environment* env, size_t start, size_t end) {
-  CHECK_LE(start, length());
-  CHECK_LE(end, length());
-  CHECK_LE(start, end);
-
-  std::vector<BlobEntry> slices;
-  size_t total = end - start;
-  size_t remaining = total;
-
-  if (total == 0) return Create(env, slices, 0);
-
-  for (const auto& entry : entries()) {
-    if (start + entry.offset > entry.store->ByteLength()) {
-      start -= entry.length;
-      continue;
-    }
-
-    size_t offset = entry.offset + start;
-    size_t len = std::min(remaining, entry.store->ByteLength() - offset);
-    slices.emplace_back(BlobEntry{entry.store, len, offset});
-
-    remaining -= len;
-    start = 0;
-
-    if (remaining == 0)
-      break;
-  }
-
-  return Create(env, slices, total);
+  return Create(env, this->data_queue->slice(start, v8::Just(end)));
 }
 
 Blob::Blob(
     Environment* env,
     v8::Local<v8::Object> obj,
-    const std::vector<BlobEntry>& store,
-    size_t length)
+    std::shared_ptr<DataQueue> data_queue)
     : BaseObject(env, obj),
-      store_(store),
-      length_(length) {
+      data_queue(data_queue) {
   MakeWeak();
 }
 
@@ -223,7 +197,7 @@ Blob::BlobTransferData::Deserialize(
     THROW_ERR_MESSAGE_TARGET_CONTEXT_UNAVAILABLE(env);
     return {};
   }
-  return Blob::Create(env, store_, length_);
+  return Blob::Create(env, data_queue);
 }
 
 BaseObject::TransferMode Blob::GetTransferMode() const {
@@ -231,7 +205,7 @@ BaseObject::TransferMode Blob::GetTransferMode() const {
 }
 
 std::unique_ptr<worker::TransferData> Blob::CloneForMessaging() const {
-  return std::make_unique<BlobTransferData>(store_, length_);
+  return std::make_unique<BlobTransferData>(data_queue);
 }
 
 void Blob::StoreDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -306,114 +280,115 @@ void Blob::GetDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
 }
 
-FixedSizeBlobCopyJob::FixedSizeBlobCopyJob(
-    Environment* env,
-    Local<Object> object,
-    Blob* blob,
-    FixedSizeBlobCopyJob::Mode mode)
-    : AsyncWrap(env, object, AsyncWrap::PROVIDER_FIXEDSIZEBLOBCOPY),
-      ThreadPoolWork(env),
-      mode_(mode) {
-  if (mode == FixedSizeBlobCopyJob::Mode::SYNC) MakeWeak();
-  source_ = blob->entries();
-  length_ = blob->length();
-}
-
-void FixedSizeBlobCopyJob::AfterThreadPoolWork(int status) {
-  Environment* env = AsyncWrap::env();
-  CHECK_EQ(mode_, Mode::ASYNC);
-  CHECK(status == 0 || status == UV_ECANCELED);
-  std::unique_ptr<FixedSizeBlobCopyJob> ptr(this);
-  HandleScope handle_scope(env->isolate());
-  Context::Scope context_scope(env->context());
-  Local<Value> args[2];
-
-  if (status == UV_ECANCELED) {
-    args[0] = Number::New(env->isolate(), status),
-    args[1] = Undefined(env->isolate());
-  } else {
-    args[0] = Undefined(env->isolate());
-    args[1] = ArrayBuffer::New(env->isolate(), destination_);
-  }
-
-  ptr->MakeCallback(env->ondone_string(), arraysize(args), args);
-}
-
-void FixedSizeBlobCopyJob::DoThreadPoolWork() {
-  unsigned char* dest = static_cast<unsigned char*>(destination_->Data());
-  if (length_ > 0) {
-    size_t total = 0;
-    for (const auto& entry : source_) {
-      unsigned char* src = static_cast<unsigned char*>(entry.store->Data());
-      src += entry.offset;
-      memcpy(dest, src, entry.length);
-      dest += entry.length;
-      total += entry.length;
-      CHECK_LE(total, length_);
-    }
-  }
-}
-
-void FixedSizeBlobCopyJob::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackFieldWithSize("source", length_);
-  tracker->TrackFieldWithSize(
-      "destination",
-      destination_ ? destination_->ByteLength() : 0);
-}
-
-void FixedSizeBlobCopyJob::Initialize(Environment* env, Local<Object> target) {
-  Isolate* isolate = env->isolate();
-  v8::Local<v8::FunctionTemplate> job = NewFunctionTemplate(isolate, New);
-  job->Inherit(AsyncWrap::GetConstructorTemplate(env));
-  job->InstanceTemplate()->SetInternalFieldCount(
-      AsyncWrap::kInternalFieldCount);
-  SetProtoMethod(isolate, job, "run", Run);
-  SetConstructorFunction(env->context(), target, "FixedSizeBlobCopyJob", job);
-}
-
-void FixedSizeBlobCopyJob::New(const FunctionCallbackInfo<Value>& args) {
-  static constexpr size_t kMaxSyncLength = 4096;
-  static constexpr size_t kMaxEntryCount = 4;
-
-  Environment* env = Environment::GetCurrent(args);
-  CHECK(args.IsConstructCall());
-  CHECK(args[0]->IsObject());
-  CHECK(Blob::HasInstance(env, args[0]));
-
-  Blob* blob;
-  ASSIGN_OR_RETURN_UNWRAP(&blob, args[0]);
-
-  // This is a fairly arbitrary heuristic. We want to avoid deferring to
-  // the threadpool if the amount of data being copied is small and there
-  // aren't that many entries to copy.
-  FixedSizeBlobCopyJob::Mode mode =
-      (blob->length() < kMaxSyncLength &&
-       blob->entries().size() < kMaxEntryCount) ?
-          FixedSizeBlobCopyJob::Mode::SYNC :
-          FixedSizeBlobCopyJob::Mode::ASYNC;
-
-  new FixedSizeBlobCopyJob(env, args.This(), blob, mode);
-}
-
-void FixedSizeBlobCopyJob::Run(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
-  FixedSizeBlobCopyJob* job;
-  ASSIGN_OR_RETURN_UNWRAP(&job, args.Holder());
-  job->destination_ =
-      ArrayBuffer::NewBackingStore(env->isolate(), job->length_);
-  if (job->mode() == FixedSizeBlobCopyJob::Mode::ASYNC)
-    return job->ScheduleWork();
-
-  job->DoThreadPoolWork();
-  args.GetReturnValue().Set(
-      ArrayBuffer::New(env->isolate(), job->destination_));
-}
-
-void FixedSizeBlobCopyJob::RegisterExternalReferences(
-    ExternalReferenceRegistry* registry) {
-  registry->Register(New);
-  registry->Register(Run);
-}
+// TODO(@flakey5): revisit when DataQueue is complete
+//FixedSizeBlobCopyJob::FixedSizeBlobCopyJob(
+//    Environment* env,
+//    Local<Object> object,
+//    Blob* blob,
+//    FixedSizeBlobCopyJob::Mode mode)
+//    : AsyncWrap(env, object, AsyncWrap::PROVIDER_FIXEDSIZEBLOBCOPY),
+//      ThreadPoolWork(env),
+//      mode_(mode) {
+//  if (mode == FixedSizeBlobCopyJob::Mode::SYNC) MakeWeak();
+//  source_ = blob->entries();
+//  length_ = blob->length();
+//}
+//
+//void FixedSizeBlobCopyJob::AfterThreadPoolWork(int status) {
+//  Environment* env = AsyncWrap::env();
+//  CHECK_EQ(mode_, Mode::ASYNC);
+//  CHECK(status == 0 || status == UV_ECANCELED);
+//  std::unique_ptr<FixedSizeBlobCopyJob> ptr(this);
+//  HandleScope handle_scope(env->isolate());
+//  Context::Scope context_scope(env->context());
+//  Local<Value> args[2];
+//
+//  if (status == UV_ECANCELED) {
+//    args[0] = Number::New(env->isolate(), status),
+//    args[1] = Undefined(env->isolate());
+//  } else {
+//    args[0] = Undefined(env->isolate());
+//    args[1] = ArrayBuffer::New(env->isolate(), destination_);
+//  }
+//
+//  ptr->MakeCallback(env->ondone_string(), arraysize(args), args);
+//}
+//
+//void FixedSizeBlobCopyJob::DoThreadPoolWork() {
+//  unsigned char* dest = static_cast<unsigned char*>(destination_->Data());
+//  if (length_ > 0) {
+//    size_t total = 0;
+//    for (const auto& entry : source_) {
+//      unsigned char* src = static_cast<unsigned char*>(entry.store->Data());
+//      src += entry.offset;
+//      memcpy(dest, src, entry.length);
+//      dest += entry.length;
+//      total += entry.length;
+//      CHECK_LE(total, length_);
+//    }
+//  }
+//}
+//
+//void FixedSizeBlobCopyJob::MemoryInfo(MemoryTracker* tracker) const {
+//  tracker->TrackFieldWithSize("source", length_);
+//  tracker->TrackFieldWithSize(
+//      "destination",
+//      destination_ ? destination_->ByteLength() : 0);
+//}
+//
+//void FixedSizeBlobCopyJob::Initialize(Environment* env, Local<Object> target) {
+//  Isolate* isolate = env->isolate();
+//  v8::Local<v8::FunctionTemplate> job = NewFunctionTemplate(isolate, New);
+//  job->Inherit(AsyncWrap::GetConstructorTemplate(env));
+//  job->InstanceTemplate()->SetInternalFieldCount(
+//      AsyncWrap::kInternalFieldCount);
+//  SetProtoMethod(isolate, job, "run", Run);
+//  SetConstructorFunction(env->context(), target, "FixedSizeBlobCopyJob", job);
+//}
+//
+//void FixedSizeBlobCopyJob::New(const FunctionCallbackInfo<Value>& args) {
+//  static constexpr size_t kMaxSyncLength = 4096;
+//  static constexpr size_t kMaxEntryCount = 4;
+//
+//  Environment* env = Environment::GetCurrent(args);
+//  CHECK(args.IsConstructCall());
+//  CHECK(args[0]->IsObject());
+//  CHECK(Blob::HasInstance(env, args[0]));
+//
+//  Blob* blob;
+//  ASSIGN_OR_RETURN_UNWRAP(&blob, args[0]);
+//
+//  // This is a fairly arbitrary heuristic. We want to avoid deferring to
+//  // the threadpool if the amount of data being copied is small and there
+//  // aren't that many entries to copy.
+//  FixedSizeBlobCopyJob::Mode mode =
+//      (blob->length() < kMaxSyncLength &&
+//       blob->entries().size() < kMaxEntryCount) ?
+//          FixedSizeBlobCopyJob::Mode::SYNC :
+//          FixedSizeBlobCopyJob::Mode::ASYNC;
+//
+//  new FixedSizeBlobCopyJob(env, args.This(), blob, mode);
+//}
+//
+//void FixedSizeBlobCopyJob::Run(const FunctionCallbackInfo<Value>& args) {
+//  Environment* env = Environment::GetCurrent(args);
+//  FixedSizeBlobCopyJob* job;
+//  ASSIGN_OR_RETURN_UNWRAP(&job, args.Holder());
+//  job->destination_ =
+//      ArrayBuffer::NewBackingStore(env->isolate(), job->length_);
+//  if (job->mode() == FixedSizeBlobCopyJob::Mode::ASYNC)
+//    return job->ScheduleWork();
+//
+//  job->DoThreadPoolWork();
+//  args.GetReturnValue().Set(
+//      ArrayBuffer::New(env->isolate(), job->destination_));
+//}
+//
+//void FixedSizeBlobCopyJob::RegisterExternalReferences(
+//    ExternalReferenceRegistry* registry) {
+//  registry->Register(New);
+//  registry->Register(Run);
+//}
 
 void BlobBindingData::StoredDataObject::MemoryInfo(
     MemoryTracker* tracker) const {
