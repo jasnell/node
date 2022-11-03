@@ -14,6 +14,7 @@
 #include <memory>
 #include <vector>
 #include "memory_tracker.h"
+#include "node_external_reference.h"
 
 namespace node {
 
@@ -24,6 +25,13 @@ using v8::Local;
 using v8::Object;
 using v8::Maybe;
 using v8::Nothing;
+using v8::FunctionTemplate;
+using v8::Isolate;
+using v8::FunctionCallbackInfo;
+using v8::Value;
+using v8::String;
+using v8::Global;
+using v8::Function;
 
 namespace {
 // ============================================================================
@@ -784,21 +792,195 @@ class DataQueueEntry : public EntryBase {
 
 // ============================================================================
 
-// TODO(@flakey5): Implement StreamEntry, StreamBaseEntry, and FdEntry
-// These will all extend from DataQueueEntry in various ways. The StreamEntry
-// and StreamBaseEntry will each always be non-idempotent. Reads will always
-// be destructive of the state. FdEntry, although it is streaming, can be
-// idempotent or non-idempotent, depending on the file descriptor type.
+// Essentially an entry that exists to give the Javascript side
+//  control of what happens when data is read. Always non-idempotent.
+class StreamEntry : public BaseObject, public EntryBase {
+ public:
+  static void New(const FunctionCallbackInfo<Value>& args) {
+    CHECK(args.IsConstructCall());
+    Environment* env = Environment::GetCurrent(args);
 
-class StreamEntry : public EntryBase {};
+    CHECK(args.Length() == 1);
+
+    CHECK(args[0]->IsFunction());
+
+    new StreamEntry(env, args.This(), args[0]);
+  }
+
+  static Local<FunctionTemplate> GetConstructorTemplate(
+     Environment* env) {
+    Local<FunctionTemplate> tmpl = env->streamentry_ctor_template();
+    if (tmpl.IsEmpty()) {
+      Isolate* isolate = env->isolate();
+      tmpl = NewFunctionTemplate(isolate, New);
+
+      tmpl->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "StreamEntry"));
+      tmpl->Inherit(BaseObject::GetConstructorTemplate(env));
+
+      env->set_streamentry_ctor_template(tmpl);
+    }
+
+    return tmpl;
+  }
+
+  static void Initialize(Environment* env, Local<Object> target) {
+    SetConstructorFunction(
+      env->context(), target, "StreamEntry", GetConstructorTemplate(env));
+  }
+
+  static void RegisterExternalReferences(
+      ExternalReferenceRegistry* registry) {
+    registry->Register(New);
+  }
+
+  static BaseObjectPtr<StreamEntry> Create(Environment* env) {
+    Local<Object> obj;
+    if (!GetConstructorTemplate(env)
+        ->InstanceTemplate()
+        ->NewInstance(env->context())
+        .ToLocal(&obj)) {
+      return BaseObjectPtr<StreamEntry>();
+    }
+
+    return MakeBaseObject<StreamEntry>(env, obj);
+  }
+
+  void MemoryInfo(MemoryTracker* tracker) const override final {
+    tracker->TrackField("callback", pull_callback_);
+  }
+
+  SET_MEMORY_INFO_NAME(StreamEntry)
+  SET_SELF_SIZE(StreamEntry)
+
+  StreamEntry(Environment* env, Local<Object> obj, Local<Function> pull_callback)
+      : BaseObject(env, obj) {
+    // TODO(@flakey5): convert pull_callback to a global & store it
+    MakeWeak();
+  }
+
+  std::unique_ptr<DataQueue::Reader> getReader() override final {
+    return std::make_unique<StreamEntryReader>(pull_callback_);
+  }
+
+  std::unique_ptr<Entry> slice(
+      size_t start,
+      Maybe<size_t> end = Nothing<size_t>()) override final {
+    return nullptr;
+  }
+
+  Maybe<size_t> size() const override final {
+    return Nothing<size_t>();
+  }
+
+  // Always non-idempotent for streams
+  bool isIdempotent() const override final {
+    return false;
+  }
+
+ private:
+  Global<Function> pull_callback_;
+
+  class StreamEntryReader : public DataQueue::Reader {
+   public:
+    StreamEntryReader(Global<Function> pull_callback)
+        : pull_callback_(std::move(pull_callback)) {
+    }
+
+    int Pull(
+        bob::Next<DataQueue::Vec> next,
+        int options,
+        DataQueue::Vec* data,
+        size_t count,
+        size_t max_count_hint = bob::kMaxCountHint) override final {
+      // TODO(@flakey5): fill an ArrayBuffer with data, send to js
+      // deref pullfunction
+      // call it
+      
+    }
+   private:
+    Global<Function> pull_function_;
+  };
+};
 
 // ============================================================================
 
-class StreamBaseEntry : public EntryBase {};
+class StreamBaseEntry : public EntryBase {
+public:
+  StreamBaseEntry(std::shared_ptr<DataQueue> data_queue)
+      : data_queue_(std::move(data_queue)) {
+    CHECK(data_queue);
+  }
+
+  std::unique_ptr<DataQueue::Reader> getReader() override {
+    return nullptr;
+  }
+
+  std::unique_ptr<Entry> slice(
+      size_t start,
+      Maybe<size_t> end = Nothing<size_t>()) override {
+    // TODO(@flakey5)
+    return nullptr;
+  }
+
+  Maybe<size_t> size() const override {
+    // TODO(@flakey5)
+    return Nothing<size_t>();
+  }
+
+  // Always non-idempotent for streams
+  bool isIdempotent() const override final {
+    return false;
+  }
+ private:
+  std::shared_ptr<DataQueue> data_queue_;
+};
 
 // ============================================================================
 
-class FdEntry : public EntryBase {};
+class FdEntry : public EntryBase {
+ public:
+  FdEntry(int fd) : fd_(fd), start_(0) {
+    CHECK(fd);
+    uv_fs_t req;
+    uv_fs_fstat(nullptr, &req, fd, nullptr);
+
+    stat_ = req.statbuf;
+    end_ = stat_.st_size;
+  }
+
+  std::unique_ptr<DataQueue::Reader> getReader() override {
+    // TODO(@flakey5): streambase reader w/ validation
+    return nullptr;
+  }
+
+  std::unique_ptr<Entry> slice(
+      size_t start,
+      Maybe<size_t> end = Nothing<size_t>()) override {
+    size_t newSize = end.IsJust() ? end.ToChecked() : end_;
+
+    CHECK(start >= start_);
+    CHECK(newSize <= end_);
+
+    return std::make_unique<FdEntry>(fd_, stat_, start, newSize);
+  }
+
+  Maybe<size_t> size() const override {
+    return Just(end_ - start_);
+  }
+
+  bool isIdempotent() const override final {
+    return true;
+  }
+
+ private:
+  FdEntry(int fd, uv_stat_t stat, size_t start, size_t end)
+      : fd_(fd), stat_(stat), start_(start), end_(end) {}
+
+  int fd_;
+  uv_stat_t stat_;
+  size_t start_;
+  size_t end_;
+};
 
 // ============================================================================
 
@@ -1072,9 +1254,8 @@ std::unique_ptr<DataQueue::Entry> DataQueue::CreateStreamEntry(
   return nullptr;
 }
 
-std::unique_ptr<DataQueue::Entry> DataQueueCreateFdEntry(
-    BaseObjectPtr<fs::FileHandle> handle) {
-  return nullptr;
+std::unique_ptr<DataQueue::Entry> DataQueue::CreateFdEntry(BaseObjectPtr<fs::FileHandle> handle) {
+  return std::make_unique<DataQueue::Entry>(handle->GetFD());
 }
 
 }  // namespace node

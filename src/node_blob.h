@@ -5,6 +5,7 @@
 
 #include "async_wrap.h"
 #include "base_object.h"
+#include "dataqueue/queue.h"
 #include "env.h"
 #include "memory_tracker.h"
 #include "node_internals.h"
@@ -17,12 +18,6 @@
 #include <vector>
 
 namespace node {
-
-struct BlobEntry {
-  std::shared_ptr<v8::BackingStore> store;
-  size_t length;
-  size_t offset;
-};
 
 class Blob : public BaseObject {
  public:
@@ -45,13 +40,9 @@ class Blob : public BaseObject {
   static v8::Local<v8::FunctionTemplate> GetConstructorTemplate(
       Environment* env);
 
-  static BaseObjectPtr<Blob> Create(Environment* env,
-                                    const std::vector<BlobEntry>& store,
-                                    size_t length);
+  static BaseObjectPtr<Blob> Create(Environment* env, std::shared_ptr<DataQueue> data_queue);
 
   static bool HasInstance(Environment* env, v8::Local<v8::Value> object);
-
-  const std::vector<BlobEntry>& entries() const { return store_; }
 
   void MemoryInfo(MemoryTracker* tracker) const override;
   SET_MEMORY_INFO_NAME(Blob)
@@ -62,15 +53,12 @@ class Blob : public BaseObject {
 
   BaseObjectPtr<Blob> Slice(Environment* env, size_t start, size_t end);
 
-  inline size_t length() const { return length_; }
+  inline size_t length() const { return this->data_queue->size().ToChecked(); }
 
   class BlobTransferData : public worker::TransferData {
    public:
-    explicit BlobTransferData(
-        const std::vector<BlobEntry>& store,
-      size_t length)
-        : store_(store),
-          length_(length) {}
+    explicit BlobTransferData(std::shared_ptr<DataQueue> data_queue)
+      : data_queue(data_queue) {}
 
     BaseObjectPtr<BaseObject> Deserialize(
         Environment* env,
@@ -82,62 +70,60 @@ class Blob : public BaseObject {
     SET_NO_MEMORY_INFO()
 
    private:
-    std::vector<BlobEntry> store_;
-    size_t length_ = 0;
+     std::shared_ptr<DataQueue> data_queue;
   };
 
   BaseObject::TransferMode GetTransferMode() const override;
   std::unique_ptr<worker::TransferData> CloneForMessaging() const override;
 
   Blob(
-      Environment* env,
-      v8::Local<v8::Object> obj,
-      const std::vector<BlobEntry>& store,
-      size_t length);
-
- private:
-  std::vector<BlobEntry> store_;
-  size_t length_ = 0;
-};
-
-class FixedSizeBlobCopyJob : public AsyncWrap, public ThreadPoolWork {
- public:
-  enum class Mode {
-    SYNC,
-    ASYNC
-  };
-
-  static void RegisterExternalReferences(
-      ExternalReferenceRegistry* registry);
-  static void Initialize(Environment* env, v8::Local<v8::Object> target);
-  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
-  static void Run(const v8::FunctionCallbackInfo<v8::Value>& args);
-
-  bool IsNotIndicativeOfMemoryLeakAtExit() const override {
-    return true;
-  }
-
-  void DoThreadPoolWork() override;
-  void AfterThreadPoolWork(int status) override;
-
-  Mode mode() const { return mode_; }
-
-  void MemoryInfo(MemoryTracker* tracker) const override;
-  SET_MEMORY_INFO_NAME(FixedSizeBlobCopyJob)
-  SET_SELF_SIZE(FixedSizeBlobCopyJob)
-
- private:
-  FixedSizeBlobCopyJob(
     Environment* env,
-    v8::Local<v8::Object> object,
-    Blob* blob,
-    Mode mode = Mode::ASYNC);
+    v8::Local<v8::Object> obj,
+    std::shared_ptr<DataQueue> data_queue);
 
-  Mode mode_;
-  std::vector<BlobEntry> source_;
-  std::shared_ptr<v8::BackingStore> destination_;
-  size_t length_ = 0;
+ private:
+  std::shared_ptr<DataQueue> data_queue;
 };
+
+// TODO(@flakey5): revisit when DataQueue is complete
+//class FixedSizeBlobCopyJob : public AsyncWrap, public ThreadPoolWork {
+// public:
+//  enum class Mode {
+//    SYNC,
+//    ASYNC
+//  };
+//
+//  static void RegisterExternalReferences(
+//      ExternalReferenceRegistry* registry);
+//  static void Initialize(Environment* env, v8::Local<v8::Object> target);
+//  static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
+//  static void Run(const v8::FunctionCallbackInfo<v8::Value>& args);
+//
+//  bool IsNotIndicativeOfMemoryLeakAtExit() const override {
+//    return true;
+//  }
+//
+//  void DoThreadPoolWork() override;
+//  void AfterThreadPoolWork(int status) override;
+//
+//  Mode mode() const { return mode_; }
+//
+//  void MemoryInfo(MemoryTracker* tracker) const override;
+//  SET_MEMORY_INFO_NAME(FixedSizeBlobCopyJob)
+//  SET_SELF_SIZE(FixedSizeBlobCopyJob)
+//
+// private:
+//  FixedSizeBlobCopyJob(
+//    Environment* env,
+//    v8::Local<v8::Object> object,
+//    Blob* blob,
+//    Mode mode = Mode::ASYNC);
+//
+//  Mode mode_;
+//  std::vector<BlobEntry> source_;
+//  std::shared_ptr<v8::BackingStore> destination_;
+//  size_t length_ = 0;
+//};
 
 class BlobBindingData : public SnapshotableObject {
  public:

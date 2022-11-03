@@ -356,12 +356,14 @@
   V(shutdown_wrap_template, v8::ObjectTemplate)                                \
   V(socketaddress_constructor_template, v8::FunctionTemplate)                  \
   V(streambaseoutputstream_constructor_template, v8::ObjectTemplate)           \
+  V(streamentry_ctor_template, v8::FunctionTemplate)                           \
   V(qlogoutputstream_constructor_template, v8::ObjectTemplate)                 \
   V(tcp_constructor_template, v8::FunctionTemplate)                            \
   V(tty_constructor_template, v8::FunctionTemplate)                            \
   V(write_wrap_template, v8::ObjectTemplate)                                   \
   V(worker_heap_snapshot_taker_template, v8::ObjectTemplate)                   \
-  V(x509_constructor_template, v8::FunctionTemplate)
+  V(x509_constructor_template, v8::FunctionTemplate)                           
+
 
 #define PER_REALM_STRONG_PERSISTENT_VALUES(V)                                  \
   V(async_hooks_after_function, v8::Function)                                  \
