@@ -60,7 +60,7 @@ class DataQueueImpl final : public DataQueue,
       : entries_(std::move(list)),
         idempotent_(true),
         size_(Just(size)),
-        capped_size_(Just(0UL)) {}
+        capped_size_(Just<size_t>(0UL)) {}
 
   // Constructor for a non-idempotent DataQueue. This kind of queue can have
   // entries added to it over time. The size is set to 0 initially. The queue
@@ -69,7 +69,7 @@ class DataQueueImpl final : public DataQueue,
   // providing a size.
   DataQueueImpl(Maybe<size_t> cap = Nothing<size_t>())
       : idempotent_(false),
-        size_(Just(0UL)),
+        size_(Just<size_t>(0UL)),
         capped_size_(cap) {}
 
   // Disallow moving and copying.
@@ -176,7 +176,7 @@ class DataQueueImpl final : public DataQueue,
     size_t capped_size;
     size_t size;
     if (capped_size_.To(&capped_size) && size_.To(&size)) {
-      return capped_size > size ? Just(capped_size - size) : Just(0UL);
+      return capped_size > size ? Just(capped_size - size) : Just<size_t>(0UL);
     }
     return Nothing<size_t>();
   }
@@ -613,7 +613,7 @@ class EmptyEntry final : public EntryBase {
     return std::make_unique<EmptyEntry>();
   }
 
-  Maybe<size_t> size() const override { return Just(0UL); }
+  Maybe<size_t> size() const override { return Just<size_t>(0UL); }
 
   bool isIdempotent() const override { return true; }
 

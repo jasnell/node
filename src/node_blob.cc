@@ -159,6 +159,7 @@ MaybeLocal<Value> Blob::GetArrayBuffer(Environment* env) {
   size_t len = length();
   std::shared_ptr<BackingStore> store =
       ArrayBuffer::NewBackingStore(env->isolate(), len);
+
   /*if (len > 0) {
     unsigned char* dest = static_cast<unsigned char*>(store->Data());
     size_t total = 0;
@@ -176,7 +177,7 @@ MaybeLocal<Value> Blob::GetArrayBuffer(Environment* env) {
 }
 
 BaseObjectPtr<Blob> Blob::Slice(Environment* env, size_t start, size_t end) {
-  return Create(env, this->data_queue->slice(start, v8::Just(end)));
+  return Create(env, this->data_queue_->slice(start, v8::Just(end)));
 }
 
 Blob::Blob(
@@ -184,7 +185,7 @@ Blob::Blob(
     v8::Local<v8::Object> obj,
     std::shared_ptr<DataQueue> data_queue)
     : BaseObject(env, obj),
-      data_queue(data_queue) {
+      data_queue_(data_queue) {
   MakeWeak();
 }
 
@@ -205,7 +206,7 @@ BaseObject::TransferMode Blob::GetTransferMode() const {
 }
 
 std::unique_ptr<worker::TransferData> Blob::CloneForMessaging() const {
-  return std::make_unique<BlobTransferData>(data_queue);
+  return std::make_unique<BlobTransferData>(data_queue_);
 }
 
 void Blob::StoreDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -410,7 +411,7 @@ BlobBindingData::BlobBindingData(Environment* env, Local<Object> wrap)
 }
 
 void BlobBindingData::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackField("data_objects", data_objects_);
+  tracker->TrackField("data_objects_", data_objects_);
 }
 
 void BlobBindingData::store_data_object(

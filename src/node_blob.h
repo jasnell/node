@@ -53,7 +53,7 @@ class Blob : public BaseObject {
 
   BaseObjectPtr<Blob> Slice(Environment* env, size_t start, size_t end);
 
-  inline size_t length() const { return this->data_queue->size().ToChecked(); }
+  inline size_t length() const { return this->data_queue_->size().ToChecked(); }
 
   class BlobTransferData : public worker::TransferData {
    public:
@@ -82,7 +82,7 @@ class Blob : public BaseObject {
     std::shared_ptr<DataQueue> data_queue);
 
  private:
-  std::shared_ptr<DataQueue> data_queue;
+  std::shared_ptr<DataQueue> data_queue_;
 };
 
 // TODO(@flakey5): revisit when DataQueue is complete
