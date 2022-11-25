@@ -71,7 +71,8 @@ bool Blob::HasInstance(Environment* env, v8::Local<v8::Value> object) {
   return GetConstructorTemplate(env)->HasInstance(object);
 }
 
-BaseObjectPtr<Blob> Blob::Create(Environment* env, std::shared_ptr<DataQueue> data_queue) {
+BaseObjectPtr<Blob> Blob::Create(
+  Environment* env, std::shared_ptr<DataQueue> data_queue) {
   HandleScope scope(env->isolate());
 
   Local<Function> ctor;
@@ -90,9 +91,8 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsArray());  // sources
   CHECK(args[1]->IsUint32());  // length
 
-  // TODO(@flakey5): revisit when DataQueue is complete
+  // TODO(@flakey5): delete
   //std::vector<BlobEntry> entries;
-
   //size_t length = args[1].As<Uint32>()->Value();
   //size_t len = 0;
   //Local<Array> ary = args[0].As<Array>();
@@ -119,10 +119,32 @@ void Blob::New(const FunctionCallbackInfo<Value>& args) {
   //}
   //CHECK_EQ(length, len);
 
-  // TODO(@flakey5): get dataqueue from js
-  std::shared_ptr<DataQueue> data_queue = nullptr;
+  Local<Array> array = args[0].As<Array>();
+  size_t length = args[1].As<Uint32>()->Value();
+  std::vector<std::unique_ptr<DataQueue::Entry>> entries(length);
 
-  BaseObjectPtr<Blob> blob = Create(env, data_queue);
+  for (size_t i = 0; i < array->Length(); i++) {
+    Local<Value> entry;
+    if (!array->Get(env->context(), i).ToLocal(&entry)) {
+      return;
+    }
+
+    // TODO(@flakey5): check for different entry types
+    CHECK(entry->IsArrayBufferView() || Blob::HasInstance(env, entry));
+    if (entry->IsArrayBufferView()) {
+      Local<ArrayBufferView> view = entry.As<ArrayBufferView>();
+      CHECK_EQ(view->ByteOffset(), 0);
+
+      entries[i] = DataQueue::CreateInMemoryEntryFromView(view);
+    } else {
+      Blob* blob;
+      ASSIGN_OR_RETURN_UNWRAP(&blob, entry);
+
+      entries[i] = DataQueue::CreateDataQueueEntry(blob->data_queue_);
+    }
+  }
+  
+  BaseObjectPtr<Blob> blob = Create(env, DataQueue::CreateIdempotent(entries));
   if (blob)
     args.GetReturnValue().Set(blob->object());
 }
@@ -150,15 +172,36 @@ void Blob::ToSlice(const FunctionCallbackInfo<Value>& args) {
 }
 
 void Blob::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TrackFieldWithSize("store", length());
+  tracker->TrackField("data_queue_", data_queue_);
 }
 
 MaybeLocal<Value> Blob::GetArrayBuffer(Environment* env) {
-  // TODO(@flakey5): figure out how this'll work
   EscapableHandleScope scope(env->isolate());
   size_t len = length();
   std::shared_ptr<BackingStore> store =
       ArrayBuffer::NewBackingStore(env->isolate(), len);
+
+  if (len > 0) {
+    std::unique_ptr<DataQueue::Reader> reader = this->data_queue_->getReader();
+    DataQueue::Vec vec;
+    size_t offset = 0;
+    while (reader->Pull(
+        [&store, &offset](int,
+            const DataQueue::Vec* vec,
+            size_t count,
+            bob::Done done) {
+          for (size_t i = 0; i < count; i++) {
+            memcpy(
+              static_cast<uintptr_t*>(store->Data()) + offset,
+              vec[i].base,
+              vec[i].len);
+            offset += vec[i].len;
+          }
+        },
+        bob::Options::OPTIONS_NONE,
+        &vec,
+        len) != bob::Status::STATUS_EOS);
+  }
 
   /*if (len > 0) {
     unsigned char* dest = static_cast<unsigned char*>(store->Data());
@@ -281,7 +324,7 @@ void Blob::GetDataObject(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
 }
 
-// TODO(@flakey5): revisit when DataQueue is complete
+// TODO(@flakey5): delete
 //FixedSizeBlobCopyJob::FixedSizeBlobCopyJob(
 //    Environment* env,
 //    Local<Object> object,
@@ -471,7 +514,7 @@ void Blob::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(Blob::GetDataObject);
   registry->Register(Blob::RevokeDataObject);
 
-  FixedSizeBlobCopyJob::RegisterExternalReferences(registry);
+  //FixedSizeBlobCopyJob::RegisterExternalReferences(registry);
 }
 
 }  // namespace node
