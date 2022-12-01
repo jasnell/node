@@ -85,7 +85,7 @@ class Blob : public BaseObject {
   std::shared_ptr<DataQueue> data_queue_;
 };
 
-// TODO(@flakey5): revisit when DataQueue is complete
+// TODO(@flakey5): delete
 //class FixedSizeBlobCopyJob : public AsyncWrap, public ThreadPoolWork {
 // public:
 //  enum class Mode {

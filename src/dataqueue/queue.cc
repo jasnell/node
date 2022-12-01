@@ -41,6 +41,8 @@ using v8::Value;
 using v8::String;
 using v8::Global;
 using v8::Function;
+using v8::Int32;
+using v8::Uint32;
 
 namespace {
 // ============================================================================
@@ -959,8 +961,8 @@ class StreamEntry final : public EntryBase {
         // Creating the callback failed for whatever reason. The error will propagate
         // thank to the callback scope, but let's end the reader and fail this read.
         ended_ = true;
-        std::move(next)(bob::STATUS_EOS, nullptr, 0, [](size_t) {});
-        return bob::STATUS_EOS;
+        std::move(next)(bob::STATUS_FAILED, nullptr, 0, [](size_t) {});
+        return bob::STATUS_FAILED;
       }
 
       Local<Value> argv[] = { callback };
@@ -969,10 +971,9 @@ class StreamEntry final : public EntryBase {
       if (!pull->Call(isolate->GetCurrentContext(), wrap, arraysize(argv), argv).ToLocal(&ret)) {
         // The call failed for whatever reason. The error will propagate thanks to the
         // callback scope, but let's end the reader and fail this read.
-        // TODO(@jasnell, @flakey5): Bob streams need a proper error status...
         ended_ = true;
-        std::move(next)(bob::STATUS_EOS, nullptr, 0, [](size_t) {});
-        return bob::STATUS_EOS;
+        std::move(next)(bob::STATUS_FAILED, nullptr, 0, [](size_t) {});
+        return bob::STATUS_FAILED;
       }
 
       return bob::STATUS_WAIT;
@@ -1386,10 +1387,13 @@ class FdEntry final : public EntryBase {
       CHECK(args.IsConstructCall());
       Environment* env = Environment::GetCurrent(args);
 
-      // TODO(dataqueue): Get these from the arguments
-      int fd = 0;
-      size_t start = 0;
-      size_t end = 0;
+      CHECK(args[0]->IsInt32());
+      CHECK(args[1]->IsUint32());
+      CHECK(args[2]->IsUint32());
+
+      int fd = args[0].As<Int32>()->Value();
+      size_t start = args[1].As<Uint32>()->Value();
+      size_t end = args[1].As<Uint32>()->Value();
 
       new Wrap(env, args.This(), fd, start, Just(end));
     }

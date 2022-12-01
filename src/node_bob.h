@@ -10,6 +10,10 @@ constexpr size_t kMaxCountHint = 16;
 
 // Negative status codes indicate error conditions.
 enum Status : int {
+  // Indicates that there was an error while pulling.
+  // Should be treated similar to STATUS_EOS
+  STATUS_FAILED = -2,
+	
   // Indicates that an attempt was made to pull after end.
   STATUS_EOS = -1,
 
