@@ -140,11 +140,6 @@ class DataQueue : public MemoryRetainer {
     using Done = bob::Done;
   };
 
-  class CrossThreadReader : public Reader {
-   public:
-    virtual void Bind(Environment* env) = 0;
-  };
-
   // A DataQueue::Entry represents a logical chunk of data in the queue.
   // The entry may or may not represent memory-resident data. It may
   // or may not be consumable more than once.
@@ -218,22 +213,8 @@ class DataQueue : public MemoryRetainer {
   static std::unique_ptr<Entry> CreateDataQueueEntry(
       std::shared_ptr<DataQueue> data_queue);
 
-  static std::unique_ptr<Entry> CreateStreamBaseEntry(
-      StreamBase* stream_base,
-      BaseObjectPtr<BaseObject> strong_ref);
-
-  static std::unique_ptr<Entry> CreateStreamEntry(
-      Environment* env,
-      v8::Local<v8::Object> obj);
-
   static std::unique_ptr<Entry> CreateFdEntry(
       BaseObjectPtr<fs::FileHandle> handle);
-
-  // Creates a Reader that wraps a Reader, making it possible to perform
-  // cross-worker thread reads.
-  static std::unique_ptr<CrossThreadReader> CreateCrossThreadReader(
-      Environment* env,
-      std::unique_ptr<Reader> reader);
 
   // Creates a Reader for the given queue. If the queue is idempotent,
   // any number of readers can be created, all of which are guaranteed
