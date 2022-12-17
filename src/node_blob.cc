@@ -37,56 +37,6 @@ using v8::Value;
 
 namespace {
 
-// TODO(@flakey5, @jasnell): Update the JavaScript side of blob...
-//
-// Within the JavaScript Blob object, the arrayBuffer() method will change significantly.
-// the pattern will be something like:
-//
-// const { createDeferredPromise } = require('internal/util');
-// const { concat, ...} = internalBinding('blob');
-//
-// function arrayBuffer() {
-//   const { promise, resolve } = createDeferredPromise();
-//   const reader = this.#buffer.getReader();
-//   const buffers = [];
-//   const readNext = () => {
-//     const result = reader.pull((status, buffer) => {
-//       if (status == -1) {
-//         // EOS, concat and resolve.
-//         // buffer should be undefined here.
-//         resolve(concat(buffers));
-//         return;
-//       }
-//       buffers.push(buffer);
-//       readNext();
-//     });
-//   };
-//   readNext();  // Starts the read loop
-//   return promise;
-// }
-//
-// For the stream() method, the pattern will be something like:
-//
-// function stream() {
-//   const reader = this.#buffer.getReader();
-//   return new ReadableStream({
-//     #reader = reader;
-//     pull(c) {
-//       const { promise, resolve } = createDeferredPromise();
-//       reader.pull((status, buffer) => {
-//         if (status === -1) {  // EOS
-//           c.close();
-//           resolve();
-//           return;
-//         }
-//         c.enqueue(new Uint8Array(buffer));
-//         resolve();
-//       });
-//       return promise;
-//     }
-//   });
-// }
-
 // Concatenate multiple ArrayBufferView/ArrayBuffers into a single ArrayBuffer.
 // This method treats all ArrayBufferView types the same.
 void Concat(const FunctionCallbackInfo<Value>& args) {
