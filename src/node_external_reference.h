@@ -129,7 +129,7 @@ class ExternalReferenceRegistry {
 #endif  // HAVE_INSPECTOR
 
 #if HAVE_OPENSSL
-#define EXTERNAL_REFERENCE_BINDING_LIST_CRYPTO(V) V(crypto) V(tls_wrap)
+#define EXTERNAL_REFERENCE_BINDING_LIST_CRYPTO(V) V(crypto) V(tls_wrap) V(quic)
 #else
 #define EXTERNAL_REFERENCE_BINDING_LIST_CRYPTO(V)
 #endif  // HAVE_OPENSSL
