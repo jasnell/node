@@ -56,6 +56,9 @@ class Http3Application;
 
 class Http3Application final : public Session::Application {
  public:
+
+  static Http3Application& From(nghttp3_conn* conn, void* conn_user_data);
+
   Http3Application(Session* session, const Options& options);
   QUIC_NO_COPY_OR_MOVE(Http3Application)
 
@@ -123,7 +126,7 @@ class Http3Application final : public Session::Application {
   SET_MEMORY_INFO_NAME(Http3Application)
   SET_SELF_SIZE(Http3Application)
 
-  inline nghttp3_conn* connection() const { return connection_.get(); }
+  inline operator nghttp3_conn*() const { return connection_.get(); }
 
  protected:
   int GetStreamData(StreamData* data) override;
@@ -136,19 +139,13 @@ class Http3Application final : public Session::Application {
   bool CreateAndBindControlStream();
   bool CreateAndBindQPackStreams();
   void CreateConnection();
-  void ScheduleStream(stream_id id);
-  void UnscheduleStream(stream_id id);
 
   ssize_t ReadData(stream_id id,
                    nghttp3_vec* vec,
                    size_t veccnt,
                    uint32_t* pflags);
 
-  inline bool is_control_stream(int64_t stream_id) const {
-    return stream_id == control_stream_id_ ||
-           stream_id == qpack_dec_stream_id_ ||
-           stream_id == qpack_enc_stream_id_;
-  }
+  bool is_control_stream(stream_id id) const;
 
   nghttp3_mem alloc_info_;
   Http3ConnectionPointer connection_;

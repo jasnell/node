@@ -105,6 +105,12 @@ void Http3Application::CreateConnection() {
   connection_.reset(conn);
 }
 
+bool Http3Application::is_control_stream(stream_id id) const {
+  return id == control_stream_id_ ||
+         id == qpack_dec_stream_id_ ||
+         id == qpack_enc_stream_id_;
+}
+
 bool Http3Application::Start() {
   // The Session must allow for at least three local unidirectional streams.
   // This number is fixed by the http3 specification and represent the control
@@ -113,9 +119,10 @@ bool Http3Application::Start() {
 
   CreateConnection();
 
-  if (session().is_server())
+  if (session().is_server()) {
     nghttp3_conn_set_max_client_streams_bidi(
         connection_.get(), session().max_local_streams_bidi());
+  }
 
   return CreateAndBindControlStream() && CreateAndBindQPackStreams();
 }
@@ -151,7 +158,7 @@ void Http3Application::SetStreamPriority(Stream* stream,
         /* .urgency = */ static_cast<uint32_t>(priority),
         /* .inc = */ flags == StreamPriorityFlags::NON_INCREMENTAL ? 0 : 1,
     };
-    CHECK_EQ(nghttp3_conn_set_stream_priority(connection(), stream->id(), &pri),
+    CHECK_EQ(nghttp3_conn_set_stream_priority(*this, stream->id(), &pri),
              0);
   }
 }
@@ -163,7 +170,7 @@ Session::Application::StreamPriority Http3Application::GetStreamPriority(
   if (!session().is_server()) return StreamPriority::DEFAULT;
 
   nghttp3_pri pri;
-  CHECK_EQ(nghttp3_conn_get_stream_priority(connection(), &pri, stream->id()),
+  CHECK_EQ(nghttp3_conn_get_stream_priority(*this, &pri, stream->id()),
            0);
   // We're only interested in the urgency field. The incremental flag is only
   // relevant when setting.
@@ -386,10 +393,6 @@ bool Http3Application::CreateAndBindQPackStreams() {
                                          qpack_dec_stream_id_) == 0;
 }
 
-void Http3Application::ScheduleStream(stream_id id) {}
-
-void Http3Application::UnscheduleStream(stream_id id) {}
-
 ssize_t Http3Application::ReadData(stream_id id,
                                    nghttp3_vec* vec,
                                    size_t veccnt,
@@ -463,9 +466,9 @@ const nghttp3_callbacks Http3Application::callbacks_ = {on_acked_stream_data,
                                                         on_reset_stream,
                                                         on_shutdown};
 
-Http3Application& GetApplication(nghttp3_conn* conn, void* conn_user_data) {
+Http3Application& Http3Application::From(nghttp3_conn* conn, void* conn_user_data) {
   Http3Application* app = static_cast<Http3Application*>(conn_user_data);
-  CHECK_EQ(app->connection(), conn);
+  CHECK_EQ(app->connection_.get(), conn);
   return *app;
 }
 
@@ -475,7 +478,7 @@ int Http3Application::on_acked_stream_data(nghttp3_conn* conn,
                                         void* conn_user_data,
                                         void* stream_user_data) {
   if (stream_user_data == nullptr) return 0;
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   // If we don't find the stream, it either has never been created or was
   // destroyed. In either case, we just ignore the acknowledgement.
   auto stream = app.session().FindStream(id);
@@ -488,7 +491,7 @@ int Http3Application::on_stream_close(nghttp3_conn* conn,
                                     uint64_t app_error_code,
                                     void* conn_user_data,
                                     void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (stream) {
     auto stream = static_cast<Stream*>(stream_user_data);
@@ -509,7 +512,7 @@ int Http3Application::on_receive_data(nghttp3_conn* conn,
   // it's not found here, something has gone wrong (likely the stream was
   // destroyed). Let's not ignore the case and fail the callback if that
   // happens.
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   stream->ReceiveData(ReceiveStreamDataFlags{}, data, datalen, 0);
@@ -524,7 +527,7 @@ int Http3Application::on_deferred_consume(nghttp3_conn* conn,
   // This is a notification from nghttp3 to let ngtcp2 know that a certain
   // amount of data has been consumed. ngtcp2 uses this to update internal
   // accounting for flow control.
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   app.session().ExtendStreamOffset(id, consumed);
   app.session().ExtendOffset(consumed);
   return 0;
@@ -536,7 +539,7 @@ int Http3Application::on_begin_headers(nghttp3_conn* conn,
                                      void* stream_user_data) {
   // The QUIC layer should have created the Stream already. If it doesn't exist
   // here, something has gone wrong.
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   stream->BeginHeaders(HeadersKind::INITIAL);
@@ -548,7 +551,7 @@ int Http3Application::on_end_headers(nghttp3_conn* conn,
                                    int fin,
                                    void* conn_user_data,
                                    void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   stream->EmitHeaders();
@@ -571,7 +574,7 @@ int Http3Application::on_receive_header(nghttp3_conn* conn,
                                       uint8_t flags,
                                       void* conn_user_data,
                                       void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
 
@@ -597,7 +600,7 @@ int Http3Application::on_begin_trailers(nghttp3_conn* conn,
                                       void* stream_user_data) {
   // The QUIC layer should have created the Stream already. If it doesn't exist
   // here, something has gone wrong.
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   stream->BeginHeaders(HeadersKind::TRAILING);
@@ -612,7 +615,7 @@ int Http3Application::on_receive_trailer(nghttp3_conn* conn,
                                        uint8_t flags,
                                        void* conn_user_data,
                                        void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
 
@@ -629,7 +632,7 @@ int Http3Application::on_end_trailers(nghttp3_conn* conn,
                                     int fin,
                                     void* conn_user_data,
                                     void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   stream->EmitHeaders();
@@ -649,7 +652,7 @@ int Http3Application::on_stop_sending(nghttp3_conn* conn,
                                     error_code app_error_code,
                                     void* conn_user_data,
                                     void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   // This event can be a bit confusing. When this is triggered, we're being
@@ -663,7 +666,7 @@ int Http3Application::on_reset_stream(nghttp3_conn* conn,
                                     error_code app_error_code,
                                     void* conn_user_data,
                                     void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
   // Similar to OnStopSending, this event is not that we *received* a
@@ -676,7 +679,7 @@ int Http3Application::on_end_stream(nghttp3_conn* conn,
                                   stream_id id,
                                   void* conn_user_data,
                                   void* stream_user_data) {
-  auto& app = GetApplication(conn, conn_user_data);
+  auto& app = Http3Application::From(conn, conn_user_data);
   auto stream = app.session().FindStream(id);
   if (!stream) return NGHTTP3_ERR_CALLBACK_FAILURE;
 
@@ -722,7 +725,8 @@ ssize_t Http3Application::on_read_data(nghttp3_conn* conn,
                                      uint32_t* pflags,
                                      void* conn_user_data,
                                      void* stream_user_data) {
-  return GetApplication(conn, conn_user_data).ReadData(id, vec, veccnt, pflags);
+  return Http3Application::From(conn, conn_user_data)
+      .ReadData(id, vec, veccnt, pflags);
 }
 
 }  // namespace quic
