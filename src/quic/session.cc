@@ -1,14 +1,15 @@
-#include "ngtcp2/ngtcp2.h"
 #include "quic/defs.h"
 #include "session-inl.h"
 #include "streams-inl.h"
 #include "endpoint.h"
 #include "bindingdata-inl.h"
 #include "cryptocontext-inl.h"
+#include "http3.h"
 #include "preferredaddress.h"
 #include "sessionticket.h"
 #include "statelessresettoken-inl.h"
-#include "util.h"
+#include "util-inl.h"
+#include <aliased_struct-inl.h>
 #include <async_wrap-inl.h>
 #include <stream_base-inl.h>
 #include <timer_wrap-inl.h>
@@ -232,6 +233,9 @@ void ngtcp2_debug_log(void* user_data, const char* fmt, ...) {
 }
 }  // namespace
 
+// Used to enforce the no-reentry requirement for ngtcp2 callbacks.
+// Instances should only ever be stack allocated within the ngtcp2
+// callbacks.
 struct Session::NgCallbackScope final {
   Session* session;
   explicit NgCallbackScope(Session* session_) : session(session_) {
@@ -247,6 +251,10 @@ struct Session::NgCallbackScope final {
   }
 };
 
+// Used to conditionally trigger sending an explicit connection
+// close. If there are multiple MaybeCloseConnectionScope in the
+// stack, the determination of whether to send the close will be
+// done once the final scope is closed.
 struct Session::MaybeCloseConnectionScope final {
   Session* session;
   bool silent = false;
@@ -258,13 +266,15 @@ struct Session::MaybeCloseConnectionScope final {
   QUIC_NO_COPY_OR_MOVE(MaybeCloseConnectionScope)
   ~MaybeCloseConnectionScope() noexcept {
     // We only want to trigger the sending the connection close if ...
-    // a) Silent is not explicitly true,
+    // a) Silent is not explicitly true at this scope.
     // b) We're not within the scope of an ngtcp2 callback, and
     // c) We are not already in a closing or draining period.
     session->connection_close_depth_--;
-    if (session->connection_close_depth_ == 0 && !silent &&
+    if (session->connection_close_depth_ == 0 &&
+        !silent &&
         !NgCallbackScope::InNgCallbackScope(*session) &&
-        !session->is_destroyed() && !session->is_in_closing_period() &&
+        !session->is_destroyed() &&
+        !session->is_in_closing_period() &&
         !session->is_in_draining_period()) {
       session->SendConnectionClose();
     }
@@ -280,6 +290,7 @@ Session::SendPendingDataScope::~SendPendingDataScope() {
   session->send_scope_depth_--;
   if (session->send_scope_depth_ == 0 &&
       !NgCallbackScope::InNgCallbackScope(*session) &&
+      !session->is_destroyed() &&
       !session->is_in_closing_period() && !session->is_in_draining_period()) {
     session->SendPendingData();
   }
@@ -308,9 +319,9 @@ Session::Config::Config(CryptoContext::Side side,
   ngtcp2_settings_default(this);
   initial_ts = uv_hrtime();
 
-  if (UNLIKELY(endpoint.env()->enabled_debug_list()->enabled(
-          DebugCategory::NGTCP2_DEBUG)))
+  if (UNLIKELY(endpoint.env()->enabled_debug_list()->enabled(DebugCategory::NGTCP2_DEBUG))) {
     log_printf = ngtcp2_debug_log;
+  }
 
   auto& config = endpoint.options();
 
@@ -2000,11 +2011,15 @@ int Session::ReceiveCryptoData(ngtcp2_crypto_level level,
 }
 
 bool Session::ReceiveRxKey(ngtcp2_crypto_level level) {
-  return true;
+  return !is_server() && level == NGTCP2_CRYPTO_LEVEL_APPLICATION
+             ? application_->Start()
+             : true;
 }
 
 bool Session::ReceiveTxKey(ngtcp2_crypto_level level) {
-  return true;
+  return is_server() && level == NGTCP2_CRYPTO_LEVEL_APPLICATION
+             ? application_->Start()
+             : true;
 }
 
 void Session::ReceiveNewToken(const ngtcp2_vec* token) {
@@ -2133,13 +2148,13 @@ void Session::AddStream(const BaseObjectPtr<Stream>& stream) {
   // Update tracking statistics for the number of streams associated with this
   // session.
   switch (stream->origin()) {
-    case Stream::Origin::CLIENT:
+    case CryptoContext::Side::CLIENT:
       if (is_server())
         stats_.Increment<&Stats::streams_in_count>();
       else
         stats_.Increment<&Stats::streams_out_count>();
       break;
-    case Stream::Origin::SERVER:
+    case CryptoContext::Side::SERVER:
       if (is_server())
         stats_.Increment<&Stats::streams_out_count>();
       else
@@ -3123,9 +3138,8 @@ bool DefaultApplication::ShouldSetFin(const StreamData& stream_data) {
 
 std::unique_ptr<Session::Application> Session::SelectApplication(
     const Config& config, const Options& options) {
-  // TODO(@jasnell): Implement again
-  // if (options.crypto_options.alpn == QUIC_ALPN_H3)
-  //   return std::make_unique<Http3Application>(this, options.application);
+  if (options.crypto_options.alpn == QUIC_ALPN_H3)
+    return std::make_unique<Http3Application>(this, options.application);
 
   // In the future, we may end up supporting additional QUIC protocols. As they
   // are added, extend the cases here to create and return them.

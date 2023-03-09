@@ -7,6 +7,7 @@
 #include "sessionticket.h"
 #include "statelessresettoken-inl.h"
 #include "util-inl.h"
+#include "util.h"
 #include <aliased_struct-inl.h>
 #include <async_wrap-inl.h>
 #include <memory_tracker-inl.h>
@@ -1113,7 +1114,8 @@ BaseObjectPtr<Session> Endpoint::Connect(const SocketAddress& remote_address,
 
   session->set_wrapped();
 
-  Session::SendPendingDataScope send(session);
+  auto on_exit = OnScopeLeave([&] { session->SendPendingData(); });
+
   return session;
 }
 

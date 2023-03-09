@@ -87,6 +87,8 @@ class Session : public AsyncWrap,
     inline Application(Session* session, const Options& options);
     QUIC_NO_COPY_OR_MOVE(Application)
 
+    virtual bool Start() { return true; };
+
     struct ReceiveStreamDataFlags final {
       // Identifies the final chunk of data that the peer will send for the
       // stream.
@@ -452,9 +454,7 @@ class Session : public AsyncWrap,
   };
 
   // SendPendingDataScope triggers SendPendingData() on scope exit when not
-  // executing within the context of an ngtcp2 callback. When within an ngtcp2
-  // callback, SendPendingData will always be called when the callbacks
-  // complete.
+  // executing within the context of an ngtcp2 callback.
   struct SendPendingDataScope final {
     Session* session;
     explicit SendPendingDataScope(Session* session_);
@@ -788,6 +788,7 @@ class Session : public AsyncWrap,
   BaseObjectPtr<LogStream> keylogstream_;
 
   friend class CryptoContext;
+  friend class Endpoint;
   friend class Stream;
   friend class DefaultApplication;
   friend class Http3Application;

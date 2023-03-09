@@ -58,17 +58,17 @@ using Ngtcp2Source = bob::SourceImpl<ngtcp2_vec>;
 // data is buffered in memory makes it essential that the flow control for the
 // session and the stream are properly handled. For now, we are largely relying
 // on ngtcp2's default flow control mechanisms which generally should be doing
-// the right thing but we may need to switch to a more manual management process
-// if too much data ends up being buffered for too long.
+// the right thing.
 //
 // A Stream may be in a fully closed state (No longer readable nor writable)
-// state but still have unacknowledged data in it's outbound queue.
+// state but still have unacknowledged data in it's inbound and outbound
+// queues.
 //
-// A Stream is gracefully closed when (a) both Read and Write states are Closed,
+// A Stream is gracefully closed when (a) both read and write states are closed,
 // (b) all queued data has been acknowledged.
 //
 // The Stream may be forcefully closed immediately using destroy(err). This
-// causes all queued data and pending JavaScript writes to be abandoned, and
+// causes all queued outbound data and pending JavaScript writes are abandoned, and
 // causes the Stream to be immediately closed at the ngtcp2 level without
 // waiting for any outstanding acknowledgements. Keep in mind, however, that the
 // peer is not notified that the stream is destroyed and may attempt to continue
@@ -108,6 +108,9 @@ class Stream final : public AsyncWrap,
 
   inline stream_id id() const;
   inline Direction direction() const;
+
+  bool is_readable() const;
+  bool is_writable() const;
 
   inline CryptoContext::Side origin() const;
   inline Session* session() const;
@@ -287,6 +290,7 @@ class Stream final : public AsyncWrap,
   // The inbound_ buffer contains the data that has been received by this Stream
   // but not yet delivered to the JavaScript wrapper.
   std::shared_ptr<DataQueue> inbound_;
+  bool has_reader_ = false;
 
   std::vector<v8::Local<v8::Value>> headers_;
   Session::Application::HeadersKind headers_kind_ =
@@ -296,6 +300,10 @@ class Stream final : public AsyncWrap,
   size_t current_headers_length_ = 0;
 
   ListNode<Stream> stream_queue_;
+
+  static v8::Maybe<std::shared_ptr<DataQueue>> DataQueueFromSource(
+      Environment* env,
+      v8::Local<v8::Value> value);
 
   friend class OutboundBuffer;
   friend class Session::Application;

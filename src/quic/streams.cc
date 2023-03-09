@@ -1,3 +1,4 @@
+#include "base_object.h"
 #include "bindingdata-inl.h"
 #include "defs.h"
 #include "session-inl.h"
@@ -8,21 +9,30 @@
 #include <env-inl.h>
 #include <dataqueue/queue.h>
 #include <memory_tracker.h>
+#include <node_blob.h>
 #include <node_bob-inl.h>
+#include <node_errors.h>
 #include <ngtcp2/ngtcp2.h>
 #include <v8.h>
+#include <uv.h>
 
 namespace node {
 
 using v8::Array;
 using v8::ArrayBuffer;
+using v8::ArrayBufferView;
 using v8::BigInt;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::Integer;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
+using v8::Nothing;
 using v8::Object;
 using v8::PropertyAttribute;
+using v8::SharedArrayBuffer;
+using v8::TryCatch;
 using v8::Uint32;
 using v8::Undefined;
 using v8::Value;
@@ -167,6 +177,24 @@ public:
     }
   }
 
+  void MarkErrored() {
+    errored_ = true;
+    head_.reset();
+    tail_ = nullptr;
+    commit_head_ = nullptr;
+    total_ = 0;
+    count_ = 0;
+    uncommitted_ = 0;
+    MarkEnded();
+  }
+
+  void MarkEnded() {
+    if (eos_) return;
+    eos_ = true;
+    queue_.reset();
+    reader_.reset();
+  }
+
   int Pull(bob::Next<ngtcp2_vec> next,
            int options,
            ngtcp2_vec* data,
@@ -177,8 +205,18 @@ public:
       return bob::Status::STATUS_BLOCK;
     }
 
-    // If eos_ is true and there are no uncommitted bytes we'll return eos.
-    if (eos_ && get_uncommitted_bytes_count() == 0) {
+    if (errored_) {
+      std::move(next)(UV_EBADF, nullptr, 0, [](int) {});
+      return UV_EBADF;
+    }
+
+    // If eos_ is true and there are no uncommitted bytes we'll return eos,
+    // otherwise, return whatever is in the uncommitted queue.
+    if (eos_) {
+      if (get_uncommitted_bytes_count() > 0) {
+        PullUncommitted(std::move(next));
+        return bob::Status::STATUS_CONTINUE;
+      }
       std::move(next)(bob::Status::STATUS_EOS, nullptr, 0, [](int) {});
       return bob::Status::STATUS_EOS;
     }
@@ -186,15 +224,20 @@ public:
     // If there are uncommitted bytes in the queue_,
     // and there are enough to fill a full data packet,
     // then pull will just return the current uncommitted
-    // bytes currently in the queue.
+    // bytes currently in the queue rather than reading more
+    // from the queue.
     if (get_uncommitted_bytes_count() >= kDefaultMaxPacketLength) {
       PullUncommitted(std::move(next));
       return bob::Status::STATUS_CONTINUE;
     }
 
-    // If there aren't enough uncommitted bytes in the
-    // queue to fill a data packet, we'll perform a
-    // read from the reader.
+    CHECK(queue_);
+    CHECK(reader_);
+
+    // At this point, we know our reader hasn't finished yet, there
+    // might be uncommitted bytes but we want to go ahead and pull
+    // some more. We request that the pull is sync but allow for it
+    // to be async.
     int ret = reader_->Pull([this](auto status, auto vecs, auto count, auto done) {
       // Always make sure next_pending_ is false when we're done.
       auto on_exit = OnScopeLeave([this] { next_pending_ = false; });
@@ -209,14 +252,17 @@ public:
         // We need to error the stream.
         if (next_pending_) {
           stream_->Destroy(QuicError::ForNgtcp2Error(NGTCP2_INTERNAL_ERROR));
+          // We do not need to worry about calling MarkErrored in this case
+          // since we are immediately destroying the stream which will release
+          // the outbound buffer anyway.
         }
         return;
       }
 
       if (status == bob::Status::STATUS_EOS) {
-        eos_ = true;
         CHECK_EQ(count, 0);
         CHECK_NULL(vecs);
+        MarkEnded();
         // If next_pending_ is true then a pull from the reader
         // ended up being asynchronous, our stream is blocking
         // waiting for the data. Here, there is no more data to
@@ -250,17 +296,27 @@ public:
       if (next_pending_) stream_->Resume();
     }, bob::OPTIONS_SYNC, nullptr, 0, kMaxVectorCount);
 
+    // There was an error. We'll report that immediately. We do not have
+    // to destroy the stream here since that will be taken care of by
+    // the caller.
     if (ret < 0) {
-      // There was an error. We'll report that immediately. We do not have
-      // to destroy the stream here since that will be taken care of by
-      // the caller.
+      MarkErrored();
       std::move(next)(ret, nullptr, 0, [](int) {});
+      // Since we are erroring and won't be able to make
+      // use of this DataQueue any longer, let's free both it
+      // and the reader and put ourselves into an errored state.
+      // Further attempts to read from the outbound will result
+      // in a UV_EBADF error. The caller, however, should handle
+      // this by closing down the stream so that doesn't happen.
       return ret;
     }
 
     if (ret == bob::Status::STATUS_EOS) {
-      // The pull callback should have set eos_ to true.
-      CHECK(eos_);
+      // Here, we know we are done with the DataQueue and the Reader,
+      // but we might not yet have committed or acknowledged all of
+      // the queued data. We'll release our references to the queue_
+      // and reader_ but everything else is untouched.
+      MarkEnded();
       if (get_uncommitted_bytes_count() > 0) {
         // If the read returns eos, and there are uncommitted
         // bytes in the queue, we'll set eos_ to true and
@@ -288,11 +344,10 @@ public:
       return bob::Status::STATUS_BLOCK;
     }
 
+    // Reads here are generally expected to be synchronous. If we have a reader
+    // that insists on providing data asynchronously, then we'll have to block
+    // until the data is actually available.
     if (ret == bob::Status::STATUS_WAIT) {
-      // Unfortunately, reads here are generally expected to be synchronous.
-      // If we have a reader that insists on providing data asynchronously,
-      // then we'll have to pretend that we're blocking until the data is
-      // actually available.
       next_pending_ = true;
       std::move(next)(bob::Status::STATUS_BLOCK, nullptr, 0, [](int) {});
       return bob::Status::STATUS_BLOCK;
@@ -316,6 +371,8 @@ private:
   Stream* stream_;
   std::shared_ptr<DataQueue> queue_;
   std::shared_ptr<DataQueue::Reader> reader_;
+
+  bool errored_ = false;
 
   // Will be set to true if the reader_ ends up providing
   // a pull result asynchronously.
@@ -414,52 +471,12 @@ Stream::Stream(BaseObjectPtr<Session> session,
   state_->id = id;
   USE(ngtcp2_conn_set_stream_user_data(*session, id, this));
 
+  if (!is_readable()) EndReadable(0);
+  if (!is_writable()) EndWritable();
+
   // Allows us to be notified when data is actually read from the
   // inbound queue so that we can update the stream flow control.
   inbound_->addBackpressureListener(this);
-
-  if (direction() == Direction::UNIDIRECTIONAL) {
-    switch (origin()) {
-      case CryptoContext::Side::CLIENT: {
-        switch (session->crypto_context().side()) {
-          case CryptoContext::Side::CLIENT: {
-            // When a unidirectional stream originates on the client and
-            // we're the client, this stream is outbound only. There's
-            // nothing to read.
-            EndReadable(0);
-            break;
-          }
-          case CryptoContext::Side::SERVER: {
-            // When a unidirectional stream originates on the client and
-            // we're the server, this stream is inbound only. There's
-            // nothing to write.
-            EndWritable();
-            CHECK(source == nullptr);
-            break;
-          }
-        }
-      }
-      case CryptoContext::Side::SERVER: {
-        switch (session->crypto_context().side()) {
-          case CryptoContext::Side::CLIENT: {
-            // When a unidirectional stream originates on the server and
-            // we're the client, this stream is inbound only. There's
-            // nothing to write.
-            EndWritable();
-            CHECK(source == nullptr);
-            break;
-          }
-          case CryptoContext::Side::SERVER: {
-            // When a unidirectional stream originates on the server and
-            // we're the server, this stream is inbound only. There's
-            // nothing to write.
-            EndReadable(0);
-            break;
-          }
-        }
-      }
-    }
-  }
 
   AttachDataQueue(std::move(source));
 
@@ -482,6 +499,38 @@ Stream::~Stream() {
   inbound_->removeBackpressureListener(this);
 }
 
+bool Stream::is_readable() const {
+  if (direction() == Direction::UNIDIRECTIONAL) {
+    switch (origin()) {
+      case CryptoContext::Side::CLIENT: {
+        if (session_->crypto_context().side() == CryptoContext::Side::CLIENT)
+          return false;
+      }
+      case CryptoContext::Side::SERVER: {
+        if (session_->crypto_context().side() == CryptoContext::Side::SERVER)
+          return false;
+      }
+    }
+  }
+  return state_->read_ended == 0;
+}
+
+bool Stream::is_writable() const {
+  if (direction() == Direction::UNIDIRECTIONAL) {
+    switch (origin()) {
+      case CryptoContext::Side::CLIENT: {
+        if (session_->crypto_context().side() == CryptoContext::Side::SERVER)
+          return false;
+      }
+      case CryptoContext::Side::SERVER: {
+        if (session_->crypto_context().side() == CryptoContext::Side::CLIENT)
+          return false;
+      }
+    }
+  }
+  return state_->write_ended == 0;
+}
+
 void Stream::EntryRead(size_t amount) {
   // Tells us that amount bytes were read from inbound_
   // We use this as a signal to extend the flow control
@@ -491,6 +540,8 @@ void Stream::EntryRead(size_t amount) {
 }
 
 std::shared_ptr<DataQueue::Reader> Stream::get_reader() {
+  if (!is_readable() || has_reader_) return nullptr;
+  has_reader_ = true;
   return inbound_->get_reader();
 }
 
@@ -507,7 +558,9 @@ void Stream::Acknowledge(uint64_t offset, size_t datalen) {
 }
 
 void Stream::AttachDataQueue(std::shared_ptr<DataQueue> source) {
-  if (source == nullptr) return;
+  if (source == nullptr || is_destroyed() || !is_writable()) return;
+  // An outbound source should not have already been attached.
+  CHECK(!outbound_);
   outbound_ = std::make_unique<OutboundBuffer>(this, std::move(source));
   session_->ResumeStream(id());
 }
@@ -527,7 +580,10 @@ int Stream::DoPull(bob::Next<ngtcp2_vec> next,
                    ngtcp2_vec* data,
                    size_t count,
                    size_t max_count_hint) {
-  if (is_destroyed() || state_->reset == 1) return bob::Status::STATUS_EOS;
+  if (is_destroyed() || (outbound_ == nullptr && state_->write_ended == 1)) {
+    std::move(next)(bob::Status::STATUS_EOS, nullptr, 0, [](int) {});
+    return bob::Status::STATUS_EOS;
+  }
 
   // If an outbound source has not yet been attached, block until one is
   // available. When AttachOutboundSource() is called the stream will be
@@ -540,8 +596,7 @@ int Stream::DoPull(bob::Next<ngtcp2_vec> next,
     return bob::Status::STATUS_BLOCK;
   }
 
-  return outbound_->Pull(
-      std::move(next), options, data, count, max_count_hint);
+  return outbound_->Pull(std::move(next), options, data, count, max_count_hint);
 }
 
 bool Stream::AddHeader(const Header& header) {
@@ -669,48 +724,18 @@ void Stream::DoDestroy(const FunctionCallbackInfo<Value>& args) {
   stream->Destroy();
 }
 
-void Stream::AttachSource(const FunctionCallbackInfo<Value>& args) {
-  // Environment* env = Environment::GetCurrent(args);
-  // Stream* stream;
-  // ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
-
-  // CHECK_IMPLIES(!args[0]->IsUndefined(), args[0]->IsObject());
-
-  // Buffer::Source* source = nullptr;
-
-  // if (args[0]->IsUndefined()) {
-  //   source = &null_source_;
-  // } else if (ArrayBufferViewSource::HasInstance(env, args[0])) {
-  //   ArrayBufferViewSource* view;
-  //   ASSIGN_OR_RETURN_UNWRAP(&view, args[0]);
-  //   source = view;
-  // } else if (StreamSource::HasInstance(env, args[0])) {
-  //   StreamSource* view;
-  //   ASSIGN_OR_RETURN_UNWRAP(&view, args[0]);
-  //   source = view;
-  // } else if (StreamBaseSource::HasInstance(env, args[0])) {
-  //   StreamBaseSource* view;
-  //   ASSIGN_OR_RETURN_UNWRAP(&view, args[0]);
-  //   source = view;
-  // } else if (BlobSource::HasInstance(env, args[0])) {
-  //   BlobSource* blob;
-  //   ASSIGN_OR_RETURN_UNWRAP(&blob, args[0]);
-  //   source = blob;
-  // } else {
-  //   UNREACHABLE();
-  // }
-
-  // stream->AttachOutboundSource(source);
-}
-
 void Stream::EndWritable() {
-  if (is_destroyed()) return;
-  Unschedule();
+  if (is_destroyed() || !is_writable()) return;
+  // If an outbound_ has been attached, we want to mark it as being ended.
+  // If the outbound_ is wrapping an idempotent DataQueue, then capping
+  // will be a non-op since we're not going to be writing any more data
+  // into it anyway.
   if (outbound_ != nullptr) outbound_->Cap();
+  state_->write_ended = 1;
 }
 
 void Stream::EndReadable(std::optional<uint64_t> maybe_final_size) {
-  if (is_destroyed()) return;
+  if (is_destroyed() || !is_readable()) return;
   if (maybe_final_size != std::nullopt) {
     set_final_size(maybe_final_size.value());
   } else {
@@ -743,6 +768,10 @@ void Stream::DoGetPriority(const FunctionCallbackInfo<Value>& args) {
 }
 
 void Stream::Destroy(QuicError error) {
+  // Here we forcefully close the stream immediately. All queued data
+  // and pending JavaScript writes are abandoned, and the stream is
+  // immediately closed at the ngtcp2 level without waiting for any
+  // outstanding acknowledgements.
   if (is_destroyed()) return;
 
   // End the writable before marking as destroyed.
@@ -757,6 +786,12 @@ void Stream::Destroy(QuicError error) {
   else EmitClose();
 
   inbound_->removeBackpressureListener(this);
+
+  // We are going to release our reference to the outbound_ queue here.
+  outbound_.reset();
+
+  // Importantly, we do not reset the
+
   session_->RemoveStream(id());
 }
 
@@ -785,12 +820,8 @@ void Stream::ReceiveData(Session::Application::ReceiveStreamDataFlags flags,
                          uint64_t offset) {
   if (is_destroyed()) return;
 
-  auto on_exit = OnScopeLeave([&] {
-    if (flags.fin) EndReadable(offset + datalen);
-  });
-
   // We should never receive data after we've already received the final size.
-  CHECK(final_size() == 0 && !inbound_->is_capped());
+  DCHECK(final_size() == 0 && !inbound_->is_capped());
 
   // ngtcp2 guarantees that datalen will only be 0 if fin is set.
   DCHECK_IMPLIES(datalen == 0, flags.fin);
@@ -798,6 +829,10 @@ void Stream::ReceiveData(Session::Application::ReceiveStreamDataFlags flags,
   // ngtcp2 guarantees that offset is greater than the previously received.
   DCHECK_GE(offset, stats_.Get<&Stats::max_offset_received>());
   stats_.Set<&Stats::max_offset_received>(offset);
+
+  auto on_exit = OnScopeLeave([&] {
+    if (flags.fin) EndReadable(offset + datalen);
+  });
 
   // If reading has ended, or there is no data, do nothing.
   if (state_->read_ended == 1 || datalen == 0) return;
@@ -813,7 +848,8 @@ void Stream::ReceiveResetStream(size_t final_size, QuicError error) {
   // Importantly, reset stream only impacts the inbound data flow.
   // It has no impact on the outbound data flow. It is essentially
   // a signal that the peer has abruptly terminated the writable end
-  // of their stream with an error.
+  // of their stream with an error. Any data we have received up to
+  // this point remains in the queue waiting to be read.
   if (is_destroyed()) return;
   EndReadable(final_size);
   EmitReset(error);
@@ -828,18 +864,22 @@ void Stream::ReceiveStopSending(QuicError error) {
 }
 
 void Stream::ResetStream(QuicError error) {
-  if (is_destroyed()) return;
+  if (is_destroyed() || state_->reset == 1) return;
   CHECK_EQ(error.type(), QuicError::Type::APPLICATION);
-  Session::SendPendingDataScope send_scope(session());
   EndWritable();
-  ngtcp2_conn_shutdown_stream_write(*session(), id(), error.code());
+  // We can release our outbound here now. Since the stream was reset
+  // on the ngtcp2 side, we do not need to keep any of the data around
+  // waiting for acknowledgement that will never come.
+  if (outbound_ != nullptr) outbound_.reset();
   state_->reset = 1;
+  Session::SendPendingDataScope send_scope(session_);
+  ngtcp2_conn_shutdown_stream_write(*session(), id(), error.code());
 }
 
 void Stream::StopSending(QuicError error) {
   if (is_destroyed()) return;
   CHECK_EQ(error.type(), QuicError::Type::APPLICATION);
-  Session::SendPendingDataScope send_scope(session());
+  Session::SendPendingDataScope send_scope(session_);
   // Now we shut down the stream readable side.
   ngtcp2_conn_shutdown_stream_read(*session(), id(), error.code());
   EndReadable();
@@ -857,8 +897,8 @@ void Stream::UpdateStats(size_t datalen) {
 }
 
 void Stream::set_final_size(uint64_t final_size) {
-  CHECK_IMPLIES(state_->fin_received == 1,
-                final_size <= stats_.Get<&Stats::final_size>());
+  DCHECK_IMPLIES(state_->fin_received == 1,
+                 final_size <= stats_.Get<&Stats::final_size>());
   state_->fin_received = 1;
   stats_.Set<&Stats::final_size>(final_size);
 }
@@ -883,6 +923,56 @@ void Stream::SetPriority(
 Session::Application::StreamPriority Stream::GetPriority() {
   if (is_destroyed()) return Session::Application::StreamPriority::DEFAULT;
   return session_->application().GetStreamPriority(this);
+}
+
+Maybe<std::shared_ptr<DataQueue>> Stream::DataQueueFromSource(
+    Environment* env,
+    v8::Local<v8::Value> value) {
+  CHECK_IMPLIES(!value->IsUndefined(), value->IsObject());
+  if (value->IsUndefined()) {
+    return Just(std::shared_ptr<DataQueue>());
+  } else if (value->IsArrayBuffer()) {
+    auto buffer = value.As<ArrayBuffer>();
+    std::vector<std::unique_ptr<DataQueue::Entry>> entries(1);
+    entries.push_back(DataQueue::CreateInMemoryEntryFromBackingStore(
+        buffer->GetBackingStore(), 0, buffer->ByteLength()));
+    return Just(DataQueue::CreateIdempotent(std::move(entries)));
+  } else if (value->IsSharedArrayBuffer()) {
+    auto buffer = value.As<SharedArrayBuffer>();
+    std::vector<std::unique_ptr<DataQueue::Entry>> entries(1);
+    entries.push_back(DataQueue::CreateInMemoryEntryFromBackingStore(
+        buffer->GetBackingStore(), 0, buffer->ByteLength()));
+    return Just(DataQueue::CreateIdempotent(std::move(entries)));
+  } else if (value->IsArrayBufferView()) {
+    std::vector<std::unique_ptr<DataQueue::Entry>> entries(1);
+    entries.push_back(DataQueue::CreateInMemoryEntryFromView(value.As<ArrayBufferView>()));
+    return Just(DataQueue::CreateIdempotent(std::move(entries)));
+  } else if (Blob::HasInstance(env, value)) {
+    Blob* blob;
+    ASSIGN_OR_RETURN_UNWRAP(&blob, value, Nothing<std::shared_ptr<DataQueue>>());
+    return Just(blob->getDataQueue().slice(0));
+  }
+  // TODO(jasnell): Add streaming sources...
+  return Nothing<std::shared_ptr<DataQueue>>();
+}
+
+void Stream::AttachSource(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+
+  std::shared_ptr<DataQueue> dataqueue;
+  TryCatch tryCatch(env->isolate());
+  if (!DataQueueFromSource(env, args[0]).To(&dataqueue)) {
+    // Invalid or unsupported source type or some other JavaScript error.
+    if (tryCatch.HasCaught()) {
+      if (tryCatch.CanContinue()) tryCatch.ReThrow();
+      return;
+    }
+    THROW_ERR_INVALID_ARG_VALUE(env, "Invalid data source for stream");
+  }
+
+  Stream* stream;
+  ASSIGN_OR_RETURN_UNWRAP(&stream, args.Holder());
+  stream->AttachDataQueue(std::move(dataqueue));
 }
 
 }  // namespace quic

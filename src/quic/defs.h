@@ -375,6 +375,7 @@ namespace quic {
   V(FIN_SENT, fin_sent, uint8_t)                                               \
   V(FIN_RECEIVED, fin_received, uint8_t)                                       \
   V(READ_ENDED, read_ended, uint8_t)                                           \
+  V(WRITE_ENDED, write_ended, uint8_t)                                         \
   V(TRAILERS, trailers, uint8_t)                                               \
   V(DESTROYED, destroyed, uint8_t)                                             \
   /* Set when the JavaScript wrapper has a data event listener */              \
