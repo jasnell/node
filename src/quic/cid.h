@@ -13,9 +13,36 @@ namespace quic {
 
 // CIDs are used to identify endpoints participating in a QUIC session.
 // Once created, CID instances are immutable.
+//
+// CIDs contain between 1 to 20 bytes. Most typically they are selected
+// randomly but there is a spec for creating "routable" CIDs that encode
+// a specific structure. However, that structure is only meaningful to
+// the side that creates the CID. Generally they should be treated as
+// opaque tokens.
+//
+// Each peer in a QUIC session generates one or more CIDs that the *other*
+// peer will use to identify the session. So, for instance, when a QUIC
+// client initiates a brand new session, it will initially generate a CID
+// of its own (it's "source CID") and a random placeholder CID for the
+// server (the initial "destination CID"). When the server receives the
+// initial packet, it will generate its own source CID, and will use the
+// client's source CID as it's destination CID.
+//
+//      Client              Server
+// --------------------------------------
+//    Source CID   <===> Destination CID
+// Destination CID <===>   Source CID
+//
+// While the connection is being established, it is possible for either
+// peer to generate additional CIDs that are also associated with the
+// connection.
+//
+// Once a CID is generated, it is immutable.
 class CID final : public MemoryRetainer {
  public:
   // The default constructor creates an empty, zero-length CID.
+  // Zero-length CIDs are not usable at all, we use them as a
+  // placeholder for a missing or empty CID value.
   inline CID();
 
   // Copies the given ngtcp2_cid.
