@@ -238,23 +238,23 @@ namespace quic {
   V(pskcallback, "pskCallback")                                                \
   V(qlog, "qlog")                                                              \
   V(qpack_blocked_streams, "qpackBlockedStreams")                              \
-  V(qpack_max_table_capacity, "qpackMaxTableCapacity")                         \
+  V(qpack_max_dtable_capacity, "qpackMaxTableCapacity")                        \
   V(qpack_encoder_max_dtable_capacity, "qpackEncoderMaxTableCapacity")         \
   V(reject_unauthorized, "rejectUnauthorized")                                 \
   V(request_peer_certificate, "requestPeerCertificate")                        \
   V(retry_limit, "retryLimit")                                                 \
   V(retry_token_expiration, "retryTokenExpiration")                            \
-  V(rx_packet_loss, "rxPacketLoss")                                            \
+  V(rx_loss, "rxPacketLoss")                                                   \
   V(session, "Session")                                                        \
   V(sessionticket, "SessionTicket")                                            \
-  V(session_id, "sessionID")                                                   \
+  V(session_id_ctx, "sessionID")                                               \
   V(session_options, "Session::Options")                                       \
   V(stream, "Stream")                                                          \
   V(streamsource, "StreamSource")                                              \
   V(streambasesource, "StreamBaseSource")                                      \
   V(success, "success")                                                        \
   V(token_expiration, "tokenExpiration")                                       \
-  V(tx_packet_loss, "txPacketLoss")                                            \
+  V(tx_loss, "txPacketLoss")                                                   \
   V(udp_receive_buffer_size, "receiveBufferSize")                              \
   V(udp_send_buffer_size, "sendBufferSize")                                    \
   V(udp_ttl, "ttl")                                                            \

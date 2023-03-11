@@ -27,7 +27,10 @@ using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::Integer;
 using v8::Int32;
+using v8::Just;
 using v8::Local;
+using v8::Maybe;
+using v8::Nothing;
 using v8::Number;
 using v8::Object;
 using v8::PropertyAttribute;
@@ -44,8 +47,7 @@ class Session::LogStream : public AsyncWrap, public StreamBase {
   static Local<FunctionTemplate> GetConstructorTemplate(
       Environment* env) {
     auto& state = BindingData::Get(env);
-    Local<FunctionTemplate> tmpl =
-        state.logstream_constructor_template();
+    auto tmpl = state.logstream_constructor_template();
     if (tmpl.IsEmpty()) {
       tmpl = FunctionTemplate::New(env->isolate());
       tmpl->Inherit(AsyncWrap::GetConstructorTemplate(env));
@@ -364,6 +366,7 @@ class OptionsObject final : public BaseObject {
   QUIC_NO_COPY_OR_MOVE(OptionsObject)
 
   operator const Session::Options&() const;
+  operator const Session::Options*() const;
 
   void MemoryInfo(MemoryTracker*) const override;
   SET_MEMORY_INFO_NAME(OptionsObject)
@@ -412,6 +415,10 @@ class OptionsObject final : public BaseObject {
 
 OptionsObject::operator const Session::Options&() const {
   return options_;
+}
+
+OptionsObject::operator const Session::Options*() const {
+  return &options_;
 }
 
 void OptionsObject::Initialize(Environment* env,
@@ -631,7 +638,7 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
       !args[kIpv6PreferredAddress]->IsUndefined(),
       SocketAddressBase::HasInstance(env, args[kIpv6PreferredAddress]));
 
-  OptionsObject* options = new OptionsObject(env, args.This());
+  auto options = new OptionsObject(env, args.This());
 
   Utf8Value alpn(env->isolate(), args[kAlpn]);
   options->options_.crypto_options.alpn = std::string(1, alpn.length()) + (*alpn);
@@ -664,112 +671,92 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
 
   options->options_.qlog = args[kQlogEnabled]->IsTrue();
 
+#define SET(target, source, name, Base) \
+    options->SetOption(&target, source, state.name##_string(), &Base::name)
+
   if (!args[kTlsOptions]->IsUndefined()) {
     // TLS Options
-    Local<Object> tls_options = args[kTlsOptions].As<Object>();
+    auto tls_options = args[kTlsOptions].As<Object>();
 
-    if (UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.reject_unauthorized_string(),
-                                 &CryptoContext::Options::reject_unauthorized)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.enable_tls_trace_string(),
-                                 &CryptoContext::Options::enable_tls_trace)) ||
-        UNLIKELY(
-            options
-                ->SetOption(&options->options_.crypto_options,
-                            tls_options,
-                            state.request_peer_certificate_string(),
-                            &CryptoContext::Options::request_peer_certificate)) ||
-        UNLIKELY(
-            options
-                ->SetOption(&options->options_.crypto_options,
-                            tls_options,
-                            state.verify_hostname_identity_string(),
-                            &CryptoContext::Options::verify_hostname_identity)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.keylog_string(),
-                                 &CryptoContext::Options::keylog)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.session_id_string(),
-                                 &CryptoContext::Options::session_id_ctx)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.ciphers_string(),
-                                 &CryptoContext::Options::ciphers)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.groups_string(),
-                                 &CryptoContext::Options::groups)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.keys_string(),
-                                 &CryptoContext::Options::keys)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.certs_string(),
-                                 &CryptoContext::Options::certs)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.ca_string(),
-                                 &CryptoContext::Options::ca)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.crypto_options,
-                                 tls_options,
-                                 state.crl_string(),
-                                 &CryptoContext::Options::crl))) {
+    if (!SET(options->options_.crypto_options,
+             tls_options,
+             reject_unauthorized,
+             CryptoContext::Options) ||
+       !SET(options->options_.crypto_options,
+             tls_options,
+             enable_tls_trace,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             request_peer_certificate,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             verify_hostname_identity,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             keylog,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             session_id_ctx,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             ciphers,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             groups,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             keys,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             certs,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             ca,
+             CryptoContext::Options) ||
+        !SET(options->options_.crypto_options,
+             tls_options,
+             crl,
+             CryptoContext::Options)) {
       return;  // Failed!
     }
   }
 
   if (!args[kApplicationOptions]->IsUndefined()) {
-    Local<Object> app_options = args[kApplicationOptions].As<Object>();
+    auto app_options = args[kApplicationOptions].As<Object>();
 
-    if (UNLIKELY(options
-                     ->SetOption(&options->options_.application,
-                                 app_options,
-                                 state.max_header_pairs_string(),
-                                 &Session::Application::Options::max_header_pairs)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.application,
-                                 app_options,
-                                 state.max_header_length_string(),
-                                 &Session::Application::Options::max_header_length)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.application,
-                                 app_options,
-                                 state.max_field_section_size_string(),
-                                 &Session::Application::Options::max_field_section_size)) ||
-        UNLIKELY(
-            options
-                ->SetOption(&options->options_.application,
-                            app_options,
-                            state.qpack_max_table_capacity_string(),
-                            &Session::Application::Options::qpack_max_dtable_capacity)) ||
-        UNLIKELY(
-            options
-                ->SetOption(
-                    &options->options_.application,
-                    app_options,
-                    state.qpack_encoder_max_dtable_capacity_string(),
-                    &Session::Application::Options::qpack_encoder_max_dtable_capacity)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_.application,
-                                 app_options,
-                                 state.qpack_blocked_streams_string(),
-                                 &Session::Application::Options::qpack_blocked_streams))) {
+    if (!SET(options->options_.application,
+             app_options,
+             max_header_pairs,
+             Session::Application::Options) ||
+        !SET(options->options_.application,
+             app_options,
+             max_header_length,
+             Session::Application::Options) ||
+        !SET(options->options_.application,
+             app_options,
+             max_field_section_size,
+             Session::Application::Options) ||
+        !SET(options->options_.application,
+             app_options,
+             qpack_max_dtable_capacity,
+             Session::Application::Options) ||
+        !SET(options->options_.application,
+             app_options,
+             qpack_blocked_streams,
+             Session::Application::Options) ||
+        !SET(options->options_.application,
+             app_options,
+             qpack_encoder_max_dtable_capacity,
+             Session::Application::Options)) {
       // Intentionally do not return here.
     }
   }
@@ -782,73 +769,61 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
 
   if (!args[kTransportParams]->IsUndefined()) {
     // Transport params
-    Local<Object> params = args[kTransportParams].As<Object>();
+    auto params = args[kTransportParams].As<Object>();
 
-    if (UNLIKELY(options
-                     ->SetOption(
-                         &options->options_,
-                         params,
-                         state.initial_max_stream_data_bidi_local_string(),
-                         &Session::Options::initial_max_stream_data_bidi_local)) ||
-        UNLIKELY(options
-                     ->SetOption(
-                         &options->options_,
-                         params,
-                         state.initial_max_stream_data_bidi_remote_string(),
-                         &Session::Options::initial_max_stream_data_bidi_remote)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.initial_max_stream_data_uni_string(),
-                                 &Session::Options::initial_max_stream_data_uni)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.initial_max_data_string(),
-                                 &Session::Options::initial_max_data)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.initial_max_streams_bidi_string(),
-                                 &Session::Options::initial_max_streams_bidi)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.initial_max_streams_uni_string(),
-                                 &Session::Options::initial_max_streams_uni)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.max_idle_timeout_string(),
-                                 &Session::Options::max_idle_timeout)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.active_connection_id_limit_string(),
-                                 &Session::Options::active_connection_id_limit)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.ack_delay_exponent_string(),
-                                 &Session::Options::ack_delay_exponent)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.max_ack_delay_string(),
-                                 &Session::Options::max_ack_delay)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.max_datagram_frame_size_string(),
-                                 &Session::Options::max_datagram_frame_size)) ||
-        UNLIKELY(options
-                     ->SetOption(&options->options_,
-                                 params,
-                                 state.disable_active_migration_string(),
-                                 &Session::Options::disable_active_migration))) {
+    if (!SET(options->options_,
+             params,
+             initial_max_stream_data_bidi_local,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             initial_max_stream_data_bidi_remote,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             initial_max_stream_data_uni,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             initial_max_data,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             initial_max_streams_bidi,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             initial_max_streams_uni,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             max_idle_timeout,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             active_connection_id_limit,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             ack_delay_exponent,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             max_ack_delay,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             max_datagram_frame_size,
+             Session::Options) ||
+        !SET(options->options_,
+             params,
+             disable_active_migration,
+             Session::Options)) {
       return;
     }
   }
+
+#undef SET
 
   if (!args[kIpv4PreferredAddress]->IsUndefined()) {
     SocketAddressBase* preferred_addr;
@@ -878,6 +853,14 @@ void Session::Options::MemoryInfo(MemoryTracker* tracker) const {
     tracker->TrackField("preferred_address_ipv6",
                         preferred_address_ipv6.value());
   tracker->TrackField("tls", crypto_options);
+}
+
+const Session::Options& Session::Options::From(
+    Environment* env,
+    v8::Local<v8::Value> value) {
+  CHECK(OptionsObject::HasInstance(env, value));
+  OptionsObject* obj = Unwrap<OptionsObject>(value);
+  return *obj;
 }
 
 // ======================================================================================

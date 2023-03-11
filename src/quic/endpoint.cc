@@ -84,7 +84,7 @@ OptionsObject::operator const Endpoint::Options& () const { return options_; }
 Local<FunctionTemplate> OptionsObject::GetConstructorTemplate(
     Environment* env) {
   auto& state = BindingData::Get(env);
-  Local<FunctionTemplate> tmpl = state.endpoint_config_constructor_template();
+  auto tmpl = state.endpoint_config_constructor_template();
   if (tmpl.IsEmpty()) {
     auto isolate = env->isolate();
     tmpl = NewFunctionTemplate(isolate, New);
@@ -252,9 +252,9 @@ bool OptionsObject::SetOption<bool>(
 
 void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
-  Environment* env = Environment::GetCurrent(args);
-
-  OptionsObject* options = new OptionsObject(env, args.This());
+  auto env = Environment::GetCurrent(args);
+  auto& state = BindingData::Get(env);
+  auto options = new OptionsObject(env, args.This());
   options->options_.GenerateResetTokenSecret();
 
   CHECK(SocketAddressBase::HasInstance(env, args[0]));
@@ -263,94 +263,38 @@ void OptionsObject::New(const FunctionCallbackInfo<Value>& args) {
 
   options->options_.local_address = *address->address();
 
+#define SET(key)                                                               \
+  options->SetOption(object, state.key##_string(), &Endpoint::Options::key)
+
   if (LIKELY(args[1]->IsObject())) {
-    auto& state = BindingData::Get(env);
-    Local<Object> object = args[1].As<Object>();
-    if (UNLIKELY(options
-                     ->SetOption(object,
-                                 state.retry_token_expiration_string(),
-                                 &Endpoint::Options::retry_token_expiration)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.token_expiration_string(),
-                                 &Endpoint::Options::token_expiration)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_window_override_string(),
-                                 &Endpoint::Options::max_window_override)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_stream_window_override_string(),
-                                 &Endpoint::Options::max_stream_window_override)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_connections_per_host_string(),
-                                 &Endpoint::Options::max_connections_per_host)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_connections_total_string(),
-                                 &Endpoint::Options::max_connections_total)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_stateless_resets_string(),
-                                 &Endpoint::Options::max_stateless_resets)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.address_lru_size_string(),
-                                 &Endpoint::Options::address_lru_size)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.retry_limit_string(),
-                                 &Endpoint::Options::retry_limit)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.max_payload_size_string(),
-                                 &Endpoint::Options::max_payload_size)) ||
-        UNLIKELY(
-            options
-                ->SetOption(object,
-                            state.unacknowledged_packet_threshold_string(),
-                            &Endpoint::Options::unacknowledged_packet_threshold)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.validate_address_string(),
-                                 &Endpoint::Options::validate_address)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.disable_stateless_reset_string(),
-                                 &Endpoint::Options::disable_stateless_reset)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.rx_packet_loss_string(),
-                                 &Endpoint::Options::rx_loss)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.tx_packet_loss_string(),
-                                 &Endpoint::Options::tx_loss)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.cc_algorithm_string(),
-                                 &Endpoint::Options::cc_algorithm)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.ipv6_only_string(),
-                                 &Endpoint::Options::ipv6_only)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.udp_receive_buffer_size_string(),
-                                 &Endpoint::Options::udp_receive_buffer_size)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.udp_send_buffer_size_string(),
-                                 &Endpoint::Options::udp_send_buffer_size)) ||
-        UNLIKELY(options
-                     ->SetOption(object,
-                                 state.udp_ttl_string(),
-                                 &Endpoint::Options::udp_ttl))) {
+    auto object = args[1].As<Object>();
+    if (!SET(retry_token_expiration) ||
+        !SET(token_expiration) ||
+        !SET(max_window_override) ||
+        !SET(max_stream_window_override) ||
+        !SET(max_connections_per_host) ||
+        !SET(max_connections_total) ||
+        !SET(max_stateless_resets) ||
+        !SET(address_lru_size) ||
+        !SET(retry_limit) ||
+        !SET(max_payload_size) ||
+        !SET(unacknowledged_packet_threshold) ||
+        !SET(validate_address) ||
+        !SET(disable_stateless_reset) ||
+        !SET(rx_loss) ||
+        !SET(tx_loss) ||
+        !SET(cc_algorithm) ||
+        !SET(ipv6_only) ||
+        !SET(udp_receive_buffer_size) ||
+        !SET(udp_send_buffer_size) ||
+        !SET(udp_ttl)) {
       // The if block intentionally does nothing. The code is structured like
-      // this to shortcircuit if any of the SetOptions() returns Nothing.
+      // this to shortcircuit if any of the SetOptions() returns false signaling
+      // that an error occurred.
     }
   }
+
+#undef SET
 }
 
 void OptionsObject::GenerateResetTokenSecret(
@@ -419,7 +363,7 @@ class Endpoint::UDP::Impl final : public HandleWrap {
  public:
   static Local<FunctionTemplate> GetConstructorTemplate(Environment* env) {
     auto& state = BindingData::Get(env);
-    Local<FunctionTemplate> tmpl = state.udp_constructor_template();
+    auto tmpl = state.udp_constructor_template();
     if (tmpl.IsEmpty()) {
       tmpl = NewFunctionTemplate(env->isolate(), IllegalConstructor);
       tmpl->Inherit(HandleWrap::GetConstructorTemplate(env));
@@ -717,7 +661,7 @@ bool GenerateRetryPacket(const BaseObjectPtr<Packet>& packet,
 
 Local<FunctionTemplate> Endpoint::GetConstructorTemplate(Environment* env) {
   auto& state = BindingData::Get(env);
-  Local<FunctionTemplate> tmpl = state.endpoint_constructor_template();
+  auto tmpl = state.endpoint_constructor_template();
   if (tmpl.IsEmpty()) {
     auto isolate = env->isolate();
     tmpl = NewFunctionTemplate(isolate, IllegalConstructor);
@@ -774,7 +718,7 @@ BaseObjectPtr<Endpoint> Endpoint::Create(Environment* env,
     return BaseObjectPtr<Endpoint>();
   }
 
-  return MakeBaseObject<Endpoint>(env, obj, options);
+  return MakeDetachedBaseObject<Endpoint>(env, obj, options);
 }
 
 Endpoint::Endpoint(Environment* env,
@@ -875,7 +819,6 @@ void Endpoint::AssociateCID(const CID& cid, const CID& scid) {
 }
 
 void Endpoint::DisassociateCID(const CID& cid) {
-  if (!cid) return;
   if (!is_closed() && cid) dcid_to_scid_.erase(cid);
 }
 
@@ -1185,7 +1128,7 @@ void Endpoint::Receive(size_t nread,
                            const CID& dcid,
                            const CID& scid) {
     stats_.Increment<&Stats::bytes_received>(store.length());
-    BaseObjectPtr<Session> session = FindSession(dcid);
+    auto session = FindSession(dcid);
     return session && !session->is_destroyed()
                ? session->Receive(
                      std::move(store), local_address, remote_address)
@@ -1195,15 +1138,12 @@ void Endpoint::Receive(size_t nread,
   const auto accept = [&](const Session::Config& config, Store&& store) {
     if (is_closed() || is_closing() || !is_listening()) return false;
 
-    BaseObjectPtr<Session> session =
+    auto session =
         Session::Create(BaseObjectPtr<Endpoint>(this), config, server_options_);
 
-    CHECK(session);
-
-    return session
-               ? session->Receive(
-                     std::move(store), config.local_addr, config.remote_addr)
-               : false;
+    return session ?
+        session->Receive(std::move(store), config.local_addr, config.remote_addr) :
+        false;
   };
 
   const auto acceptInitialPacket = [&](const quic_version version,
@@ -1671,22 +1611,25 @@ void Endpoint::DoConnect(const FunctionCallbackInfo<Value>& args) {
   Endpoint* endpoint;
   ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
 
+  // args[0] is a SocketAddress
+  // args[1] is a Session OptionsObject (see session.cc)
+  // args[2] is an optional SessionTicket
+
   CHECK(SocketAddressBase::HasInstance(env, args[0]));
-  CHECK(Session::OptionsObject::HasInstance(env, args[1]));
+  auto& options = Session::Options::From(env, args[1]);
   CHECK_IMPLIES(!args[2]->IsUndefined(),
                 SessionTicket::HasInstance(env, args[2]));
 
   SocketAddressBase* address;
-  Session::OptionsObject* options;
   SessionTicket* sessionTicket = nullptr;
 
   ASSIGN_OR_RETURN_UNWRAP(&address, args[0]);
-  ASSIGN_OR_RETURN_UNWRAP(&options, args[1]);
+
   if (!args[2]->IsUndefined()) ASSIGN_OR_RETURN_UNWRAP(&sessionTicket, args[2]);
 
   auto session = endpoint->Connect(
       *address->address(),
-      *options,
+      options,
       BaseObjectPtr<SessionTicket>(sessionTicket));
   if (session) args.GetReturnValue().Set(session->object());
 }
@@ -1695,10 +1638,11 @@ void Endpoint::DoListen(const FunctionCallbackInfo<Value>& args) {
   Endpoint* endpoint;
   ASSIGN_OR_RETURN_UNWRAP(&endpoint, args.Holder());
   auto env = Environment::GetCurrent(args);
-  CHECK(Session::OptionsObject::HasInstance(env, args[0]));
-  Session::OptionsObject* options;
-  ASSIGN_OR_RETURN_UNWRAP(&options, args[0].As<Object>());
-  args.GetReturnValue().Set(endpoint->Listen(*options));
+
+  // args[0] is a Session OptionsObject (see session.cc)
+
+  auto& options = Session::Options::From(env, args[0]);
+  args.GetReturnValue().Set(endpoint->Listen(options));
 }
 
 void Endpoint::MarkBusy(const FunctionCallbackInfo<Value>& args) {

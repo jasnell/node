@@ -315,6 +315,9 @@ class Session : public AsyncWrap,
   // session. Most of the options correlate to the transport parameters that are
   // communicated to the remote peer once the session is created.
   struct Options final : public MemoryRetainer {
+
+    static const Options& From(Environment* env, v8::Local<v8::Value> value);
+
     PreferredAddress::Policy preferred_address_strategy =
         PreferredAddress::Policy::USE;
 
