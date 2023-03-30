@@ -343,6 +343,7 @@
       'src/quic/preferredaddress.cc',
       'src/quic/sessionticket.cc',
       'src/quic/tokens.cc',
+      'src/quic/transportparams.cc',
       'src/quic/bindingdata.h',
       'src/quic/cid.h',
       'src/quic/data.h',
@@ -350,6 +351,7 @@
       'src/quic/preferredaddress.h',
       'src/quic/sessionticket.h',
       'src/quic/tokens.h',
+      'src/quic/transportparams.h',
     ],
     'node_mksnapshot_exec': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)node_mksnapshot<(EXECUTABLE_SUFFIX)',
     'conditions': [
