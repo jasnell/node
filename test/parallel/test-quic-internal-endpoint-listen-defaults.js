@@ -1,76 +1,42 @@
-// Flags: --expose-internals
+// Flags: --expose-internals --no-warnings
 'use strict';
 
 const common = require('../common');
 if (!common.hasQuic)
   common.skip('missing quic');
 
-const { internalBinding } = require('internal/test/binding');
+const { Endpoint } = require('internal/quic/quic');
+const { SocketAddress } = require('node:net');
 const {
   ok,
   strictEqual,
-  deepStrictEqual,
+  notStrictEqual,
 } = require('node:assert');
 
-const {
-  SocketAddress: _SocketAddress,
-  AF_INET,
-} = internalBinding('block_list');
-const quic = internalBinding('quic');
+const endpoint = new Endpoint();
 
-quic.setCallbacks({
-  onEndpointClose: common.mustCall((...args) => {
-    deepStrictEqual(args, [0, 0]);
-  }),
+ok(!endpoint.state.isListening);
+ok(!endpoint.state.isReceiving);
+ok(!endpoint.state.isBound);
+strictEqual(endpoint.address, undefined);
 
-  // The following are unused in this test
-  onSessionNew() {},
-  onSessionClose() {},
-  onSessionDatagram() {},
-  onSessionDatagramStatus() {},
-  onSessionHandshake() {},
-  onSessionPathValidation() {},
-  onSessionTicket() {},
-  onSessionVersionNegotiation() {},
-  onStreamCreated() {},
-  onStreamBlocked() {},
-  onStreamClose() {},
-  onStreamReset() {},
-  onStreamHeaders() {},
-  onStreamTrailers() {},
-});
+endpoint.listen();
 
-const endpoint = new quic.Endpoint({});
+ok(endpoint.state.isListening);
+ok(endpoint.state.isReceiving);
+ok(endpoint.state.isBound);
 
-const state = new DataView(endpoint.state);
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_LISTENING));
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_RECEIVING));
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_BOUND));
-strictEqual(endpoint.address(), undefined);
+ok(endpoint.address instanceof SocketAddress);
 
-endpoint.listen({});
+strictEqual(endpoint.address.address, '127.0.0.1');
+strictEqual(endpoint.address.family, 'ipv4');
+strictEqual(endpoint.address.flowlabel, 0);
+notStrictEqual(endpoint.address.port, 0);
 
-ok(state.getUint8(quic.IDX_STATE_ENDPOINT_LISTENING));
-ok(state.getUint8(quic.IDX_STATE_ENDPOINT_RECEIVING));
-ok(state.getUint8(quic.IDX_STATE_ENDPOINT_BOUND));
-const address = endpoint.address();
-ok(address instanceof _SocketAddress);
-
-const detail = address.detail({
-  address: undefined,
-  port: undefined,
-  family: undefined,
-  flowlabel: undefined,
-});
-
-strictEqual(detail.address, '127.0.0.1');
-strictEqual(detail.family, AF_INET);
-strictEqual(detail.flowlabel, 0);
-ok(detail.port !== 0);
-
-endpoint.closeGracefully();
-
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_LISTENING));
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_RECEIVING));
-ok(!state.getUint8(quic.IDX_STATE_ENDPOINT_BOUND));
-strictEqual(endpoint.address(), undefined);
+endpoint.close().then(common.mustCall(() => {
+  ok(!endpoint.state.isListening);
+  ok(!endpoint.state.isReceiving);
+  ok(!endpoint.state.isBound);
+  strictEqual(endpoint.address, undefined);
+  notStrictEqual(endpoint.stats.destroyedAt, 0n);
+}));
