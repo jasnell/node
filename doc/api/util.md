@@ -225,6 +225,25 @@ added: v14.9.0
 Alias for `util.debuglog`. Usage allows for readability of that doesn't imply
 logging when only using `util.debuglog().enabled`.
 
+## `util.defer(fn)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `fn` {Function} A function to be deferred.
+* Returns {Deferred} A deferred object.
+
+Returns a disposable object that will invoke the given function when the owning
+scope is exited. Supports both `Symbol.dispose` and `Symbol.asyncDispose`.
+
+```js
+{
+  using _ = util.defer(() => console.log('done'));
+  // Do other stuff. The deferred callback will be called when this block exits.
+}
+```
+
 ## `util.deprecate(fn, msg[, code])`
 
 <!-- YAML
@@ -1556,6 +1575,36 @@ Otherwise, returns `false`.
 
 See [`assert.deepStrictEqual()`][] for more information about deep strict
 equality.
+
+## Class: `Deferred`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+### `util.cancel()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+Cancels the deferred function.
+
+### `util[Symbol.asyncDispose]()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+Calls the deferred callback asynchronously.
+
+### `util[Symbol.dispose]()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+Calls the deferred callback synchronously.
 
 ## Class: `util.MIMEType`
 

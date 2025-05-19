@@ -298,6 +298,8 @@ const customTypesMap = {
   'Request': 'https://developer.mozilla.org/en-US/docs/Web/API/Request',
   'Disposable': 'https://tc39.es/proposal-explicit-resource-management/#sec-disposable-interface',
 
+  'Deferred': 'util.html#class-deferred',
+
   'quic.QuicEndpoint': 'quic.html#class-quicendpoint',
   'quic.QuicEndpoint.Stats': 'quic.html#class-quicendpointstats',
   'quic.QuicSession': 'quic.html#class-quicsession',
