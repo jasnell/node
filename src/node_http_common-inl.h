@@ -37,13 +37,12 @@ NgHeaders<T>::NgHeaders(Environment* env, v8::Local<v8::Array> headers) {
   nv_t* const nva = reinterpret_cast<nv_t*>(start);
 
   CHECK_LE(header_contents + header_string_len, *buf_ + buf_.length());
-  CHECK_EQ(header_string.As<v8::String>()->WriteOneByte(
-               env->isolate(),
-               reinterpret_cast<uint8_t*>(header_contents),
-               0,
-               header_string_len,
-               v8::String::NO_NULL_TERMINATION),
-           header_string_len);
+  header_string.As<v8::String>()->WriteOneByteV2(
+      env->isolate(),
+      0,
+      header_string_len,
+      reinterpret_cast<uint8_t*>(header_contents),
+      v8::String::NO_NULL_TERMINATION);
 
   size_t n = 0;
   char* p;
