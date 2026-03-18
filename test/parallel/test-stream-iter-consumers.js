@@ -317,4 +317,54 @@ Promise.all([
   testMergeSingleSource(),
   testMergeEmpty(),
   testMergeWithAbortSignal(),
+  testConsumersNonArrayBatch(),
+  testConsumersNonArrayBatchSync(),
 ]).then(common.mustCall());
+
+// Regression test: consumers should tolerate sources that yield raw
+// Uint8Array or string values instead of Uint8Array[] batches.
+async function testConsumersNonArrayBatch() {
+  const encoder = new TextEncoder();
+
+  // Source yields raw Uint8Array, not wrapped in an array
+  async function* rawSource() {
+    yield encoder.encode('hello');
+    yield encoder.encode(' world');
+  }
+  const result = await text(rawSource());
+  assert.strictEqual(result, 'hello world');
+
+  // bytes() with raw chunks
+  async function* rawSource2() {
+    yield encoder.encode('ab');
+  }
+  const data = await bytes(rawSource2());
+  assert.strictEqual(data.length, 2);
+  assert.strictEqual(data[0], 97); // 'a'
+  assert.strictEqual(data[1], 98); // 'b'
+
+  // array() with raw chunks
+  async function* rawSource3() {
+    yield encoder.encode('x');
+    yield encoder.encode('y');
+  }
+  const arr = await array(rawSource3());
+  assert.strictEqual(arr.length, 2);
+}
+
+async function testConsumersNonArrayBatchSync() {
+  const encoder = new TextEncoder();
+
+  function* rawSyncSource() {
+    yield encoder.encode('sync');
+    yield encoder.encode('data');
+  }
+  const result = textSync(rawSyncSource());
+  assert.strictEqual(result, 'syncdata');
+
+  const data = bytesSync(rawSyncSource());
+  assert.strictEqual(data.length, 8);
+
+  const arr = arraySync(rawSyncSource());
+  assert.strictEqual(arr.length, 2);
+}
