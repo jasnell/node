@@ -198,6 +198,52 @@ async function testPipeToPreventClose() {
   assert.strictEqual(endCalled, false);
 }
 
+// =============================================================================
+// Transform signal listener errors must propagate
+// =============================================================================
+
+// Source error → controller.abort() → transform listener throws →
+// source error propagates to consumer; listener error becomes uncaught
+// exception (per EventTarget spec behavior).
+async function testTransformSignalListenerErrorOnSourceError() {
+  // Listener errors from dispatchEvent are rethrown via process.nextTick,
+  // so we must catch them as uncaught exceptions.
+  const uncaughtErrors = [];
+  const handler = (err) => uncaughtErrors.push(err);
+  process.on('uncaughtException', handler);
+
+  const throwingTransform = {
+    transform(source, options) {
+      options.signal.addEventListener('abort', () => {
+        throw new Error('listener boom');
+      });
+      return source;
+    },
+  };
+
+  async function* failingSource() {
+    yield [new TextEncoder().encode('a')];
+    throw new Error('source error');
+  }
+
+  await assert.rejects(
+    async () => {
+      // eslint-disable-next-line no-unused-vars
+      for await (const _ of pull(failingSource(), throwingTransform)) {
+        // Consume
+      }
+    },
+    { message: 'source error' },
+  );
+
+  // Give the nextTick a chance to fire
+  await new Promise((r) => setTimeout(r, 10));
+  process.removeListener('uncaughtException', handler);
+
+  assert.strictEqual(uncaughtErrors.length, 1);
+  assert.strictEqual(uncaughtErrors[0].message, 'listener boom');
+}
+
 Promise.all([
   testPullSyncIdentity(),
   testPullSyncStatelessTransform(),
@@ -213,6 +259,7 @@ Promise.all([
   testPipeToPreventClose(),
   testPipeToMinimalWriter(),
   testPipeToSyncMinimalWriter(),
+  testTransformSignalListenerErrorOnSourceError(),
 ]).then(common.mustCall());
 
 // Regression test: pipeTo should work with a minimal writer that only

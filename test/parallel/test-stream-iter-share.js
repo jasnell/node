@@ -223,6 +223,50 @@ async function testSyncShareFromRejectsNonStreamable() {
   );
 }
 
+// =============================================================================
+// Protocol validation
+// =============================================================================
+
+function testShareProtocolReturnsNull() {
+  const obj = {
+    [Symbol.for('Stream.shareProtocol')]() { return null; },
+  };
+  assert.throws(
+    () => Share.from(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
+function testShareProtocolReturnsNonObject() {
+  const obj = {
+    [Symbol.for('Stream.shareProtocol')]() { return 42; },
+  };
+  assert.throws(
+    () => Share.from(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
+function testSyncShareProtocolReturnsNull() {
+  const obj = {
+    [Symbol.for('Stream.shareSyncProtocol')]() { return null; },
+  };
+  assert.throws(
+    () => SyncShare.fromSync(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
+function testSyncShareProtocolReturnsNonObject() {
+  const obj = {
+    [Symbol.for('Stream.shareSyncProtocol')]() { return 'bad'; },
+  };
+  assert.throws(
+    () => SyncShare.fromSync(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
 Promise.all([
   testBasicShare(),
   testShareMultipleConsumers(),
@@ -239,6 +283,10 @@ Promise.all([
   testSyncShareFromSync(),
   testSyncShareFromRejectsNonStreamable(),
   testShareMultipleConsumersConcurrentPull(),
+  testShareProtocolReturnsNull(),
+  testShareProtocolReturnsNonObject(),
+  testSyncShareProtocolReturnsNull(),
+  testSyncShareProtocolReturnsNonObject(),
 ]).then(common.mustCall());
 
 async function testShareMultipleConsumersConcurrentPull() {

@@ -353,6 +353,40 @@ async function testFailDetachesConsumers() {
   );
 }
 
+// =============================================================================
+// Protocol validation
+// =============================================================================
+
+function testBroadcastProtocolReturnsNull() {
+  const obj = {
+    [Symbol.for('Stream.broadcastProtocol')]() { return null; },
+  };
+  assert.throws(
+    () => Broadcast.from(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
+function testBroadcastProtocolReturnsString() {
+  const obj = {
+    [Symbol.for('Stream.broadcastProtocol')]() { return 'bad'; },
+  };
+  assert.throws(
+    () => Broadcast.from(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
+function testBroadcastProtocolReturnsUndefined() {
+  const obj = {
+    [Symbol.for('Stream.broadcastProtocol')]() { },
+  };
+  assert.throws(
+    () => Broadcast.from(obj),
+    { code: 'ERR_INVALID_RETURN_VALUE' },
+  );
+}
+
 Promise.all([
   testBasicBroadcast(),
   testMultipleWrites(),
@@ -373,4 +407,7 @@ Promise.all([
   testAlreadyAbortedSignal(),
   testBroadcastFromCancelWhileBlocked(),
   testFailDetachesConsumers(),
+  testBroadcastProtocolReturnsNull(),
+  testBroadcastProtocolReturnsString(),
+  testBroadcastProtocolReturnsUndefined(),
 ]).then(common.mustCall());
