@@ -108,6 +108,9 @@ async function testWriterEnd() {
   const totalBytes = writer.endSync();
   assert.strictEqual(totalBytes, 0);
 
+  // Calling endSync again returns -1 (already closed)
+  assert.strictEqual(writer.endSync(), -1);
+
   const batches = [];
   for await (const batch of readable) {
     batches.push(batch);

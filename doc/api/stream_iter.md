@@ -695,7 +695,19 @@ run().catch(console.error);
 
 #### Writer
 
-The writer returned by `push()` has the following methods:
+The writer returned by `push()` has the following methods.
+
+Each async method has a synchronous `*Sync` counterpart designed for a
+try-fallback pattern: attempt the fast synchronous path first, and fall back
+to the async version only when the synchronous call indicates it could not
+complete:
+
+```mjs
+if (!writer.writeSync(chunk)) await writer.write(chunk);
+if (!writer.writevSync(chunks)) await writer.writev(chunks);
+if (writer.endSync() < 0) await writer.end();
+if (!writer.failSync(err)) await writer.fail(err);
+```
 
 ##### `writer.fail(reason)`
 
@@ -707,8 +719,10 @@ Fail the stream with an error.
 ##### `writer.failSync(reason)`
 
 * `reason` {Error}
+* Returns: {boolean} `true` if the writer was failed, `false` if already
+  errored.
 
-Synchronously fail the stream with an error. Does not return a promise.
+Synchronous variant of `writer.fail()`.
 
 ##### `writer.desiredSize`
 
@@ -725,6 +739,20 @@ Returns `null` if the writer is closed or the consumer has disconnected.
 * Returns: {Promise\<number>} Total bytes written.
 
 Signal that no more data will be written.
+
+##### `writer.endSync()`
+
+* Returns: {number} Total bytes written, or `-1` if the writer is not open.
+
+Synchronous variant of `writer.end()`. Returns `-1` if the writer is already
+closed or errored. Can be used as a try-fallback pattern:
+
+```cjs
+const result = writer.endSync();
+if (result < 0) {
+  writer.end();
+}
+```
 
 ##### `writer.write(chunk[, options])`
 
