@@ -238,4 +238,31 @@ Promise.all([
   testShareSyncCancel(),
   testSyncShareFromSync(),
   testSyncShareFromRejectsNonStreamable(),
+  testShareMultipleConsumersConcurrentPull(),
 ]).then(common.mustCall());
+
+async function testShareMultipleConsumersConcurrentPull() {
+  // Regression test: multiple consumers pulling concurrently should each
+  // receive all items even when only one item is pulled from source at a time.
+  // Previously, consumers woken after a pull that found no data at their
+  // cursor would return done:true prematurely (thundering herd bug).
+  async function* slowSource() {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 1));
+      yield [new TextEncoder().encode(`item-${i}`)];
+    }
+  }
+  const shared = share(slowSource());
+  const c1 = shared.pull();
+  const c2 = shared.pull();
+  const c3 = shared.pull();
+
+  const [t1, t2, t3] = await Promise.all([
+    text(c1), text(c2), text(c3),
+  ]);
+
+  const expected = 'item-0item-1item-2item-3item-4';
+  assert.strictEqual(t1, expected);
+  assert.strictEqual(t2, expected);
+  assert.strictEqual(t3, expected);
+}
