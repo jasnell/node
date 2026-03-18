@@ -1,4 +1,4 @@
-# Stream (new)
+# Iterable Streams
 
 <!--introduced_in=REPLACEME-->
 
@@ -6,8 +6,12 @@
 
 <!-- source_link=lib/stream/iter.js -->
 
-The `node:stream/iter` module provides a new streaming API built on iterables
-rather than the event-driven `Readable`/`Writable`/`Transform` class hierarchy.
+The `node:stream/iter` module provides a streaming API built on iterables
+rather than the event-driven `Readable`/`Writable`/`Transform` class hierarchy,
+or the Web Streams `ReadableStream`/`WritableStream`/`TransformStream` interfaces.
+
+This module is available only when the `--experimental-stream-iter` CLI flag
+is enabled.
 
 Streams are represented as `AsyncIterable<Uint8Array[]>` (async) or
 `Iterable<Uint8Array[]>` (sync). There are no base classes to extend -- any

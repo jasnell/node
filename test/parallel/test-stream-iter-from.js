@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 'use strict';
 
 const common = require('../common');

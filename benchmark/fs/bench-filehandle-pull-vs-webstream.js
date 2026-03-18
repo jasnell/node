@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 // Compare FileHandle.createReadStream() vs readableWebStream() vs pull()
 // reading a large file through two transforms: uppercase then gzip compress.
 'use strict';
