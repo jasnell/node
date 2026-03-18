@@ -352,4 +352,19 @@ Promise.all([
   testCancelledWriteRemovedFromQueue(),
   testOndrainResolvesFalseOnConsumerBreak(),
   testOndrainRejectsOnConsumerThrow(),
+  testInvalidBackpressure(),
 ]).then(common.mustCall());
+
+async function testInvalidBackpressure() {
+  assert.throws(() => push({ backpressure: 'banana' }), {
+    code: 'ERR_INVALID_ARG_VALUE',
+  });
+  assert.throws(() => push({ backpressure: '' }), {
+    code: 'ERR_INVALID_ARG_VALUE',
+  });
+
+  // Valid values should not throw
+  for (const bp of ['strict', 'block', 'drop-oldest', 'drop-newest']) {
+    push({ backpressure: bp });
+  }
+}
