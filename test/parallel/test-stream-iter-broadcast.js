@@ -210,6 +210,30 @@ async function testBroadcastFromAsyncIterable() {
   assert.strictEqual(data, 'broadcast-from');
 }
 
+async function testBroadcastFromNonArrayChunks() {
+  // Source that yields single Uint8Array chunks (not arrays)
+  async function* singleChunkSource() {
+    yield new TextEncoder().encode('hello');
+    yield new TextEncoder().encode(' world');
+  }
+  const { broadcast: bc } = Broadcast.from(singleChunkSource());
+  const consumer = bc.push();
+  const data = await text(consumer);
+  assert.strictEqual(data, 'hello world');
+}
+
+async function testBroadcastFromStringChunks() {
+  // Source that yields bare strings (not arrays)
+  async function* stringSource() {
+    yield 'foo';
+    yield 'bar';
+  }
+  const { broadcast: bc } = Broadcast.from(stringSource());
+  const consumer = bc.push();
+  const data = await text(consumer);
+  assert.strictEqual(data, 'foobar');
+}
+
 async function testBroadcastFromMultipleConsumers() {
   const source = from('shared-data');
   const { broadcast: bc } = Broadcast.from(source);
@@ -342,6 +366,8 @@ Promise.all([
   testCancelWithoutReason(),
   testCancelWithReason(),
   testBroadcastFromAsyncIterable(),
+  testBroadcastFromNonArrayChunks(),
+  testBroadcastFromStringChunks(),
   testBroadcastFromMultipleConsumers(),
   testAbortSignal(),
   testAlreadyAbortedSignal(),
