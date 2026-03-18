@@ -234,109 +234,20 @@ async function testTransformProtocol() {
 }
 
 // =============================================================================
-// Cross-compatibility: verify gzip/deflate output is compatible with zlib
+// Compression with options
 // =============================================================================
 
-async function testGzipCompatWithZlib() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const gunzip = promisify(zlib.gunzip);
-
-  const input = 'Cross-compat test with node:zlib. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressGzip()));
-
-  // Decompress with standard zlib
-  const decompressed = await gunzip(compressed);
-  assert.strictEqual(decompressed.toString(), input);
-}
-
-async function testDeflateCompatWithZlib() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const inflate = promisify(zlib.inflate);
-
-  const input = 'Cross-compat deflate test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressDeflate()));
-
-  // Decompress with standard zlib
-  const decompressed = await inflate(compressed);
-  assert.strictEqual(decompressed.toString(), input);
-}
-
-async function testBrotliCompatWithZlib() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const brotliDecompress = promisify(zlib.brotliDecompress);
-
-  const input = 'Cross-compat brotli test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressBrotli()));
-
-  const decompressed = await brotliDecompress(compressed);
-  assert.strictEqual(decompressed.toString(), input);
-}
-
-async function testZstdCompatWithZlib() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const zstdDecompress = promisify(zlib.zstdDecompress);
-
-  const input = 'Cross-compat zstd test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressZstd()));
-
-  const decompressed = await zstdDecompress(compressed);
-  assert.strictEqual(decompressed.toString(), input);
-}
-
-// =============================================================================
-// Reverse compat: compress with zlib, decompress with new streams
-// =============================================================================
-
-async function testZlibGzipToNewStreams() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const gzip = promisify(zlib.gzip);
-
-  const input = 'Reverse compat gzip test. '.repeat(100);
-  const compressed = await gzip(input);
-  const result = await text(pull(from(compressed), decompressGzip()));
-  assert.strictEqual(result, input);
-}
-
-async function testZlibDeflateToNewStreams() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const deflate = promisify(zlib.deflate);
-
-  const input = 'Reverse compat deflate test. '.repeat(100);
-  const compressed = await deflate(input);
-  const result = await text(pull(from(compressed), decompressDeflate()));
-  assert.strictEqual(result, input);
-}
-
-async function testZlibBrotliToNewStreams() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const brotliCompress = promisify(zlib.brotliCompress);
-
-  const input = 'Reverse compat brotli test. '.repeat(100);
-  const compressed = await brotliCompress(input);
-  const result = await text(pull(from(compressed), decompressBrotli()));
-  assert.strictEqual(result, input);
-}
-
-async function testZlibZstdToNewStreams() {
-  const zlib = require('zlib');
-  const { promisify } = require('util');
-  const zstdCompress = promisify(zlib.zstdCompress);
-
-  const input = 'Reverse compat zstd test. '.repeat(100);
-  const compressed = await zstdCompress(input);
-  const result = await text(pull(from(compressed), decompressZstd()));
-  assert.strictEqual(result, input);
+async function testGzipWithLevel() {
+  const data = 'a'.repeat(10000);
+  const level1 = await bytes(pull(from(data), compressGzip({ level: 1 })));
+  const level9 = await bytes(pull(from(data), compressGzip({ level: 9 })));
+  // Higher compression level should produce smaller output
+  assert.ok(level9.length <= level1.length);
+  // Both should decompress to original
+  const dec1 = await text(pull(from(level1), decompressGzip()));
+  const dec9 = await text(pull(from(level9), decompressGzip()));
+  assert.strictEqual(dec1, data);
+  assert.strictEqual(dec9, data);
 }
 
 // =============================================================================
@@ -382,15 +293,6 @@ async function testZlibZstdToNewStreams() {
   // Protocol
   await testTransformProtocol();
 
-  // Cross-compat: new streams compress → zlib decompress
-  await testGzipCompatWithZlib();
-  await testDeflateCompatWithZlib();
-  await testBrotliCompatWithZlib();
-  await testZstdCompatWithZlib();
-
-  // Reverse compat: zlib compress → new streams decompress
-  await testZlibGzipToNewStreams();
-  await testZlibDeflateToNewStreams();
-  await testZlibBrotliToNewStreams();
-  await testZlibZstdToNewStreams();
+  // Compression with options
+  await testGzipWithLevel();
 })().then(common.mustCall());

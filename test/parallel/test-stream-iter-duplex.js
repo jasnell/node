@@ -141,6 +141,17 @@ async function testEmptyDuplex() {
   assert.strictEqual(dataAtB.byteLength, 0);
 }
 
+// Channel fail propagation
+async function testChannelFail() {
+  const [a, b] = duplex();
+  a.writer.failSync(new Error('channel failed'));
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of b.readable) { /* consume */ }
+  }, { message: 'channel failed' });
+  b.close();
+}
+
 Promise.all([
   testBasicDuplex(),
   testBidirectional(),
@@ -150,4 +161,5 @@ Promise.all([
   testPerChannelOptions(),
   testAbortSignal(),
   testEmptyDuplex(),
+  testChannelFail(),
 ]).then(common.mustCall());

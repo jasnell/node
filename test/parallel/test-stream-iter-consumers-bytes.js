@@ -6,7 +6,6 @@ const assert = require('assert');
 const {
   from,
   fromSync,
-  push,
   bytes,
   bytesSync,
   text,
@@ -15,9 +14,6 @@ const {
   arrayBufferSync,
   array,
   arraySync,
-  tap,
-  tapSync,
-  merge,
 } = require('stream/iter');
 
 // =============================================================================
@@ -66,29 +62,6 @@ async function testBytesEmpty() {
   const source = from([]);
   const data = await bytes(source);
   assert.strictEqual(data.byteLength, 0);
-}
-
-// =============================================================================
-// textSync / text
-// =============================================================================
-
-async function testTextSyncBasic() {
-  const source = fromSync('hello text');
-  const data = textSync(source);
-  assert.strictEqual(data, 'hello text');
-}
-
-async function testTextAsync() {
-  const source = from('hello async text');
-  const data = await text(source);
-  assert.strictEqual(data, 'hello async text');
-}
-
-async function testTextEncoding() {
-  // Default encoding is utf-8
-  const source = from('café');
-  const data = await text(source);
-  assert.strictEqual(data, 'café');
 }
 
 // =============================================================================
@@ -166,173 +139,8 @@ async function testArrayAsyncLimit() {
 }
 
 // =============================================================================
-// tap / tapSync
+// Non-array batch tolerance
 // =============================================================================
-
-async function testTapSync() {
-  const observed = [];
-  const observer = tapSync((chunks) => {
-    if (chunks !== null) {
-      observed.push(chunks.length);
-    }
-  });
-
-  // tapSync returns a function transform
-  assert.strictEqual(typeof observer, 'function');
-
-  // Test that it passes data through unchanged
-  const input = [new Uint8Array([1]), new Uint8Array([2])];
-  const result = observer(input);
-  assert.deepStrictEqual(result, input);
-  assert.deepStrictEqual(observed, [2]);
-
-  // null (flush) passes through
-  const flushResult = observer(null);
-  assert.strictEqual(flushResult, null);
-}
-
-async function testTapAsync() {
-  const observed = [];
-  const observer = tap(async (chunks) => {
-    if (chunks !== null) {
-      observed.push(chunks.length);
-    }
-  });
-
-  assert.strictEqual(typeof observer, 'function');
-
-  const input = [new Uint8Array([1])];
-  const result = await observer(input);
-  assert.deepStrictEqual(result, input);
-  assert.deepStrictEqual(observed, [1]);
-}
-
-async function testTapInPipeline() {
-  const { writer, readable } = push();
-  const seen = [];
-
-  const observer = tap(async (chunks) => {
-    if (chunks !== null) {
-      for (const chunk of chunks) {
-        seen.push(new TextDecoder().decode(chunk));
-      }
-    }
-  });
-
-  writer.write('hello');
-  writer.end();
-
-  // Use pull with tap as a transform
-  const { pull } = require('stream/iter');
-  const result = pull(readable, observer);
-  const data = await text(result);
-
-  assert.strictEqual(data, 'hello');
-  assert.strictEqual(seen.length, 1);
-  assert.strictEqual(seen[0], 'hello');
-}
-
-// =============================================================================
-// merge
-// =============================================================================
-
-async function testMergeTwoSources() {
-  const { writer: w1, readable: r1 } = push();
-  const { writer: w2, readable: r2 } = push();
-
-  w1.write('from-a');
-  w1.end();
-  w2.write('from-b');
-  w2.end();
-
-  const merged = merge(r1, r2);
-  const chunks = [];
-  for await (const batch of merged) {
-    for (const chunk of batch) {
-      chunks.push(new TextDecoder().decode(chunk));
-    }
-  }
-
-  // Both sources should be present (order is temporal, not guaranteed)
-  assert.strictEqual(chunks.length, 2);
-  assert.ok(chunks.includes('from-a'));
-  assert.ok(chunks.includes('from-b'));
-}
-
-async function testMergeSingleSource() {
-  const source = from('only-one');
-  const merged = merge(source);
-
-  const data = await text(merged);
-  assert.strictEqual(data, 'only-one');
-}
-
-async function testMergeEmpty() {
-  const merged = merge();
-  const batches = [];
-  for await (const batch of merged) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 0);
-}
-
-async function testMergeWithAbortSignal() {
-  const ac = new AbortController();
-  ac.abort();
-
-  const source = from('data');
-  const merged = merge(source, { signal: ac.signal });
-
-  await assert.rejects(
-    async () => {
-      // eslint-disable-next-line no-unused-vars
-      for await (const _ of merged) {
-        assert.fail('Should not reach here');
-      }
-    },
-    (err) => err.name === 'AbortError',
-  );
-}
-
-Promise.all([
-  testBytesSyncBasic(),
-  testBytesSyncLimit(),
-  testBytesAsync(),
-  testBytesAsyncLimit(),
-  testBytesAsyncAbort(),
-  testBytesEmpty(),
-  testTextSyncBasic(),
-  testTextAsync(),
-  testTextEncoding(),
-  testArrayBufferSyncBasic(),
-  testArrayBufferAsync(),
-  testArraySyncBasic(),
-  testArraySyncLimit(),
-  testArrayAsync(),
-  testArrayAsyncLimit(),
-  testTapSync(),
-  testTapAsync(),
-  testTapInPipeline(),
-  testMergeTwoSources(),
-  testMergeSingleSource(),
-  testMergeEmpty(),
-  testMergeWithAbortSignal(),
-  testMergeSyncSources(),
-  testConsumersNonArrayBatch(),
-  testConsumersNonArrayBatchSync(),
-]).then(common.mustCall());
-
-// Regression test: merge() with sync iterable sources
-async function testMergeSyncSources() {
-  const s1 = fromSync('abc');
-  const s2 = fromSync('def');
-  const result = await text(merge(s1, s2));
-  // Both sources should be fully consumed; order may vary
-  assert.strictEqual(result.length, 6);
-  for (const ch of 'abcdef') {
-    assert.ok(result.includes(ch), `missing '${ch}' in '${result}'`);
-  }
-}
 
 // Regression test: consumers should tolerate sources that yield raw
 // Uint8Array or string values instead of Uint8Array[] batches.
@@ -381,3 +189,20 @@ async function testConsumersNonArrayBatchSync() {
   const arr = arraySync(rawSyncSource());
   assert.strictEqual(arr.length, 2);
 }
+
+Promise.all([
+  testBytesSyncBasic(),
+  testBytesSyncLimit(),
+  testBytesAsync(),
+  testBytesAsyncLimit(),
+  testBytesAsyncAbort(),
+  testBytesEmpty(),
+  testArrayBufferSyncBasic(),
+  testArrayBufferAsync(),
+  testArraySyncBasic(),
+  testArraySyncLimit(),
+  testArrayAsync(),
+  testArrayAsyncLimit(),
+  testConsumersNonArrayBatch(),
+  testConsumersNonArrayBatchSync(),
+]).then(common.mustCall());

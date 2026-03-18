@@ -3,11 +3,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { from, fromSync, Stream } = require('stream/iter');
-
-// =============================================================================
-// fromSync() tests
-// =============================================================================
+const { fromSync } = require('stream/iter');
 
 async function testFromSyncString() {
   // String input should be UTF-8 encoded
@@ -114,95 +110,12 @@ async function testFromSyncRejectsNonStreamable() {
   );
 }
 
-// =============================================================================
-// from() tests (async)
-// =============================================================================
-
-async function testFromString() {
-  const readable = from('hello-async');
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 1);
-  assert.deepStrictEqual(batches[0][0],
-                         new TextEncoder().encode('hello-async'));
-}
-
-async function testFromAsyncGenerator() {
-  async function* gen() {
-    yield new Uint8Array([10, 20]);
-    yield new Uint8Array([30, 40]);
-  }
-  const readable = from(gen());
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 2);
-  assert.deepStrictEqual(batches[0][0], new Uint8Array([10, 20]));
-  assert.deepStrictEqual(batches[1][0], new Uint8Array([30, 40]));
-}
-
-async function testFromSyncIterableAsAsync() {
-  // Sync iterable passed to from() should work
-  function* gen() {
-    yield new Uint8Array([1]);
-    yield new Uint8Array([2]);
-  }
-  const readable = from(gen());
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  // Sync iterables get batched together
-  assert.ok(batches.length >= 1);
-}
-
-async function testFromToAsyncStreamableProtocol() {
-  const sym = Symbol.for('Stream.toAsyncStreamable');
-  const obj = {
-    [sym]() {
-      return 'async-protocol-data';
-    },
-  };
-  async function* gen() {
-    yield obj;
-  }
-  const readable = from(gen());
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 1);
-  assert.deepStrictEqual(batches[0][0],
-                         new TextEncoder().encode('async-protocol-data'));
-}
-
-async function testFromRejectsNonStreamable() {
-  assert.throws(
-    () => from(12345),
-    { name: 'TypeError' },
-  );
-}
-
-async function testFromEmptyArray() {
-  const readable = from([]);
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 0);
-}
-
-// Also accessible via Stream namespace
-async function testStreamNamespace() {
-  const readable = Stream.from('via-namespace');
-  const batches = [];
-  for await (const batch of readable) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 1);
+async function testFromSyncEmptyGenerator() {
+  function* empty() {}
+  let count = 0;
+  // eslint-disable-next-line no-unused-vars
+  for (const _ of fromSync(empty())) { count++; }
+  assert.strictEqual(count, 0);
 }
 
 Promise.all([
@@ -214,11 +127,5 @@ Promise.all([
   testFromSyncNestedIterables(),
   testFromSyncToStreamableProtocol(),
   testFromSyncRejectsNonStreamable(),
-  testFromString(),
-  testFromAsyncGenerator(),
-  testFromSyncIterableAsAsync(),
-  testFromToAsyncStreamableProtocol(),
-  testFromRejectsNonStreamable(),
-  testFromEmptyArray(),
-  testStreamNamespace(),
+  testFromSyncEmptyGenerator(),
 ]).then(common.mustCall());

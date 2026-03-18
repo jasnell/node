@@ -4,14 +4,9 @@
 const common = require('../common');
 const assert = require('assert');
 const {
-  share,
-  shareSync,
-  Share,
-  SyncShare,
   from,
-  fromSync,
+  share,
   text,
-  textSync,
 
 } = require('stream/iter');
 
@@ -138,156 +133,27 @@ async function testShareAlreadyAborted() {
 }
 
 // =============================================================================
-// Share.from
+// Source error propagation
 // =============================================================================
 
-async function testShareFrom() {
-  const source = from('share-from');
-  const shared = Share.from(source);
-  const consumer = shared.pull();
-
-  const data = await text(consumer);
-  assert.strictEqual(data, 'share-from');
-}
-
-async function testShareFromRejectsNonStreamable() {
-  assert.throws(
-    () => Share.from(12345),
-    { name: 'TypeError' },
-  );
-}
-
-// =============================================================================
-// Sync share
-// =============================================================================
-
-async function testShareSyncBasic() {
-  const source = fromSync('sync shared');
-  const shared = shareSync(source);
-
-  const consumer = shared.pull();
-  const data = textSync(consumer);
-  assert.strictEqual(data, 'sync shared');
-}
-
-async function testShareSyncMultipleConsumers() {
-  function* gen() {
+async function testShareSourceError() {
+  async function* failingSource() {
     yield [new TextEncoder().encode('a')];
-    yield [new TextEncoder().encode('b')];
-    yield [new TextEncoder().encode('c')];
+    throw new Error('share source boom');
   }
-
-  const shared = shareSync(gen(), { highWaterMark: 16 });
-
+  const shared = share(failingSource());
   const c1 = shared.pull();
   const c2 = shared.pull();
 
-  const data1 = textSync(c1);
-  const data2 = textSync(c2);
-
-  assert.strictEqual(data1, 'abc');
-  assert.strictEqual(data2, 'abc');
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of c1) { /* consume */ }
+  }, { message: 'share source boom' });
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of c2) { /* consume */ }
+  }, { message: 'share source boom' });
 }
-
-async function testShareSyncCancel() {
-  const source = fromSync('data');
-  const shared = shareSync(source);
-  const consumer = shared.pull();
-
-  shared.cancel();
-
-  const batches = [];
-  for (const batch of consumer) {
-    batches.push(batch);
-  }
-  assert.strictEqual(batches.length, 0);
-}
-
-// =============================================================================
-// SyncShare.fromSync
-// =============================================================================
-
-async function testSyncShareFromSync() {
-  const source = fromSync('sync-share-from');
-  const shared = SyncShare.fromSync(source);
-  const consumer = shared.pull();
-
-  const data = textSync(consumer);
-  assert.strictEqual(data, 'sync-share-from');
-}
-
-async function testSyncShareFromRejectsNonStreamable() {
-  assert.throws(
-    () => SyncShare.fromSync(12345),
-    { name: 'TypeError' },
-  );
-}
-
-// =============================================================================
-// Protocol validation
-// =============================================================================
-
-function testShareProtocolReturnsNull() {
-  const obj = {
-    [Symbol.for('Stream.shareProtocol')]() { return null; },
-  };
-  assert.throws(
-    () => Share.from(obj),
-    { code: 'ERR_INVALID_RETURN_VALUE' },
-  );
-}
-
-function testShareProtocolReturnsNonObject() {
-  const obj = {
-    [Symbol.for('Stream.shareProtocol')]() { return 42; },
-  };
-  assert.throws(
-    () => Share.from(obj),
-    { code: 'ERR_INVALID_RETURN_VALUE' },
-  );
-}
-
-function testSyncShareProtocolReturnsNull() {
-  const obj = {
-    [Symbol.for('Stream.shareSyncProtocol')]() { return null; },
-  };
-  assert.throws(
-    () => SyncShare.fromSync(obj),
-    { code: 'ERR_INVALID_RETURN_VALUE' },
-  );
-}
-
-function testSyncShareProtocolReturnsNonObject() {
-  const obj = {
-    [Symbol.for('Stream.shareSyncProtocol')]() { return 'bad'; },
-  };
-  assert.throws(
-    () => SyncShare.fromSync(obj),
-    { code: 'ERR_INVALID_RETURN_VALUE' },
-  );
-}
-
-Promise.all([
-  testBasicShare(),
-  testShareMultipleConsumers(),
-  testShareConsumerCount(),
-  testShareCancel(),
-  testShareCancelWithReason(),
-  testShareAbortSignal(),
-  testShareAlreadyAborted(),
-  testShareFrom(),
-  testShareFromRejectsNonStreamable(),
-  testShareSyncBasic(),
-  testShareSyncMultipleConsumers(),
-  testShareSyncCancel(),
-  testSyncShareFromSync(),
-  testSyncShareFromRejectsNonStreamable(),
-  testShareMultipleConsumersConcurrentPull(),
-  testShareProtocolReturnsNull(),
-  testShareProtocolReturnsNonObject(),
-  testSyncShareProtocolReturnsNull(),
-  testSyncShareProtocolReturnsNonObject(),
-]).then(common.mustCall());
 
 async function testShareMultipleConsumersConcurrentPull() {
   // Regression test: multiple consumers pulling concurrently should each
@@ -314,3 +180,15 @@ async function testShareMultipleConsumersConcurrentPull() {
   assert.strictEqual(t2, expected);
   assert.strictEqual(t3, expected);
 }
+
+Promise.all([
+  testBasicShare(),
+  testShareMultipleConsumers(),
+  testShareConsumerCount(),
+  testShareCancel(),
+  testShareCancelWithReason(),
+  testShareAbortSignal(),
+  testShareAlreadyAborted(),
+  testShareSourceError(),
+  testShareMultipleConsumersConcurrentPull(),
+]).then(common.mustCall());
