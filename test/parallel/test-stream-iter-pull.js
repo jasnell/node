@@ -211,4 +211,34 @@ Promise.all([
   testPipeToSync(),
   testPipeTo(),
   testPipeToPreventClose(),
+  testPipeToMinimalWriter(),
+  testPipeToSyncMinimalWriter(),
 ]).then(common.mustCall());
+
+// Regression test: pipeTo should work with a minimal writer that only
+// implements write(). end(), fail(), and all *Sync methods are optional.
+async function testPipeToMinimalWriter() {
+  const chunks = [];
+  const minimalWriter = {
+    write(chunk) {
+      chunks.push(chunk);
+    },
+  };
+
+  const source = from('minimal');
+  await pipeTo(source, minimalWriter);
+  assert.strictEqual(chunks.length > 0, true);
+}
+
+async function testPipeToSyncMinimalWriter() {
+  const chunks = [];
+  const minimalWriter = {
+    write(chunk) {
+      chunks.push(chunk);
+    },
+  };
+
+  const source = fromSync('minimal-sync');
+  pipeToSync(source, minimalWriter);
+  assert.strictEqual(chunks.length > 0, true);
+}
