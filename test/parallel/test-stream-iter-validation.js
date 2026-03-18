@@ -20,9 +20,12 @@ const {
 
 // HighWaterMark must be integer >= 1
 assert.throws(() => push({ highWaterMark: 'bad' }), { code: 'ERR_INVALID_ARG_TYPE' });
-assert.throws(() => push({ highWaterMark: 0 }), { code: 'ERR_OUT_OF_RANGE' });
-assert.throws(() => push({ highWaterMark: -1 }), { code: 'ERR_OUT_OF_RANGE' });
 assert.throws(() => push({ highWaterMark: 1.5 }), { code: 'ERR_OUT_OF_RANGE' });
+// Values < 1 are clamped to 1
+push({ highWaterMark: 0 }).writer.endSync();
+push({ highWaterMark: -1 }).writer.endSync();
+// Values above MAX_SAFE_INTEGER are clamped
+push({ highWaterMark: Number.MAX_SAFE_INTEGER }).writer.endSync();
 
 // Signal must be AbortSignal
 assert.throws(() => push({ signal: 'bad' }), { code: 'ERR_INVALID_ARG_TYPE' });
@@ -80,7 +83,6 @@ assert.throws(() => pullSync(fromSync('a'), 42), { code: 'ERR_INVALID_ARG_TYPE' 
 // =============================================================================
 
 assert.throws(() => broadcast({ highWaterMark: 'bad' }), { code: 'ERR_INVALID_ARG_TYPE' });
-assert.throws(() => broadcast({ highWaterMark: 0 }), { code: 'ERR_OUT_OF_RANGE' });
 assert.throws(() => broadcast({ signal: {} }), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.throws(() => broadcast({ backpressure: 'bad' }), { code: 'ERR_INVALID_ARG_VALUE' });
 
@@ -94,15 +96,12 @@ assert.throws(() => Broadcast.from('bad'), { code: 'ERR_INVALID_ARG_TYPE' });
 
 assert.throws(() => share(42), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.throws(() => share(from('a'), { highWaterMark: 'bad' }), { code: 'ERR_INVALID_ARG_TYPE' });
-assert.throws(() => share(from('a'), { highWaterMark: 0 }), { code: 'ERR_OUT_OF_RANGE' });
 assert.throws(() => share(from('a'), { signal: {} }), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.throws(() => share(from('a'), { backpressure: 'bad' }), { code: 'ERR_INVALID_ARG_VALUE' });
 
 assert.throws(() => shareSync(42), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.throws(() => shareSync(fromSync('a'), { highWaterMark: 'bad' }),
               { code: 'ERR_INVALID_ARG_TYPE' });
-assert.throws(() => shareSync(fromSync('a'), { highWaterMark: 0 }),
-              { code: 'ERR_OUT_OF_RANGE' });
 
 // Share.from / SyncShare.fromSync reject non-iterable
 assert.throws(() => Share.from(42), { code: 'ERR_INVALID_ARG_TYPE' });
