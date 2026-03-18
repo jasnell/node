@@ -400,6 +400,9 @@ If transforms are provided, they are applied via [`stream/iter pull()`][].
 The file handle is locked while the iterable is being consumed and unlocked
 when iteration completes.
 
+This function is only available when the `--experimental-stream-iter` flag is
+enabled.
+
 ```mjs
 import { open } from 'node:fs/promises';
 import { text, compressGzip } from 'node:stream/iter';
@@ -953,6 +956,9 @@ Return a [`node:stream/iter`][] writer backed by this file handle.
 
 The writer supports `Symbol.asyncDispose`, so it can be used with
 `await using`.
+
+This function is only available when the `--experimental-stream-iter` flag is
+enabled.
 
 ```mjs
 import { open } from 'node:fs/promises';
