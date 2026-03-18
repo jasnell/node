@@ -2,7 +2,7 @@
 // Measures the cost of constructing stream infrastructure (no data flow).
 'use strict';
 
-const common = require('../../common.js');
+const common = require('../common.js');
 const { Readable, Writable, Transform, PassThrough } = require('stream');
 
 const bench = common.createBenchmark(main, {

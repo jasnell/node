@@ -3,7 +3,7 @@
 // stream/iter uses broadcast() with push() consumers.
 'use strict';
 
-const common = require('../../common.js');
+const common = require('../common.js');
 const { PassThrough, Writable } = require('stream');
 
 const bench = common.createBenchmark(main, {

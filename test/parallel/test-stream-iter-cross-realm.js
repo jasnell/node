@@ -124,9 +124,9 @@ async function testFromSyncCrossRealmInt32Array() {
   const crossRealm = vm.runInNewContext('new Int32Array([1])');
   const readable = fromSync(crossRealm);
   const data = bytesSync(readable);
-  // Int32Array([1]) = 4 bytes: 01 00 00 00 (little-endian)
+  // Int32Array([1]) = 4 bytes, endianness varies by platform
   assert.strictEqual(data.length, 4);
-  assert.strictEqual(data[0], 1);
+  assert.strictEqual(new Int32Array(data.buffer, data.byteOffset, 1)[0], 1);
 }
 
 Promise.all([

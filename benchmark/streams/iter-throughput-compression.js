@@ -1,12 +1,13 @@
-// Throughput benchmark: data flow through a single stateless transform.
-// Uses byte-level ASCII uppercase (branchless, no encoding dependency).
+// Throughput benchmark: gzip compress then decompress round-trip.
+// Tests real-world compression performance across stream APIs.
 'use strict';
 
-const common = require('../../common.js');
-const { Readable, Transform, Writable, pipeline } = require('stream');
+const common = require('../common.js');
+const { Readable, Writable, pipeline } = require('stream');
+const zlib = require('zlib');
 
 const bench = common.createBenchmark(main, {
-  api: ['classic', 'webstream', 'iter', 'iter-sync'],
+  api: ['classic', 'webstream', 'iter'],
   datasize: [1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024],
   n: [5],
 }, {
@@ -14,15 +15,6 @@ const bench = common.createBenchmark(main, {
 });
 
 const CHUNK_SIZE = 64 * 1024;
-
-// Byte-level ASCII uppercase: branchless, no string encoding.
-function upperBuf(buf) {
-  const out = Buffer.allocUnsafe(buf.length);
-  for (let i = 0; i < buf.length; i++) {
-    out[i] = buf[i] - (buf[i] >= 97 && buf[i] <= 122) * 32;
-  }
-  return out;
-}
 
 function main({ api, datasize, n }) {
   const chunk = Buffer.alloc(CHUNK_SIZE, 'abcdefghij');
@@ -35,8 +27,6 @@ function main({ api, datasize, n }) {
       return benchWebStream(chunk, datasize, n, totalOps);
     case 'iter':
       return benchIter(chunk, datasize, n, totalOps);
-    case 'iter-sync':
-      return benchIterSync(chunk, datasize, n, totalOps);
   }
 }
 
@@ -51,13 +41,8 @@ function benchClassic(chunk, datasize, n, totalOps) {
         this.push(size === chunk.length ? chunk : chunk.subarray(0, size));
       },
     });
-    const t = new Transform({
-      transform(data, enc, cb) {
-        cb(null, upperBuf(data));
-      },
-    });
     const w = new Writable({ write(data, enc, cb) { cb(); } });
-    pipeline(r, t, w, cb);
+    pipeline(r, zlib.createGzip(), zlib.createGunzip(), w, cb);
   }
 
   let i = 0;
@@ -80,13 +65,11 @@ function benchWebStream(chunk, datasize, n, totalOps) {
           size === chunk.length ? chunk : chunk.subarray(0, size));
       },
     });
-    const ts = new TransformStream({
-      transform(c, controller) {
-        controller.enqueue(upperBuf(c));
-      },
-    });
     const ws = new WritableStream({ write() {} });
-    await rs.pipeThrough(ts).pipeTo(ws);
+    await rs
+      .pipeThrough(new CompressionStream('gzip'))
+      .pipeThrough(new DecompressionStream('gzip'))
+      .pipeTo(ws);
   }
 
   (async () => {
@@ -97,12 +80,7 @@ function benchWebStream(chunk, datasize, n, totalOps) {
 }
 
 function benchIter(chunk, datasize, n, totalOps) {
-  const { pipeTo } = require('stream/iter');
-
-  const upper = (chunks) => {
-    if (chunks === null) return null;
-    return chunks.map((c) => upperBuf(c));
-  };
+  const { pipeTo, compressGzip, decompressGzip } = require('stream/iter');
 
   async function run() {
     let remaining = datasize;
@@ -113,7 +91,7 @@ function benchIter(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    await pipeTo(source(), upper,
+    await pipeTo(source(), compressGzip(), decompressGzip(),
                  { write() {}, writeSync() { return true; } });
   }
 
@@ -122,27 +100,4 @@ function benchIter(chunk, datasize, n, totalOps) {
     for (let i = 0; i < n; i++) await run();
     bench.end(totalOps);
   })();
-}
-
-function benchIterSync(chunk, datasize, n, totalOps) {
-  const { pipeToSync } = require('stream/iter');
-
-  const upper = (chunks) => {
-    if (chunks === null) return null;
-    return chunks.map((c) => upperBuf(c));
-  };
-
-  bench.start();
-  for (let i = 0; i < n; i++) {
-    let remaining = datasize;
-    function* source() {
-      while (remaining > 0) {
-        const size = Math.min(remaining, chunk.length);
-        remaining -= size;
-        yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
-      }
-    }
-    pipeToSync(source(), upper, { write() {} });
-  }
-  bench.end(totalOps);
 }

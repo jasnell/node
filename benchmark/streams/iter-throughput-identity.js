@@ -2,7 +2,7 @@
 // Compares Node.js classic streams, Web Streams, and stream/iter.
 'use strict';
 
-const common = require('../../common.js');
+const common = require('../common.js');
 const { Readable, Writable, pipeline } = require('stream');
 
 const bench = common.createBenchmark(main, {

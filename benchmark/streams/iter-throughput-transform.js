@@ -1,9 +1,9 @@
-// Throughput benchmark: pipe source to a no-op sink (write-only destination).
-// Measures pure pipe throughput without consumer-side collection overhead.
+// Throughput benchmark: data flow through a single stateless transform.
+// Uses byte-level ASCII uppercase (branchless, no encoding dependency).
 'use strict';
 
-const common = require('../../common.js');
-const { Readable, Writable, pipeline } = require('stream');
+const common = require('../common.js');
+const { Readable, Transform, Writable, pipeline } = require('stream');
 
 const bench = common.createBenchmark(main, {
   api: ['classic', 'webstream', 'iter', 'iter-sync'],
@@ -14,6 +14,15 @@ const bench = common.createBenchmark(main, {
 });
 
 const CHUNK_SIZE = 64 * 1024;
+
+// Byte-level ASCII uppercase: branchless, no string encoding.
+function upperBuf(buf) {
+  const out = Buffer.allocUnsafe(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    out[i] = buf[i] - (buf[i] >= 97 && buf[i] <= 122) * 32;
+  }
+  return out;
+}
 
 function main({ api, datasize, n }) {
   const chunk = Buffer.alloc(CHUNK_SIZE, 'abcdefghij');
@@ -42,8 +51,13 @@ function benchClassic(chunk, datasize, n, totalOps) {
         this.push(size === chunk.length ? chunk : chunk.subarray(0, size));
       },
     });
+    const t = new Transform({
+      transform(data, enc, cb) {
+        cb(null, upperBuf(data));
+      },
+    });
     const w = new Writable({ write(data, enc, cb) { cb(); } });
-    pipeline(r, w, cb);
+    pipeline(r, t, w, cb);
   }
 
   let i = 0;
@@ -66,8 +80,13 @@ function benchWebStream(chunk, datasize, n, totalOps) {
           size === chunk.length ? chunk : chunk.subarray(0, size));
       },
     });
+    const ts = new TransformStream({
+      transform(c, controller) {
+        controller.enqueue(upperBuf(c));
+      },
+    });
     const ws = new WritableStream({ write() {} });
-    await rs.pipeTo(ws);
+    await rs.pipeThrough(ts).pipeTo(ws);
   }
 
   (async () => {
@@ -80,6 +99,11 @@ function benchWebStream(chunk, datasize, n, totalOps) {
 function benchIter(chunk, datasize, n, totalOps) {
   const { pipeTo } = require('stream/iter');
 
+  const upper = (chunks) => {
+    if (chunks === null) return null;
+    return chunks.map((c) => upperBuf(c));
+  };
+
   async function run() {
     let remaining = datasize;
     async function* source() {
@@ -89,9 +113,8 @@ function benchIter(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    // Provide writeSync for the sync fast path in pipeTo
-    const writer = { write() {}, writeSync() { return true; } };
-    await pipeTo(source(), writer);
+    await pipeTo(source(), upper,
+                 { write() {}, writeSync() { return true; } });
   }
 
   (async () => {
@@ -104,6 +127,11 @@ function benchIter(chunk, datasize, n, totalOps) {
 function benchIterSync(chunk, datasize, n, totalOps) {
   const { pipeToSync } = require('stream/iter');
 
+  const upper = (chunks) => {
+    if (chunks === null) return null;
+    return chunks.map((c) => upperBuf(c));
+  };
+
   bench.start();
   for (let i = 0; i < n; i++) {
     let remaining = datasize;
@@ -114,8 +142,7 @@ function benchIterSync(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    const writer = { write() {} };
-    pipeToSync(source(), writer);
+    pipeToSync(source(), upper, { write() {} });
   }
   bench.end(totalOps);
 }

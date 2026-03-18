@@ -1,13 +1,12 @@
-// Throughput benchmark: gzip compress then decompress round-trip.
-// Tests real-world compression performance across stream APIs.
+// Throughput benchmark: pipe source to a no-op sink (write-only destination).
+// Measures pure pipe throughput without consumer-side collection overhead.
 'use strict';
 
-const common = require('../../common.js');
+const common = require('../common.js');
 const { Readable, Writable, pipeline } = require('stream');
-const zlib = require('zlib');
 
 const bench = common.createBenchmark(main, {
-  api: ['classic', 'webstream', 'iter'],
+  api: ['classic', 'webstream', 'iter', 'iter-sync'],
   datasize: [1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024],
   n: [5],
 }, {
@@ -27,6 +26,8 @@ function main({ api, datasize, n }) {
       return benchWebStream(chunk, datasize, n, totalOps);
     case 'iter':
       return benchIter(chunk, datasize, n, totalOps);
+    case 'iter-sync':
+      return benchIterSync(chunk, datasize, n, totalOps);
   }
 }
 
@@ -42,7 +43,7 @@ function benchClassic(chunk, datasize, n, totalOps) {
       },
     });
     const w = new Writable({ write(data, enc, cb) { cb(); } });
-    pipeline(r, zlib.createGzip(), zlib.createGunzip(), w, cb);
+    pipeline(r, w, cb);
   }
 
   let i = 0;
@@ -66,10 +67,7 @@ function benchWebStream(chunk, datasize, n, totalOps) {
       },
     });
     const ws = new WritableStream({ write() {} });
-    await rs
-      .pipeThrough(new CompressionStream('gzip'))
-      .pipeThrough(new DecompressionStream('gzip'))
-      .pipeTo(ws);
+    await rs.pipeTo(ws);
   }
 
   (async () => {
@@ -80,7 +78,7 @@ function benchWebStream(chunk, datasize, n, totalOps) {
 }
 
 function benchIter(chunk, datasize, n, totalOps) {
-  const { pipeTo, compressGzip, decompressGzip } = require('stream/iter');
+  const { pipeTo } = require('stream/iter');
 
   async function run() {
     let remaining = datasize;
@@ -91,8 +89,9 @@ function benchIter(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    await pipeTo(source(), compressGzip(), decompressGzip(),
-                 { write() {}, writeSync() { return true; } });
+    // Provide writeSync for the sync fast path in pipeTo
+    const writer = { write() {}, writeSync() { return true; } };
+    await pipeTo(source(), writer);
   }
 
   (async () => {
@@ -100,4 +99,23 @@ function benchIter(chunk, datasize, n, totalOps) {
     for (let i = 0; i < n; i++) await run();
     bench.end(totalOps);
   })();
+}
+
+function benchIterSync(chunk, datasize, n, totalOps) {
+  const { pipeToSync } = require('stream/iter');
+
+  bench.start();
+  for (let i = 0; i < n; i++) {
+    let remaining = datasize;
+    function* source() {
+      while (remaining > 0) {
+        const size = Math.min(remaining, chunk.length);
+        remaining -= size;
+        yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
+      }
+    }
+    const writer = { write() {} };
+    pipeToSync(source(), writer);
+  }
+  bench.end(totalOps);
 }

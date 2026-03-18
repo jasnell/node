@@ -2,10 +2,10 @@
 // Reads a real file through the three stream APIs.
 'use strict';
 
-const common = require('../../common.js');
+const common = require('../common.js');
 const fs = require('fs');
 const { Writable, pipeline } = require('stream');
-const tmpdir = require('../../../test/common/tmpdir');
+const tmpdir = require('../../test/common/tmpdir');
 
 tmpdir.refresh();
 const filename = tmpdir.resolve(`.removeme-bench-file-read-${process.pid}`);
