@@ -12,7 +12,7 @@ const {
   text,
   textSync,
 
-} = require('stream/new');
+} = require('stream/iter');
 
 // =============================================================================
 // Async share()

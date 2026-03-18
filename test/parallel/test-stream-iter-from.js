@@ -2,7 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { from, fromSync, Stream } = require('stream/new');
+const { from, fromSync, Stream } = require('stream/iter');
 
 // =============================================================================
 // fromSync() tests

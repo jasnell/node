@@ -2,7 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const streamNew = require('stream/new');
+const streamNew = require('stream/iter');
 
 // =============================================================================
 // Stream namespace object
@@ -184,9 +184,9 @@ async function testNamespaceMatchesExports() {
 // =============================================================================
 
 async function testRequirePaths() {
-  // Both require('stream/new') and require('node:stream/new') should work
-  const fromPlain = require('stream/new');
-  const fromNode = require('node:stream/new');
+  // Both require('stream/iter') and require('node:stream/iter') should work
+  const fromPlain = require('stream/iter');
+  const fromNode = require('node:stream/iter');
 
   assert.strictEqual(fromPlain.Stream, fromNode.Stream);
   assert.strictEqual(fromPlain.push, fromNode.push);

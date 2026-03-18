@@ -2,7 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { duplex, text, bytes } = require('stream/new');
+const { duplex, text, bytes } = require('stream/iter');
 
 // =============================================================================
 // Basic duplex

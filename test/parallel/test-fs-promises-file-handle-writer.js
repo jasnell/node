@@ -9,7 +9,7 @@ const tmpdir = require('../common/tmpdir');
 const {
   pipeTo, text,
   compressGzip, decompressGzip,
-} = require('stream/new');
+} = require('stream/iter');
 
 tmpdir.refresh();
 

@@ -3,7 +3,7 @@
 const common = require('../common');
 const assert = require('assert');
 const { pull, pullSync, pipeTo, pipeToSync, from, fromSync, bytesSync,
-        text } = require('stream/new');
+        text } = require('stream/iter');
 
 // =============================================================================
 // pullSync() tests

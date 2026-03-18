@@ -6,7 +6,7 @@ const fs = require('fs');
 const { open } = fs.promises;
 const path = require('path');
 const tmpdir = require('../common/tmpdir');
-const { text, bytes } = require('stream/new');
+const { text, bytes } = require('stream/iter');
 
 tmpdir.refresh();
 

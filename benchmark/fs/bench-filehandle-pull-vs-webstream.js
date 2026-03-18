@@ -147,7 +147,7 @@ async function runWebStream() {
 // New streams path: pull() with uppercase transform + gzip transform
 // ---------------------------------------------------------------------------
 async function benchPull(n, filesize) {
-  const { pull, compressGzip } = require('stream/new');
+  const { pull, compressGzip } = require('stream/iter');
 
   // Warm up
   await runPull(pull, compressGzip);

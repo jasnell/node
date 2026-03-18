@@ -15,7 +15,7 @@ const {
   decompressDeflate,
   decompressBrotli,
   decompressZstd,
-} = require('stream/new');
+} = require('stream/iter');
 
 // =============================================================================
 // Helper: compress then decompress, verify round-trip equality

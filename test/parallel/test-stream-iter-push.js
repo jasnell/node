@@ -2,7 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { push, text, ondrain } = require('stream/new');
+const { push, text, ondrain } = require('stream/iter');
 
 async function testBasicWriteRead() {
   const { writer, readable } = push();

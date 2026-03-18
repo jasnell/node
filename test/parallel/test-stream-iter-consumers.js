@@ -17,7 +17,7 @@ const {
   tap,
   tapSync,
   merge,
-} = require('stream/new');
+} = require('stream/iter');
 
 // =============================================================================
 // bytesSync / bytes
@@ -222,7 +222,7 @@ async function testTapInPipeline() {
   writer.end();
 
   // Use pull with tap as a transform
-  const { pull } = require('stream/new');
+  const { pull } = require('stream/iter');
   const result = pull(readable, observer);
   const data = await text(result);
 

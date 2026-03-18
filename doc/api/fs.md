@@ -386,7 +386,7 @@ added: REPLACEME
 > Stability: 1 - Experimental
 
 * `...transforms` {Function|Object} Optional transforms to apply via
-  [`stream/new pull()`][].
+  [`stream/iter pull()`][].
 * `options` {Object}
   * `signal` {AbortSignal}
   * `autoClose` {boolean} Close the file handle when the stream ends.
@@ -394,15 +394,15 @@ added: REPLACEME
 * Returns: {AsyncIterable\<Uint8Array\[]>}
 
 Return the file contents as an async iterable using the
-[`node:stream/new`][] pull model. Reads are performed in 64 KB chunks.
-If transforms are provided, they are applied via [`stream/new pull()`][].
+[`node:stream/iter`][] pull model. Reads are performed in 64 KB chunks.
+If transforms are provided, they are applied via [`stream/iter pull()`][].
 
 The file handle is locked while the iterable is being consumed and unlocked
 when iteration completes.
 
 ```mjs
 import { open } from 'node:fs/promises';
-import { text, compressGzip } from 'node:stream/new';
+import { text, compressGzip } from 'node:stream/iter';
 
 const fh = await open('input.txt', 'r');
 
@@ -416,7 +416,7 @@ const compressed = fh2.pull(compressGzip(), { autoClose: true });
 
 ```cjs
 const { open } = require('node:fs/promises');
-const { text, compressGzip } = require('node:stream/new');
+const { text, compressGzip } = require('node:stream/iter');
 
 async function run() {
   const fh = await open('input.txt', 'r');
@@ -949,14 +949,14 @@ added: REPLACEME
     cleanup. Marks the writer as closed so subsequent writes fail immediately.
     Cannot honor `autoClose` (requires async I/O).
 
-Return a [`node:stream/new`][] writer backed by this file handle.
+Return a [`node:stream/iter`][] writer backed by this file handle.
 
 The writer supports `Symbol.asyncDispose`, so it can be used with
 `await using`.
 
 ```mjs
 import { open } from 'node:fs/promises';
-import { from, pipeTo, compressGzip } from 'node:stream/new';
+import { from, pipeTo, compressGzip } from 'node:stream/iter';
 
 const fh = await open('output.gz', 'w');
 const w = fh.writer({ autoClose: true });
@@ -966,7 +966,7 @@ await w.end();
 
 ```cjs
 const { open } = require('node:fs/promises');
-const { from, pipeTo, compressGzip } = require('node:stream/new');
+const { from, pipeTo, compressGzip } = require('node:stream/iter');
 
 async function run() {
   const fh = await open('output.gz', 'w');
@@ -8906,8 +8906,8 @@ the file contents.
 [`inotify(7)`]: https://man7.org/linux/man-pages/man7/inotify.7.html
 [`kqueue(2)`]: https://www.freebsd.org/cgi/man.cgi?query=kqueue&sektion=2
 [`minimatch`]: https://github.com/isaacs/minimatch
-[`node:stream/new`]: stream_new.md
-[`stream/new pull()`]: stream_new.md#pullsource-transforms-options
+[`node:stream/iter`]: stream_iter.md
+[`stream/iter pull()`]: stream_iter.md#pullsource-transforms-options
 [`util.promisify()`]: util.md#utilpromisifyoriginal
 [bigints]: https://tc39.github.io/proposal-bigint
 [caveats]: #caveats

@@ -2,7 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
-const { broadcast, Broadcast, from, text } = require('stream/new');
+const { broadcast, Broadcast, from, text } = require('stream/iter');
 
 // =============================================================================
 // Basic broadcast
