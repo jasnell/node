@@ -317,9 +317,22 @@ Promise.all([
   testMergeSingleSource(),
   testMergeEmpty(),
   testMergeWithAbortSignal(),
+  testMergeSyncSources(),
   testConsumersNonArrayBatch(),
   testConsumersNonArrayBatchSync(),
 ]).then(common.mustCall());
+
+// Regression test: merge() with sync iterable sources
+async function testMergeSyncSources() {
+  const s1 = fromSync('abc');
+  const s2 = fromSync('def');
+  const result = await text(merge(s1, s2));
+  // Both sources should be fully consumed; order may vary
+  assert.strictEqual(result.length, 6);
+  for (const ch of 'abcdef') {
+    assert.ok(result.includes(ch), `missing '${ch}' in '${result}'`);
+  }
+}
 
 // Regression test: consumers should tolerate sources that yield raw
 // Uint8Array or string values instead of Uint8Array[] batches.
