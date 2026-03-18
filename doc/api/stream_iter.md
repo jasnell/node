@@ -81,7 +81,7 @@ run().catch(console.error);
 
 ### Byte streams
 
-All data in the new streams API is represented as `Uint8Array` bytes. Strings
+All data in this API is represented as `Uint8Array` bytes. Strings
 are automatically UTF-8 encoded when passed to `from()`, `push()`, or
 `pipeTo()`. This removes ambiguity around encodings and enables zero-copy
 transfers between streams and native code.
@@ -289,9 +289,6 @@ for (const item of dataset) {
 // --> throws "Backpressure violation: too many pending writes"
 ```
 
-This is the default policy because it catches the exact class of bug
-that push streams exist to prevent.
-
 #### Block
 
 Block mode caps slots at `highWaterMark` but places no limit on the
@@ -398,14 +395,107 @@ const { writer, readable } = push({
 });
 ```
 
-### Writers
+### Writer interface
 
-A writer is any object with a `write(chunk)` method. Writers optionally
-support `writev(chunks)` for batch writes (mapped to scatter/gather I/O where
-available), `end()` to signal completion, and `fail(reason)` to signal
-failure.
+A writer is any object conforming to the Writer interface. Only `write()` is
+required; all other methods are optional.
 
-## `require('node:stream/iter')`
+Each async method has a synchronous `*Sync` counterpart designed for a
+try-fallback pattern: attempt the fast synchronous path first, and fall back
+to the async version only when the synchronous call indicates it could not
+complete:
+
+```mjs
+if (!writer.writeSync(chunk)) await writer.write(chunk);
+if (!writer.writevSync(chunks)) await writer.writev(chunks);
+if (writer.endSync() < 0) await writer.end();
+if (!writer.failSync(err)) await writer.fail(err);
+```
+
+### `writer.desiredSize`
+
+* {number|null}
+
+The number of buffer slots available before the high water mark is reached.
+Returns `null` if the writer is closed or the consumer has disconnected.
+
+The value is always non-negative.
+
+### `writer.end([options])`
+
+* `options` {Object}
+  * `signal` {AbortSignal} Cancel just this operation. The signal cancels only
+    the pending `end()` call; it does not fail the writer itself.
+* Returns: {Promise\<number>} Total bytes written.
+
+Signal that no more data will be written.
+
+### `writer.endSync()`
+
+* Returns: {number} Total bytes written, or `-1` if the writer is not open.
+
+Synchronous variant of `writer.end()`. Returns `-1` if the writer is already
+closed or errored. Can be used as a try-fallback pattern:
+
+```cjs
+const result = writer.endSync();
+if (result < 0) {
+  writer.end();
+}
+```
+
+### `writer.fail(reason)`
+
+* `reason` {Error}
+* Returns: {Promise\<void>}
+
+Fail the stream with an error.
+
+### `writer.failSync(reason)`
+
+* `reason` {Error}
+* Returns: {boolean} `true` if the writer was failed, `false` if already
+  errored.
+
+Synchronous variant of `writer.fail()`.
+
+### `writer.write(chunk[, options])`
+
+* `chunk` {Uint8Array|string}
+* `options` {Object}
+  * `signal` {AbortSignal} Cancel just this write operation. The signal cancels
+    only the pending `write()` call; it does not fail the writer itself.
+* Returns: {Promise\<void>}
+
+Write a chunk. The promise resolves when buffer space is available.
+
+### `writer.writeSync(chunk)`
+
+* `chunk` {Uint8Array|string}
+* Returns: {boolean} `true` if the write was accepted, `false` if the
+  buffer is full.
+
+Synchronous write. Does not block; returns `false` if backpressure is active.
+
+### `writer.writev(chunks[, options])`
+
+* `chunks` {Uint8Array\[]|string\[]}
+* `options` {Object}
+  * `signal` {AbortSignal} Cancel just this write operation. The signal cancels
+    only the pending `writev()` call; it does not fail the writer itself.
+* Returns: {Promise\<void>}
+
+Write multiple chunks as a single batch.
+
+### `writer.writevSync(chunks)`
+
+* `chunks` {Uint8Array\[]|string\[]}
+* Returns: {boolean} `true` if the write was accepted, `false` if the
+  buffer is full.
+
+Synchronous batch write.
+
+## The `stream/iter` module
 
 All functions are available both as named exports and as properties of the
 `Stream` namespace object:
@@ -425,6 +515,8 @@ const { from, pull, bytes, Stream } = require('node:stream/iter');
 // Namespace access
 Stream.from('hello');
 ```
+
+Including the `node:` prefix on the module specifier is optional.
 
 ## Sources
 
@@ -453,6 +545,7 @@ console.log(await text(from(Buffer.from('hello')))); // 'hello'
 ```
 
 ```cjs
+const { Buffer } = require('node:buffer');
 const { from, text } = require('node:stream/iter');
 
 async function run() {
@@ -510,6 +603,12 @@ Pipe a source through transforms into a writer. If the writer has a
 `writev(chunks)` method, entire batches are passed in a single call (enabling
 scatter/gather I/O).
 
+If the writer implements the optional `*Sync` methods (`writeSync`, `writevSync`,
+`endSync`, `failSync`), `pipeTo()` will attempt to use the synchronous methods
+first as a fast path, and fall back to the async versions only when the sync
+methods indicate they cannot complete (e.g., backpressure or waiting for the
+next tick).
+
 ```mjs
 import { from, pipeTo, compressGzip } from 'node:stream/iter';
 import { open } from 'node:fs/promises';
@@ -552,7 +651,11 @@ added: REPLACEME
   * `preventFail` {boolean} **Default:** `false`.
 * Returns: {number} Total bytes written.
 
-Synchronous version of [`pipeTo()`][].
+Synchronous version of [`pipeTo()`][]. The `source`, all transforms, and the
+`writer` must be synchronous. Cannot accept async iterables or promises.
+
+The `writer` must have the `*Sync` methods (`writeSync`, `writevSync`,
+`endSync`, `failSync`) for this to work.
 
 ### `pull(source[, ...transforms][, options])`
 
@@ -572,29 +675,35 @@ returned iterable is consumed. Transforms are applied in order.
 ```mjs
 import { from, pull, text } from 'node:stream/iter';
 
-const upper = (chunks) => {
+const asciiUpper = (chunks) => {
   if (chunks === null) return null;
-  return chunks.map((c) =>
-    new TextEncoder().encode(new TextDecoder().decode(c).toUpperCase()),
-  );
+  return chunks.map((c) => {
+    for (let i = 0; i < c.length; i++) {
+      c[i] -= (c[i] >= 97 && c[i] <= 122) * 32;
+    }
+    return c;
+  });
 };
 
-const result = pull(from('hello'), upper);
+const result = pull(from('hello'), asciiUpper);
 console.log(await text(result)); // 'HELLO'
 ```
 
 ```cjs
 const { from, pull, text } = require('node:stream/iter');
 
-const upper = (chunks) => {
+const asciiUpper = (chunks) => {
   if (chunks === null) return null;
-  return chunks.map((c) =>
-    new TextEncoder().encode(new TextDecoder().decode(c).toUpperCase()),
-  );
+  return chunks.map((c) => {
+    for (let i = 0; i < c.length; i++) {
+      c[i] -= (c[i] >= 97 && c[i] <= 122) * 32;
+    }
+    return c;
+  });
 };
 
 async function run() {
-  const result = pull(from('hello'), upper);
+  const result = pull(from('hello'), asciiUpper);
   console.log(await text(result)); // 'HELLO'
 }
 
@@ -693,101 +802,85 @@ async function run() {
 run().catch(console.error);
 ```
 
-#### Writer
+The writer returned by `push()` conforms to the [Writer interface][].
 
-The writer returned by `push()` has the following methods.
+## Duplex channels
 
-Each async method has a synchronous `*Sync` counterpart designed for a
-try-fallback pattern: attempt the fast synchronous path first, and fall back
-to the async version only when the synchronous call indicates it could not
-complete:
+### `duplex([options])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {Object}
+  * `highWaterMark` {number} Buffer size for both directions.
+    **Default:** `4`.
+  * `backpressure` {string} Policy for both directions.
+    **Default:** `'strict'`.
+  * `signal` {AbortSignal} Cancellation signal for both channels.
+  * `a` {Object} Options specific to the A-to-B direction. Overrides
+    shared options.
+    * `highWaterMark` {number}
+    * `backpressure` {string}
+  * `b` {Object} Options specific to the B-to-A direction. Overrides
+    shared options.
+    * `highWaterMark` {number}
+    * `backpressure` {string}
+* Returns: {Array} A pair `[channelA, channelB]` of duplex channels.
+
+Create a pair of connected duplex channels for bidirectional communication,
+similar to `socketpair()`. Data written to one channel's writer appears in
+the other channel's readable.
+
+Each channel has:
+
+* `writer` — a [Writer interface][] object for sending data to the peer.
+* `readable` — an `AsyncIterable<Uint8Array[]>` for reading data from
+  the peer.
+* `close()` — close this end of the channel (idempotent).
+* `[Symbol.asyncDispose]()` — async dispose support for `await using`.
 
 ```mjs
-if (!writer.writeSync(chunk)) await writer.write(chunk);
-if (!writer.writevSync(chunks)) await writer.writev(chunks);
-if (writer.endSync() < 0) await writer.end();
-if (!writer.failSync(err)) await writer.fail(err);
+import { duplex, text } from 'node:stream/iter';
+
+const [client, server] = duplex();
+
+// Server echoes back
+const serving = (async () => {
+  for await (const chunks of server.readable) {
+    await server.writer.writev(chunks);
+  }
+})();
+
+await client.writer.write('hello');
+await client.writer.end();
+
+console.log(await text(server.readable)); // handled by echo
+await serving;
 ```
-
-##### `writer.fail(reason)`
-
-* `reason` {Error}
-* Returns: {Promise\<void>}
-
-Fail the stream with an error.
-
-##### `writer.failSync(reason)`
-
-* `reason` {Error}
-* Returns: {boolean} `true` if the writer was failed, `false` if already
-  errored.
-
-Synchronous variant of `writer.fail()`.
-
-##### `writer.desiredSize`
-
-* {number|null}
-
-The number of buffer slots available before the high water mark is reached.
-Returns `null` if the writer is closed or the consumer has disconnected.
-
-##### `writer.end([options])`
-
-* `options` {Object}
-  * `signal` {AbortSignal} Cancel just this operation. The signal cancels only
-    the pending `end()` call; it does not fail the writer itself.
-* Returns: {Promise\<number>} Total bytes written.
-
-Signal that no more data will be written.
-
-##### `writer.endSync()`
-
-* Returns: {number} Total bytes written, or `-1` if the writer is not open.
-
-Synchronous variant of `writer.end()`. Returns `-1` if the writer is already
-closed or errored. Can be used as a try-fallback pattern:
 
 ```cjs
-const result = writer.endSync();
-if (result < 0) {
-  writer.end();
+const { duplex, text } = require('node:stream/iter');
+
+async function run() {
+  const [client, server] = duplex();
+
+  // Server echoes back
+  const serving = (async () => {
+    for await (const chunks of server.readable) {
+      await server.writer.writev(chunks);
+    }
+  })();
+
+  await client.writer.write('hello');
+  await client.writer.end();
+
+  console.log(await text(server.readable)); // handled by echo
+  await serving;
 }
+
+run().catch(console.error);
 ```
-
-##### `writer.write(chunk[, options])`
-
-* `chunk` {Uint8Array|string}
-* `options` {Object}
-  * `signal` {AbortSignal} Cancel just this write operation. The signal cancels
-    only the pending `write()` call; it does not fail the writer itself.
-* Returns: {Promise\<void>}
-
-Write a chunk. The promise resolves when buffer space is available.
-
-##### `writer.writeSync(chunk)`
-
-* `chunk` {Uint8Array|string}
-* Returns: {boolean} `true` if the write was accepted, `false` if the
-  buffer is full.
-
-Synchronous write. Does not block; returns `false` if backpressure is active.
-
-##### `writer.writev(chunks[, options])`
-
-* `chunks` {Uint8Array\[]|string\[]}
-* `options` {Object}
-  * `signal` {AbortSignal} Cancel just this write operation. The signal cancels
-    only the pending `writev()` call; it does not fail the writer itself.
-* Returns: {Promise\<void>}
-
-Write multiple chunks as a single batch.
-
-##### `writer.writevSync(chunks)`
-
-* `chunks` {Uint8Array\[]|string\[]}
-* Returns: {boolean}
-
-Synchronous batch write.
 
 ## Consumers
 
@@ -800,7 +893,8 @@ added: REPLACEME
 * `source` {AsyncIterable\<Uint8Array\[]>|Iterable\<Uint8Array\[]>}
 * `options` {Object}
   * `signal` {AbortSignal}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Promise\<Uint8Array\[]>}
 
 Collect all chunks as an array of `Uint8Array` values (without concatenating).
@@ -814,7 +908,8 @@ added: REPLACEME
 * `source` {AsyncIterable\<Uint8Array\[]>|Iterable\<Uint8Array\[]>}
 * `options` {Object}
   * `signal` {AbortSignal}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Promise\<ArrayBuffer>}
 
 Collect all bytes into an `ArrayBuffer`.
@@ -827,7 +922,8 @@ added: REPLACEME
 
 * `source` {Iterable\<Uint8Array\[]>}
 * `options` {Object}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {ArrayBuffer}
 
 Synchronous version of [`arrayBuffer()`][].
@@ -840,7 +936,8 @@ added: REPLACEME
 
 * `source` {Iterable\<Uint8Array\[]>}
 * `options` {Object}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Uint8Array\[]}
 
 Synchronous version of [`array()`][].
@@ -854,7 +951,8 @@ added: REPLACEME
 * `source` {AsyncIterable\<Uint8Array\[]>|Iterable\<Uint8Array\[]>}
 * `options` {Object}
   * `signal` {AbortSignal}
-  * `limit` {number} Maximum bytes to collect. Throws if exceeded.
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Promise\<Uint8Array>}
 
 Collect all bytes from a stream into a single `Uint8Array`.
@@ -885,7 +983,8 @@ added: REPLACEME
 
 * `source` {Iterable\<Uint8Array\[]>}
 * `options` {Object}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Uint8Array}
 
 Synchronous version of [`bytes()`][].
@@ -900,7 +999,8 @@ added: REPLACEME
 * `options` {Object}
   * `encoding` {string} Text encoding. **Default:** `'utf-8'`.
   * `signal` {AbortSignal}
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {Promise\<string>}
 
 Collect all bytes and decode as text.
@@ -930,45 +1030,13 @@ added: REPLACEME
 * `source` {Iterable\<Uint8Array\[]>}
 * `options` {Object}
   * `encoding` {string} **Default:** `'utf-8'`.
-  * `limit` {number}
+  * `limit` {number} Maximum number of bytes to consume. If the total bytes
+    collected exceeds limit, an `ERR_OUT_OF_RANGE` error is thrown
 * Returns: {string}
 
 Synchronous version of [`text()`][].
 
 ## Utilities
-
-### `merge(...sources[, options])`
-
-<!-- YAML
-added: REPLACEME
--->
-
-* `...sources` {AsyncIterable\<Uint8Array\[]>} Two or more async iterables.
-* `options` {Object}
-  * `signal` {AbortSignal}
-* Returns: {AsyncIterable\<Uint8Array\[]>}
-
-Merge multiple async iterables by yielding batches in temporal order
-(whichever source produces data first). All sources are consumed
-concurrently.
-
-```mjs
-import { from, merge, text } from 'node:stream/iter';
-
-const merged = merge(from('hello '), from('world'));
-console.log(await text(merged)); // Order depends on timing
-```
-
-```cjs
-const { from, merge, text } = require('node:stream/iter');
-
-async function run() {
-  const merged = merge(from('hello '), from('world'));
-  console.log(await text(merged)); // Order depends on timing
-}
-
-run().catch(console.error);
-```
 
 ### `ondrain(drainable)`
 
@@ -1025,6 +1093,39 @@ async function run() {
 run().catch(console.error);
 ```
 
+### `merge(...sources[, options])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `...sources` {AsyncIterable\<Uint8Array\[]>|Iterable\<Uint8Array\[]>} Two or more iterables.
+* `options` {Object}
+  * `signal` {AbortSignal}
+* Returns: {AsyncIterable\<Uint8Array\[]>}
+
+Merge multiple async iterables by yielding batches in temporal order
+(whichever source produces data first). All sources are consumed
+concurrently.
+
+```mjs
+import { from, merge, text } from 'node:stream/iter';
+
+const merged = merge(from('hello '), from('world'));
+console.log(await text(merged)); // Order depends on timing
+```
+
+```cjs
+const { from, merge, text } = require('node:stream/iter');
+
+async function run() {
+  const merged = merge(from('hello '), from('world'));
+  console.log(await text(merged)); // Order depends on timing
+}
+
+run().catch(console.error);
+```
+
 ### `tap(callback)`
 
 <!-- YAML
@@ -1061,6 +1162,9 @@ async function run() {
 run().catch(console.error);
 ```
 
+`tap()` intentionally does not prevent in-place modification of the
+chunks by the tapping callback; but return values are ignored.
+
 ### `tapSync(callback)`
 
 <!-- YAML
@@ -1083,7 +1187,8 @@ added: REPLACEME
 * `options` {Object}
   * `highWaterMark` {number} Buffer size in slots. Must be >= 1; values
     below 1 are clamped to 1. **Default:** `16`.
-  * `backpressure` {string} `'strict'` or `'block'`. **Default:** `'strict'`.
+  * `backpressure` {string} `'strict'`, `'block'`, `'drop-oldest'`, or
+    `'drop-newest'`. **Default:** `'strict'`.
   * `signal` {AbortSignal}
 * Returns: {Object}
   * `writer` {BroadcastWriter}
@@ -1141,11 +1246,23 @@ async function run() {
 run().catch(console.error);
 ```
 
+#### `broadcast.bufferSize`
+
+* {number}
+
+The number of chunks currently buffered.
+
 #### `broadcast.cancel([reason])`
 
 * `reason` {Error}
 
 Cancel the broadcast. All consumers receive an error.
+
+#### `broadcast.consumerCount`
+
+* {number}
+
+The number of active consumers.
 
 #### `broadcast.push([...transforms][, options])`
 
@@ -1172,7 +1289,7 @@ added: REPLACEME
 * `options` {Object} Same as `broadcast()`.
 * Returns: {Object} `{ writer, broadcast }`
 
-Create a broadcast from an existing source. The source is consumed
+Create a {Broadcast} from an existing source. The source is consumed
 automatically and pushed to all subscribers.
 
 ### `share(source[, options])`
@@ -1185,8 +1302,8 @@ added: REPLACEME
 * `options` {Object}
   * `highWaterMark` {number} Buffer size. Must be >= 1; values below 1
     are clamped to 1. **Default:** `16`.
-  * `backpressure` {string} `'strict'`, `'block'`, or `'drop-oldest'`.
-    **Default:** `'strict'`.
+  * `backpressure` {string} `'strict'`, `'block'`, `'drop-oldest'`, or
+    `'drop-newest'`. **Default:** `'strict'`.
 * Returns: {Share}
 
 Create a pull-model multi-consumer shared stream. Unlike `broadcast()`, the
@@ -1201,8 +1318,10 @@ const shared = share(from('hello'));
 const c1 = shared.pull();
 const c2 = shared.pull();
 
-console.log(await text(c1)); // 'hello'
-console.log(await text(c2)); // 'hello'
+// Consume concurrently to avoid deadlock with small buffers.
+const [r1, r2] = await Promise.all([text(c1), text(c2)]);
+console.log(r1); // 'hello'
+console.log(r2); // 'hello'
 ```
 
 ```cjs
@@ -1214,18 +1333,32 @@ async function run() {
   const c1 = shared.pull();
   const c2 = shared.pull();
 
-  console.log(await text(c1)); // 'hello'
-  console.log(await text(c2)); // 'hello'
+  // Consume concurrently to avoid deadlock with small buffers.
+  const [r1, r2] = await Promise.all([text(c1), text(c2)]);
+  console.log(r1); // 'hello'
+  console.log(r2); // 'hello'
 }
 
 run().catch(console.error);
 ```
+
+#### `share.bufferSize`
+
+* {number}
+
+The number of chunks currently buffered.
 
 #### `share.cancel([reason])`
 
 * `reason` {Error}
 
 Cancel the share. All consumers receive an error.
+
+#### `share.consumerCount`
+
+* {number}
+
+The number of active consumers.
 
 #### `share.pull([...transforms][, options])`
 
@@ -1250,7 +1383,7 @@ added: REPLACEME
 * `options` {Object} Same as `share()`.
 * Returns: {Share}
 
-Create a share from an existing source.
+Create a {Share} from an existing source.
 
 ### `shareSync(source[, options])`
 
@@ -1277,14 +1410,9 @@ added: REPLACEME
 * `options` {Object}
 * Returns: {SyncShare}
 
-## Compression and decompression
+## Compression and decompression transforms
 
-These transforms use the built-in zlib, Brotli, and Zstd compression
-available in Node.js. Compression work is performed asynchronously,
-overlapping with upstream I/O for maximum throughput.
-
-All compression transforms are stateful (they return `{ transform }` objects)
-and can be passed to `pull()`, `pipeTo()`, or `push()`.
+These transforms apply zlib, Brotli, and Zstd compression transforms.
 
 ### `compressBrotli([options])`
 
@@ -1423,10 +1551,7 @@ added: REPLACEME
 
 * `options` {Object}
   * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `level` {number} Compression level (`0`-`9`). **Default:** `Z_DEFAULT_COMPRESSION`.
   * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
-  * `memLevel` {number} **Default:** `Z_DEFAULT_MEMLEVEL`.
-  * `strategy` {number} **Default:** `Z_DEFAULT_STRATEGY`.
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
@@ -1440,10 +1565,7 @@ added: REPLACEME
 
 * `options` {Object}
   * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `level` {number} Compression level (`0`-`9`). **Default:** `Z_DEFAULT_COMPRESSION`.
   * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
-  * `memLevel` {number} **Default:** `Z_DEFAULT_MEMLEVEL`.
-  * `strategy` {number} **Default:** `Z_DEFAULT_STRATEGY`.
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
@@ -1477,7 +1599,82 @@ streaming protocol without importing from `node:stream/iter` directly.
 
 * Value: `Symbol.for('Stream.broadcastProtocol')`
 
-Implement to make an object usable with `Broadcast.from()`.
+The value must be a function. When called by `Broadcast.from()`, it receives
+the options passed to `Broadcast.from()` and must return an object conforming
+to the {Broadcast} interface. The implementation is fully custom -- it can
+manage consumers, buffering, and backpressure however it wants.
+
+```mjs
+import { Broadcast, text } from 'node:stream/iter';
+
+// This example defers to the built-in Broadcast, but a custom
+// implementation could use any mechanism.
+class MessageBus {
+  #broadcast;
+  #writer;
+
+  constructor() {
+    const { writer, broadcast } = Broadcast();
+    this.#writer = writer;
+    this.#broadcast = broadcast;
+  }
+
+  [Symbol.for('Stream.broadcastProtocol')](options) {
+    return this.#broadcast;
+  }
+
+  send(data) {
+    this.#writer.write(new TextEncoder().encode(data));
+  }
+
+  close() {
+    this.#writer.end();
+  }
+}
+
+const bus = new MessageBus();
+const { broadcast } = Broadcast.from(bus);
+const consumer = broadcast.push();
+bus.send('hello');
+bus.close();
+console.log(await text(consumer)); // 'hello'
+```
+
+```cjs
+const { Broadcast, text } = require('node:stream/iter');
+
+// This example defers to the built-in Broadcast, but a custom
+// implementation could use any mechanism.
+class MessageBus {
+  #broadcast;
+  #writer;
+
+  constructor() {
+    const { writer, broadcast } = Broadcast();
+    this.#writer = writer;
+    this.#broadcast = broadcast;
+  }
+
+  [Symbol.for('Stream.broadcastProtocol')](options) {
+    return this.#broadcast;
+  }
+
+  send(data) {
+    this.#writer.write(new TextEncoder().encode(data));
+  }
+
+  close() {
+    this.#writer.end();
+  }
+}
+
+const bus = new MessageBus();
+const { broadcast } = Broadcast.from(bus);
+const consumer = broadcast.push();
+bus.send('hello');
+bus.close();
+text(consumer).then(console.log); // 'hello'
+```
 
 ### `Stream.drainableProtocol`
 
@@ -1487,43 +1684,304 @@ Implement to make a writer compatible with `ondrain()`. The method should
 return a promise that resolves when backpressure clears, or `null` if no
 backpressure.
 
+```mjs
+import { ondrain } from 'node:stream/iter';
+
+class CustomWriter {
+  #queue = [];
+  #drain = null;
+  #closed = false;
+  [Symbol.for('Stream.drainableProtocol')]() {
+    if (this.#closed) return null;
+    if (this.#queue.length < 3) return Promise.resolve(true);
+    this.#drain ??= Promise.withResolvers();
+    return this.#drain.promise;
+  }
+  write(chunk) {
+    this.#queue.push(chunk);
+  }
+  flush() {
+    this.#queue.length = 0;
+    this.#drain?.resolve(true);
+    this.#drain = null;
+  }
+  close() {
+    this.#closed = true;
+  }
+}
+const writer = new CustomWriter();
+const ready = ondrain(writer);
+console.log(ready); // Promise { true } -- no backpressure
+```
+
+```cjs
+const { ondrain } = require('node:stream/iter');
+
+class CustomWriter {
+  #queue = [];
+  #drain = null;
+  #closed = false;
+
+  [Symbol.for('Stream.drainableProtocol')]() {
+    if (this.#closed) return null;
+    if (this.#queue.length < 3) return Promise.resolve(true);
+    this.#drain ??= Promise.withResolvers();
+    return this.#drain.promise;
+  }
+
+  write(chunk) {
+    this.#queue.push(chunk);
+  }
+
+  flush() {
+    this.#queue.length = 0;
+    this.#drain?.resolve(true);
+    this.#drain = null;
+  }
+
+  close() {
+    this.#closed = true;
+  }
+}
+
+const writer = new CustomWriter();
+const ready = ondrain(writer);
+console.log(ready); // Promise { true } -- no backpressure
+```
+
 ### `Stream.shareProtocol`
 
 * Value: `Symbol.for('Stream.shareProtocol')`
 
-Implement to make an object usable with `Share.from()`.
+The value must be a function. When called by `Share.from()`, it receives the
+options passed to `Share.from()` and must return an object conforming the the
+{Share} interface. The implementation is fully custom -- it can manage the shared
+source, consumers, buffering, and backpressure however it wants.
+
+```mjs
+import { share, Share, text } from 'node:stream/iter';
+
+// This example defers to the built-in share(), but a custom
+// implementation could use any mechanism.
+class DataPool {
+  #share;
+
+  constructor(source) {
+    this.#share = share(source);
+  }
+
+  [Symbol.for('Stream.shareProtocol')](options) {
+    return this.#share;
+  }
+}
+
+const pool = new DataPool(
+  (async function* () {
+    yield 'hello';
+  })(),
+);
+
+const shared = Share.from(pool);
+const consumer = shared.pull();
+console.log(await text(consumer)); // 'hello'
+```
+
+```cjs
+const { share, Share, text } = require('node:stream/iter');
+
+// This example defers to the built-in share(), but a custom
+// implementation could use any mechanism.
+class DataPool {
+  #share;
+
+  constructor(source) {
+    this.#share = share(source);
+  }
+
+  [Symbol.for('Stream.shareProtocol')](options) {
+    return this.#share;
+  }
+}
+
+const pool = new DataPool(
+  (async function* () {
+    yield 'hello';
+  })(),
+);
+
+const shared = Share.from(pool);
+const consumer = shared.pull();
+text(consumer).then(console.log); // 'hello'
+```
 
 ### `Stream.shareSyncProtocol`
 
 * Value: `Symbol.for('Stream.shareSyncProtocol')`
 
-Implement to make an object usable with `SyncShare.fromSync()`.
+The value must be a function. When called by `SyncShare.fromSync()`, it receives
+the options passed to `SyncShare.fromSync()` and must return an object conforming
+to the {SyncShare} interface. The implementation is fully custom -- it can manage
+the shared source, consumers, and buffering however it wants.
+
+```mjs
+import { shareSync, SyncShare, textSync } from 'node:stream/iter';
+
+// This example defers to the built-in shareSync(), but a custom
+// implementation could use any mechanism.
+class SyncDataPool {
+  #share;
+
+  constructor(source) {
+    this.#share = shareSync(source);
+  }
+
+  [Symbol.for('Stream.shareSyncProtocol')](options) {
+    return this.#share;
+  }
+}
+
+const encoder = new TextEncoder();
+const pool = new SyncDataPool(
+  function* () {
+    yield [encoder.encode('hello')];
+  }(),
+);
+
+const shared = SyncShare.fromSync(pool);
+const consumer = shared.pull();
+console.log(textSync(consumer)); // 'hello'
+```
+
+```cjs
+const { shareSync, SyncShare, textSync } = require('node:stream/iter');
+
+// This example defers to the built-in shareSync(), but a custom
+// implementation could use any mechanism.
+class SyncDataPool {
+  #share;
+
+  constructor(source) {
+    this.#share = shareSync(source);
+  }
+
+  [Symbol.for('Stream.shareSyncProtocol')](options) {
+    return this.#share;
+  }
+}
+
+const encoder = new TextEncoder();
+const pool = new SyncDataPool(
+  function* () {
+    yield [encoder.encode('hello')];
+  }(),
+);
+
+const shared = SyncShare.fromSync(pool);
+const consumer = shared.pull();
+console.log(textSync(consumer)); // 'hello'
+```
 
 ### `Stream.toAsyncStreamable`
 
 * Value: `Symbol.for('Stream.toAsyncStreamable')`
 
-Async version of `toStreamable`. The method may return a promise.
+The value must be a function that converts the object into a streamable value.
+When the object is encountered anywhere in the streaming pipeline (as a source
+passed to `from()`, or as a value returned from a transform), this method is
+called to produce the actual data. It may return (or resolve to) any streamable
+value: a string, `Uint8Array`, `AsyncIterable`, `Iterable`, or another streamable
+object.
+
+```mjs
+import { from, text } from 'node:stream/iter';
+
+class Greeting {
+  #name;
+
+  constructor(name) {
+    this.#name = name;
+  }
+
+  [Symbol.for('Stream.toAsyncStreamable')]() {
+    return `hello ${this.#name}`;
+  }
+}
+
+const stream = from(new Greeting('world'));
+console.log(await text(stream)); // 'hello world'
+```
+
+```cjs
+const { from, text } = require('node:stream/iter');
+
+class Greeting {
+  #name;
+
+  constructor(name) {
+    this.#name = name;
+  }
+
+  [Symbol.for('Stream.toAsyncStreamable')]() {
+    return `hello ${this.#name}`;
+  }
+}
+
+const stream = from(new Greeting('world'));
+text(stream).then(console.log); // 'hello world'
+```
 
 ### `Stream.toStreamable`
 
 * Value: `Symbol.for('Stream.toStreamable')`
 
-Implement this symbol as a method that returns a sync-streamable value
-(string, `Uint8Array`, `Iterable`, etc.). Used by `from()` and `fromSync()`.
+The value must be a function that synchronously converts the object into a
+streamable value. When the object is encountered anywhere in the streaming
+pipeline (as a source passed to `fromSync()`, or as a value returned from a
+sync transform), this method is called to produce the actual data. It must
+synchronously return a streamable value: a string, `Uint8Array`, or `Iterable`.
 
-```js
-const obj = {
+```mjs
+import { fromSync, textSync } from 'node:stream/iter';
+
+class Greeting {
+  #name;
+
+  constructor(name) {
+    this.#name = name;
+  }
+
   [Symbol.for('Stream.toStreamable')]() {
-    return 'hello from custom object';
-  },
-};
-// from(obj) and fromSync(obj) will UTF-8 encode the returned string.
+    return `hello ${this.#name}`;
+  }
+}
+
+const stream = fromSync(new Greeting('world'));
+console.log(textSync(stream)); // 'hello world'
+```
+
+```cjs
+const { fromSync, textSync } = require('node:stream/iter');
+
+class Greeting {
+  #name;
+
+  constructor(name) {
+    this.#name = name;
+  }
+
+  [Symbol.for('Stream.toStreamable')]() {
+    return `hello ${this.#name}`;
+  }
+}
+
+const stream = fromSync(new Greeting('world'));
+console.log(textSync(stream)); // 'hello world'
 ```
 
 [Brotli compressor options]: zlib.md#compressor-options
 [Brotli decompressor options]: zlib.md#decompressor-options
 [RFC 7932]: https://www.rfc-editor.org/rfc/rfc7932
+[Writer interface]: #writer-interface
 [Zstd compressor options]: zlib.md#compressor-options-1
 [Zstd decompressor options]: zlib.md#decompressor-options-1
 [`array()`]: #arraysource-options
