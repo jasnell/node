@@ -29,10 +29,10 @@ async function testDropOldest() {
     backpressure: 'drop-oldest',
   });
 
-  writer.writeSync('first');
-  writer.writeSync('second');
-  // This should drop 'first'
-  writer.writeSync('third');
+  assert.strictEqual(writer.writeSync('first'), true);
+  assert.strictEqual(writer.writeSync('second'), true);
+  // This should drop 'first' — return value is true (write accepted via drop)
+  assert.strictEqual(writer.writeSync('third'), true);
   writer.end();
 
   const batches = [];
@@ -56,9 +56,9 @@ async function testDropNewest() {
     backpressure: 'drop-newest',
   });
 
-  writer.writeSync('kept');
-  // This is silently dropped
-  writer.writeSync('dropped');
+  assert.strictEqual(writer.writeSync('kept'), true);
+  // This is silently dropped — return value is true (accepted but discarded)
+  assert.strictEqual(writer.writeSync('dropped'), true);
   writer.end();
 
   const data = await text(readable);
@@ -72,21 +72,26 @@ async function testBlockBackpressure() {
   writer.writeSync('a');
 
   // Next write should block (not throw, not drop)
-  let writeResolved = false;
-  const writePromise = writer.write('b').then(() => { writeResolved = true; });
+  let writeState = 'pending';
+  const writePromise = writer.write('b').then(() => { writeState = 'resolved'; });
 
-  // Give a tick for anything to resolve
-  await new Promise((r) => setTimeout(r, 10));
-  assert.strictEqual(writeResolved, false); // Still blocked
+  // The write cannot resolve until the buffer is drained, so a microtask
+  // tick is sufficient to confirm it is still blocked.
+  await new Promise(setImmediate);
+  assert.strictEqual(writeState, 'pending'); // Still blocked
 
   // Read from the consumer to drain
   const iter = readable[Symbol.asyncIterator]();
-  await iter.next(); // Drains 'a'
-  await new Promise((r) => setTimeout(r, 10));
-  assert.strictEqual(writeResolved, true); // Now unblocked
+  const first = await iter.next(); // Drains 'a'
+  assert.strictEqual(first.done, false);
+
+  // After draining, the pending write resolves as a microtask
+  await new Promise(setImmediate);
+  assert.strictEqual(writeState, 'resolved'); // Now unblocked
 
   writer.endSync();
-  await iter.next(); // Read 'b'
+  const second = await iter.next(); // Read 'b'
+  assert.strictEqual(second.done, false);
   await writePromise;
 }
 

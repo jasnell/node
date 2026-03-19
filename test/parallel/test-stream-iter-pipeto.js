@@ -6,7 +6,6 @@ const assert = require('assert');
 const { pipeTo, pipeToSync, from, fromSync } = require('stream/iter');
 
 async function testPipeToSync() {
-  const source = fromSync('pipe-data');
   const written = [];
   const writer = {
     write(chunk) { written.push(chunk); },
@@ -14,8 +13,8 @@ async function testPipeToSync() {
     fail() {},
   };
 
-  const totalBytes = pipeToSync(source, writer);
-  assert.ok(totalBytes > 0);
+  const totalBytes = pipeToSync(fromSync('pipe-data'), writer);
+  assert.strictEqual(totalBytes, 9); // 'pipe-data' = 9 UTF-8 bytes
   assert.ok(written.length > 0);
   const result = new TextDecoder().decode(
     new Uint8Array(written.reduce((acc, c) => [...acc, ...c], [])));
@@ -23,7 +22,6 @@ async function testPipeToSync() {
 }
 
 async function testPipeTo() {
-  const source = from('async-pipe-data');
   const written = [];
   const writer = {
     async write(chunk) { written.push(chunk); },
@@ -31,13 +29,12 @@ async function testPipeTo() {
     async fail() {},
   };
 
-  const totalBytes = await pipeTo(source, writer);
-  assert.ok(totalBytes > 0);
+  const totalBytes = await pipeTo(from('async-pipe-data'), writer);
+  assert.strictEqual(totalBytes, 15); // 'async-pipe-data' = 15 UTF-8 bytes
   assert.ok(written.length > 0);
 }
 
 async function testPipeToPreventClose() {
-  const source = from('data');
   let endCalled = false;
   const writer = {
     async write() {},
@@ -45,7 +42,7 @@ async function testPipeToPreventClose() {
     async fail() {},
   };
 
-  await pipeTo(source, writer, { preventClose: true });
+  await pipeTo(from('data'), writer, { preventClose: true });
   assert.strictEqual(endCalled, false);
 }
 
@@ -205,8 +202,7 @@ async function testPipeToMinimalWriter() {
     },
   };
 
-  const source = from('minimal');
-  await pipeTo(source, minimalWriter);
+  await pipeTo(from('minimal'), minimalWriter);
   assert.strictEqual(chunks.length > 0, true);
 }
 
@@ -218,8 +214,7 @@ async function testPipeToSyncMinimalWriter() {
     },
   };
 
-  const source = fromSync('minimal-sync');
-  pipeToSync(source, minimalWriter);
+  pipeToSync(fromSync('minimal-sync'), minimalWriter);
   assert.strictEqual(chunks.length > 0, true);
 }
 

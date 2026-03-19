@@ -4,11 +4,15 @@
 const common = require('../common');
 const assert = require('assert');
 const {
+  from,
+  fromSync,
   pull,
+  pullSync,
   push,
   tap,
   tapSync,
   text,
+  textSync,
 } = require('stream/iter');
 
 // =============================================================================
@@ -77,8 +81,50 @@ async function testTapInPipeline() {
   assert.strictEqual(seen[0], 'hello');
 }
 
+// Tap callback error propagates through async pipeline
+async function testTapAsyncErrorPropagation() {
+  const badTap = tap(() => { throw new Error('tap error'); });
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of pull(from('hello'), badTap)) { /* consume */ }
+  }, { message: 'tap error' });
+}
+
+// TapSync callback error propagates through sync pipeline
+function testTapSyncErrorPropagation() {
+  const badTap = tapSync(() => { throw new Error('tapSync error'); });
+  assert.throws(() => {
+    // eslint-disable-next-line no-unused-vars
+    for (const _ of pullSync(fromSync('hello'), badTap)) { /* consume */ }
+  }, { message: 'tapSync error' });
+}
+
+// TapSync in a pullSync pipeline passes through data and flush
+function testTapSyncInPipeline() {
+  const seen = [];
+  let sawFlush = false;
+  const observer = tapSync((chunks) => {
+    if (chunks === null) {
+      sawFlush = true;
+    } else {
+      for (const chunk of chunks) {
+        seen.push(new TextDecoder().decode(chunk));
+      }
+    }
+  });
+
+  const data = textSync(pullSync(fromSync('hello'), observer));
+  assert.strictEqual(data, 'hello');
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0], 'hello');
+  assert.strictEqual(sawFlush, true);
+}
+
 Promise.all([
   testTapSync(),
   testTapAsync(),
   testTapInPipeline(),
+  testTapAsyncErrorPropagation(),
+  testTapSyncErrorPropagation(),
+  testTapSyncInPipeline(),
 ]).then(common.mustCall());

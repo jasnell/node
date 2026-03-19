@@ -7,16 +7,16 @@ const {
   from,
   share,
   text,
-
 } = require('stream/iter');
+
+const { setTimeout } = require('timers/promises');
 
 // =============================================================================
 // Async share()
 // =============================================================================
 
 async function testBasicShare() {
-  const source = from('hello shared');
-  const shared = share(source);
+  const shared = share(from('hello shared'));
 
   const consumer = shared.pull();
   const data = await text(consumer);
@@ -47,8 +47,7 @@ async function testShareMultipleConsumers() {
 }
 
 async function testShareConsumerCount() {
-  const source = from('data');
-  const shared = share(source);
+  const shared = share(from('data'));
 
   assert.strictEqual(shared.consumerCount, 0);
 
@@ -60,6 +59,7 @@ async function testShareConsumerCount() {
 
   // Cancel detaches all consumers
   shared.cancel();
+  assert.strictEqual(shared.consumerCount, 0);
 
   // Both should complete immediately
   const [data1, data2] = await Promise.all([
@@ -71,11 +71,11 @@ async function testShareConsumerCount() {
 }
 
 async function testShareCancel() {
-  const source = from('data');
-  const shared = share(source);
+  const shared = share(from('data'));
   const consumer = shared.pull();
 
   shared.cancel();
+  assert.strictEqual(shared.consumerCount, 0);
 
   const batches = [];
   for await (const batch of consumer) {
@@ -84,9 +84,39 @@ async function testShareCancel() {
   assert.strictEqual(batches.length, 0);
 }
 
+async function testShareCancelMidIteration() {
+  // Verify that cancel during iteration stops data flow
+  let sourceReturnCalled = false;
+  const enc = new TextEncoder();
+  async function* gen() {
+    try {
+      yield [enc.encode('a')];
+      yield [enc.encode('b')];
+      yield [enc.encode('c')];
+    } finally {
+      sourceReturnCalled = true;
+    }
+  }
+  const shared = share(gen(), { highWaterMark: 16 });
+  const consumer = shared.pull();
+
+  const items = [];
+  for await (const batch of consumer) {
+    for (const chunk of batch) {
+      items.push(new TextDecoder().decode(chunk));
+    }
+    // Cancel after first batch
+    shared.cancel();
+  }
+  assert.strictEqual(items.length, 1);
+  assert.strictEqual(items[0], 'a');
+
+  await new Promise(setImmediate);
+  assert.strictEqual(sourceReturnCalled, true);
+}
+
 async function testShareCancelWithReason() {
-  const source = from('data');
-  const shared = share(source);
+  const shared = share(from('data'));
   const consumer = shared.pull();
 
   shared.cancel(new Error('share cancelled'));
@@ -104,8 +134,7 @@ async function testShareCancelWithReason() {
 
 async function testShareAbortSignal() {
   const ac = new AbortController();
-  const source = from('data');
-  const shared = share(source, { signal: ac.signal });
+  const shared = share(from('data'), { signal: ac.signal });
   const consumer = shared.pull();
 
   ac.abort();
@@ -121,8 +150,7 @@ async function testShareAlreadyAborted() {
   const ac = new AbortController();
   ac.abort();
 
-  const source = from('data');
-  const shared = share(source, { signal: ac.signal });
+  const shared = share(from('data'), { signal: ac.signal });
   const consumer = shared.pull();
 
   const batches = [];
@@ -155,15 +183,64 @@ async function testShareSourceError() {
   }, { message: 'share source boom' });
 }
 
+async function testShareLateJoiningConsumer() {
+  // A consumer that joins after some data has been consumed should only
+  // see data remaining in the buffer (not items already trimmed).
+  const enc = new TextEncoder();
+  async function* gen() {
+    yield [enc.encode('a')];
+    yield [enc.encode('b')];
+    yield [enc.encode('c')];
+  }
+  const shared = share(gen(), { highWaterMark: 16 });
+
+  // First consumer reads all data
+  const c1 = shared.pull();
+  const data1 = await text(c1);
+  assert.strictEqual(data1, 'abc');
+
+  // Late-joining consumer: source is exhausted, buffer has been trimmed
+  // past all data by c1's reads, so c2 gets nothing.
+  const c2 = shared.pull();
+  const data2 = await text(c2);
+  assert.strictEqual(data2, '');
+}
+
+async function testShareConsumerBreak() {
+  // Verify that a consumer breaking mid-iteration detaches properly
+  const enc = new TextEncoder();
+  async function* gen() {
+    yield [enc.encode('a')];
+    yield [enc.encode('b')];
+    yield [enc.encode('c')];
+  }
+  const shared = share(gen(), { highWaterMark: 16 });
+  const c1 = shared.pull();
+  const c2 = shared.pull();
+
+  assert.strictEqual(shared.consumerCount, 2);
+
+  // c1 breaks after first batch
+  // eslint-disable-next-line no-unused-vars
+  for await (const _ of c1) {
+    break;
+  }
+  // c1 should be detached
+  assert.strictEqual(shared.consumerCount, 1);
+
+  // c2 should still get all data
+  const data2 = await text(c2);
+  assert.strictEqual(data2, 'abc');
+}
+
 async function testShareMultipleConsumersConcurrentPull() {
-  // Regression test: multiple consumers pulling concurrently should each
-  // receive all items even when only one item is pulled from source at a time.
-  // Previously, consumers woken after a pull that found no data at their
-  // cursor would return done:true prematurely (thundering herd bug).
+  // Multiple consumers pulling concurrently should each receive all items
+  // even when only one item is pulled from source at a time.
   async function* slowSource() {
+    const enc = new TextEncoder();
     for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 1));
-      yield [new TextEncoder().encode(`item-${i}`)];
+      await setTimeout(1);
+      yield [enc.encode(`item-${i}`)];
     }
   }
   const shared = share(slowSource());
@@ -186,9 +263,12 @@ Promise.all([
   testShareMultipleConsumers(),
   testShareConsumerCount(),
   testShareCancel(),
+  testShareCancelMidIteration(),
   testShareCancelWithReason(),
   testShareAbortSignal(),
   testShareAlreadyAborted(),
   testShareSourceError(),
+  testShareLateJoiningConsumer(),
+  testShareConsumerBreak(),
   testShareMultipleConsumersConcurrentPull(),
 ]).then(common.mustCall());

@@ -19,7 +19,7 @@ async function testOndrain() {
   assert.strictEqual(ondrain(writer), null);
 }
 
-async function testOndainNonDrainable() {
+async function testOndrainNonDrainable() {
   // Non-drainable objects return null
   assert.strictEqual(ondrain(null), null);
   assert.strictEqual(ondrain({}), null);
@@ -38,7 +38,7 @@ async function testWriteWithSignalRejects() {
   // Signal fires while write is pending
   ac.abort();
 
-  await assert.rejects(writePromise, (err) => err.name === 'AbortError');
+  await assert.rejects(writePromise, { name: 'AbortError' });
 
   // Clean up
   writer.end();
@@ -55,7 +55,7 @@ async function testWriteWithPreAbortedSignal() {
   // Pre-aborted signal should reject immediately
   await assert.rejects(
     writer.write('data', { signal: ac.signal }),
-    (err) => err.name === 'AbortError',
+    { name: 'AbortError' },
   );
 
   // Writer should still be usable for other writes
@@ -174,13 +174,25 @@ async function testWritevMixedTypes() {
 async function testWriteAfterEnd() {
   const { writer } = push();
   writer.endSync();
+  // Sync write after end returns false
   assert.strictEqual(writer.writeSync('fail'), false);
+  // Async write after end rejects
+  await assert.rejects(
+    () => writer.write('fail'),
+    { code: 'ERR_INVALID_STATE' },
+  );
 }
 
 async function testWriteAfterFail() {
   const { writer } = push();
   writer.failSync(new Error('failed'));
+  // Sync write after fail returns false
   assert.strictEqual(writer.writeSync('fail'), false);
+  // Async write after fail rejects
+  await assert.rejects(
+    () => writer.write('fail'),
+    { code: 'ERR_INVALID_STATE' },
+  );
 }
 
 async function testFailSync() {
@@ -214,24 +226,95 @@ async function testOndrainWaitsForDrain() {
   const { writer, readable } = push({ highWaterMark: 1 });
   writer.writeSync('a'); // Fills buffer
 
-  let drained = false;
-  const drainPromise = ondrain(writer).then((v) => { drained = v; });
+  let drainState = 'pending';
+  const drainPromise = ondrain(writer).then((v) => { drainState = v; });
 
-  await new Promise((r) => setTimeout(r, 10));
-  assert.strictEqual(drained, false); // Still waiting
+  await new Promise(setImmediate);
+  assert.strictEqual(drainState, 'pending'); // Still waiting
 
   // Read to drain
   const iter = readable[Symbol.asyncIterator]();
   await iter.next();
 
   await drainPromise;
-  assert.strictEqual(drained, true);
+  assert.strictEqual(drainState, true);
   writer.endSync();
+}
+
+// Consumer throw causes subsequent writes to reject with consumer's error
+async function testConsumerThrowRejectsWrites() {
+  const { writer, readable } = push({ highWaterMark: 1 });
+  writer.writeSync('a');
+
+  const iter = readable[Symbol.asyncIterator]();
+  await iter.throw(new Error('consumer boom'));
+
+  // Subsequent async writes should reject with the consumer's error
+  await assert.rejects(
+    () => writer.write('x'),
+    { message: 'consumer boom' },
+  );
+}
+
+// end() resolves a pending read as done:true
+async function testEndResolvesPendingRead() {
+  const { writer, readable } = push();
+
+  // Consumer starts reading — blocks because buffer is empty
+  const iter = readable[Symbol.asyncIterator]();
+  const readPromise = iter.next();
+
+  // Give the read a tick to enter the pending state
+  await new Promise(setImmediate);
+
+  // End the writer — should resolve the pending read with done:true
+  writer.endSync();
+  const result = await readPromise;
+  assert.strictEqual(result.done, true);
+}
+
+// fail() rejects a pending read with the error
+async function testFailRejectsPendingRead() {
+  const { writer, readable } = push();
+
+  const iter = readable[Symbol.asyncIterator]();
+  const readPromise = iter.next();
+
+  await new Promise(setImmediate);
+
+  writer.failSync(new Error('fail during read'));
+  await assert.rejects(
+    () => readPromise,
+    { message: 'fail during read' },
+  );
+}
+
+// end() while writes are pending rejects those writes
+async function testEndRejectsPendingWrites() {
+  const { writer, readable } = push({ highWaterMark: 1, backpressure: 'block' });
+  writer.writeSync('a'); // fill buffer
+
+  // This write blocks on backpressure
+  const writePromise = writer.write('b');
+
+  await new Promise(setImmediate);
+
+  // Ending should reject the pending write
+  writer.endSync();
+
+  await assert.rejects(
+    () => writePromise,
+    { code: 'ERR_INVALID_STATE' },
+  );
+
+  // Clean up: drain the readable
+  // eslint-disable-next-line no-unused-vars
+  for await (const _ of readable) { break; }
 }
 
 Promise.all([
   testOndrain(),
-  testOndainNonDrainable(),
+  testOndrainNonDrainable(),
   testWriteWithSignalRejects(),
   testWriteWithPreAbortedSignal(),
   testCancelledWriteRemovedFromQueue(),
@@ -246,4 +329,8 @@ Promise.all([
   testEndAsyncReturnValue(),
   testWriteUint8Array(),
   testOndrainWaitsForDrain(),
+  testConsumerThrowRejectsWrites(),
+  testEndResolvesPendingRead(),
+  testFailRejectsPendingRead(),
+  testEndRejectsPendingWrites(),
 ]).then(common.mustCall());

@@ -42,8 +42,11 @@ async function testFromSyncIterableAsAsync() {
   for await (const batch of readable) {
     batches.push(batch);
   }
-  // Sync iterables get batched together
-  assert.ok(batches.length >= 1);
+  // Sync iterables get batched together into a single batch
+  assert.strictEqual(batches.length, 1);
+  assert.strictEqual(batches[0].length, 2);
+  assert.deepStrictEqual(batches[0][0], new Uint8Array([1]));
+  assert.deepStrictEqual(batches[0][1], new Uint8Array([2]));
 }
 
 async function testFromToAsyncStreamableProtocol() {
@@ -66,10 +69,14 @@ async function testFromToAsyncStreamableProtocol() {
                          new TextEncoder().encode('async-protocol-data'));
 }
 
-async function testFromRejectsNonStreamable() {
+function testFromRejectsNonStreamable() {
   assert.throws(
     () => from(12345),
-    { name: 'TypeError' },
+    { code: 'ERR_INVALID_ARG_TYPE' },
+  );
+  assert.throws(
+    () => from(null),
+    { code: 'ERR_INVALID_ARG_TYPE' },
   );
 }
 
@@ -90,6 +97,7 @@ async function testStreamNamespace() {
     batches.push(batch);
   }
   assert.strictEqual(batches.length, 1);
+  assert.deepStrictEqual(batches[0][0], new TextEncoder().encode('via-namespace'));
 }
 
 async function testCustomToStringInStream() {

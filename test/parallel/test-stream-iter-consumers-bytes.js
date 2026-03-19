@@ -21,29 +21,25 @@ const {
 // =============================================================================
 
 async function testBytesSyncBasic() {
-  const source = fromSync('hello');
-  const data = bytesSync(source);
+  const data = bytesSync(fromSync('hello'));
   assert.deepStrictEqual(data, new TextEncoder().encode('hello'));
 }
 
 async function testBytesSyncLimit() {
-  const source = fromSync('hello world');
   assert.throws(
-    () => bytesSync(source, { limit: 3 }),
+    () => bytesSync(fromSync('hello world'), { limit: 3 }),
     { name: 'RangeError' },
   );
 }
 
 async function testBytesAsync() {
-  const source = from('hello-async');
-  const data = await bytes(source);
+  const data = await bytes(from('hello-async'));
   assert.deepStrictEqual(data, new TextEncoder().encode('hello-async'));
 }
 
 async function testBytesAsyncLimit() {
-  const source = from('hello world');
   await assert.rejects(
-    () => bytes(source, { limit: 3 }),
+    () => bytes(from('hello world'), { limit: 3 }),
     { name: 'RangeError' },
   );
 }
@@ -51,16 +47,15 @@ async function testBytesAsyncLimit() {
 async function testBytesAsyncAbort() {
   const ac = new AbortController();
   ac.abort();
-  const source = from('data');
   await assert.rejects(
-    () => bytes(source, { signal: ac.signal }),
-    (err) => err.name === 'AbortError',
+    () => bytes(from('data'), { signal: ac.signal }),
+    { name: 'AbortError' },
   );
 }
 
 async function testBytesEmpty() {
-  const source = from([]);
-  const data = await bytes(source);
+  const data = await bytes(from([]));
+  assert.ok(data instanceof Uint8Array);
   assert.strictEqual(data.byteLength, 0);
 }
 
@@ -69,8 +64,7 @@ async function testBytesEmpty() {
 // =============================================================================
 
 async function testArrayBufferSyncBasic() {
-  const source = fromSync(new Uint8Array([1, 2, 3]));
-  const ab = arrayBufferSync(source);
+  const ab = arrayBufferSync(fromSync(new Uint8Array([1, 2, 3])));
   assert.ok(ab instanceof ArrayBuffer);
   assert.strictEqual(ab.byteLength, 3);
   const view = new Uint8Array(ab);
@@ -78,8 +72,7 @@ async function testArrayBufferSyncBasic() {
 }
 
 async function testArrayBufferAsync() {
-  const source = from(new Uint8Array([10, 20, 30]));
-  const ab = await arrayBuffer(source);
+  const ab = await arrayBuffer(from(new Uint8Array([10, 20, 30])));
   assert.ok(ab instanceof ArrayBuffer);
   assert.strictEqual(ab.byteLength, 3);
   const view = new Uint8Array(ab);
@@ -96,8 +89,7 @@ async function testArraySyncBasic() {
     yield new Uint8Array([2]);
     yield new Uint8Array([3]);
   }
-  const source = fromSync(gen());
-  const chunks = arraySync(source);
+  const chunks = arraySync(fromSync(gen()));
   assert.strictEqual(chunks.length, 3);
   assert.deepStrictEqual(chunks[0], new Uint8Array([1]));
   assert.deepStrictEqual(chunks[1], new Uint8Array([2]));

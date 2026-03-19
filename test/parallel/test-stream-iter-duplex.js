@@ -149,7 +149,29 @@ async function testChannelFail() {
     // eslint-disable-next-line no-unused-vars
     for await (const _ of b.readable) { /* consume */ }
   }, { message: 'channel failed' });
-  b.close();
+  await b.close();
+}
+
+// Abort signal affects both channels
+async function testAbortSignalBothChannels() {
+  const ac = new AbortController();
+  const [channelA, channelB] = duplex({ signal: ac.signal });
+
+  ac.abort();
+
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of channelA.readable) {
+      assert.fail('Should not reach here');
+    }
+  }, (err) => err.name === 'AbortError');
+
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of channelB.readable) {
+      assert.fail('Should not reach here');
+    }
+  }, (err) => err.name === 'AbortError');
 }
 
 Promise.all([
@@ -162,4 +184,5 @@ Promise.all([
   testAbortSignal(),
   testEmptyDuplex(),
   testChannelFail(),
+  testAbortSignalBothChannels(),
 ]).then(common.mustCall());

@@ -15,21 +15,18 @@ const {
 // =============================================================================
 
 async function testTextSyncBasic() {
-  const source = fromSync('hello text');
-  const data = textSync(source);
+  const data = textSync(fromSync('hello text'));
   assert.strictEqual(data, 'hello text');
 }
 
 async function testTextAsync() {
-  const source = from('hello async text');
-  const data = await text(source);
+  const data = await text(from('hello async text'));
   assert.strictEqual(data, 'hello async text');
 }
 
 async function testTextEncoding() {
   // Default encoding is utf-8
-  const source = from('café');
-  const data = await text(source);
+  const data = await text(from('café'));
   assert.strictEqual(data, 'café');
 }
 
@@ -68,6 +65,55 @@ async function testTextWithLimit() {
   // Within limit should succeed
   const result = await text(from('hello'), { limit: 10 });
   assert.strictEqual(result, 'hello');
+
+  // Exact boundary: 'hello' is 5 UTF-8 bytes, limit: 5 should succeed
+  // (source uses > not >=)
+  const exact = await text(from('hello'), { limit: 5 });
+  assert.strictEqual(exact, 'hello');
+}
+
+async function testTextSyncWithLimit() {
+  // Sync version of limit testing
+  assert.throws(
+    () => textSync(fromSync('hello world'), { limit: 5 }),
+    { code: 'ERR_OUT_OF_RANGE' },
+  );
+  const result = textSync(fromSync('hello'), { limit: 10 });
+  assert.strictEqual(result, 'hello');
+
+  // Exact boundary
+  const exact = textSync(fromSync('hello'), { limit: 5 });
+  assert.strictEqual(exact, 'hello');
+}
+
+async function testTextEmpty() {
+  const result = await text(from(''));
+  assert.strictEqual(result, '');
+
+  const syncResult = textSync(fromSync(''));
+  assert.strictEqual(syncResult, '');
+}
+
+// text() with abort signal
+async function testTextWithSignal() {
+  const ac = new AbortController();
+  ac.abort();
+  await assert.rejects(
+    () => text(from('data'), { signal: ac.signal }),
+    { name: 'AbortError' },
+  );
+}
+
+// Multi-chunk source with a multi-byte UTF-8 character split across chunks
+async function testTextMultiChunkSplitCodepoint() {
+  // '€' is U+20AC, encoded as 3 UTF-8 bytes: 0xE2, 0x82, 0xAC
+  // Split these bytes across two chunks to test proper re-assembly
+  async function* splitSource() {
+    yield [new Uint8Array([0xE2, 0x82])]; // First 2 bytes of '€'
+    yield [new Uint8Array([0xAC])]; // Last byte of '€'
+  }
+  const result = await text(splitSource());
+  assert.strictEqual(result, '€');
 }
 
 Promise.all([
@@ -78,4 +124,8 @@ Promise.all([
   testTextSyncNonUtf8Encoding(),
   testTextInvalidUtf8(),
   testTextWithLimit(),
+  testTextSyncWithLimit(),
+  testTextEmpty(),
+  testTextWithSignal(),
+  testTextMultiChunkSplitCodepoint(),
 ]).then(common.mustCall());

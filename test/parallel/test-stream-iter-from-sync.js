@@ -5,7 +5,7 @@ const common = require('../common');
 const assert = require('assert');
 const { fromSync } = require('stream/iter');
 
-async function testFromSyncString() {
+function testFromSyncString() {
   // String input should be UTF-8 encoded
   const readable = fromSync('hello');
   const batches = [];
@@ -18,7 +18,7 @@ async function testFromSyncString() {
                          new TextEncoder().encode('hello'));
 }
 
-async function testFromSyncUint8Array() {
+function testFromSyncUint8Array() {
   const input = new Uint8Array([1, 2, 3]);
   const readable = fromSync(input);
   const batches = [];
@@ -30,7 +30,7 @@ async function testFromSyncUint8Array() {
   assert.deepStrictEqual(batches[0][0], input);
 }
 
-async function testFromSyncArrayBuffer() {
+function testFromSyncArrayBuffer() {
   const ab = new ArrayBuffer(4);
   new Uint8Array(ab).set([10, 20, 30, 40]);
   const readable = fromSync(ab);
@@ -42,7 +42,7 @@ async function testFromSyncArrayBuffer() {
   assert.deepStrictEqual(batches[0][0], new Uint8Array([10, 20, 30, 40]));
 }
 
-async function testFromSyncUint8ArrayArray() {
+function testFromSyncUint8ArrayArray() {
   // Array of Uint8Array should yield as a single batch
   const chunks = [new Uint8Array([1]), new Uint8Array([2])];
   const readable = fromSync(chunks);
@@ -52,9 +52,11 @@ async function testFromSyncUint8ArrayArray() {
   }
   assert.strictEqual(batches.length, 1);
   assert.strictEqual(batches[0].length, 2);
+  assert.deepStrictEqual(batches[0][0], new Uint8Array([1]));
+  assert.deepStrictEqual(batches[0][1], new Uint8Array([2]));
 }
 
-async function testFromSyncGenerator() {
+function testFromSyncGenerator() {
   function* gen() {
     yield new Uint8Array([1, 2]);
     yield new Uint8Array([3, 4]);
@@ -69,7 +71,7 @@ async function testFromSyncGenerator() {
   assert.deepStrictEqual(batches[1][0], new Uint8Array([3, 4]));
 }
 
-async function testFromSyncNestedIterables() {
+function testFromSyncNestedIterables() {
   // Nested arrays and strings should be flattened
   function* gen() {
     yield ['hello', ' ', 'world'];
@@ -81,9 +83,12 @@ async function testFromSyncNestedIterables() {
   }
   assert.strictEqual(batches.length, 1);
   assert.strictEqual(batches[0].length, 3);
+  assert.deepStrictEqual(batches[0][0], new TextEncoder().encode('hello'));
+  assert.deepStrictEqual(batches[0][1], new TextEncoder().encode(' '));
+  assert.deepStrictEqual(batches[0][2], new TextEncoder().encode('world'));
 }
 
-async function testFromSyncToStreamableProtocol() {
+function testFromSyncToStreamableProtocol() {
   const sym = Symbol.for('Stream.toStreamable');
   const obj = {
     [sym]() {
@@ -103,14 +108,30 @@ async function testFromSyncToStreamableProtocol() {
                          new TextEncoder().encode('protocol-data'));
 }
 
-async function testFromSyncRejectsNonStreamable() {
+function testFromSyncGeneratorError() {
+  function* gen() {
+    yield new Uint8Array([1]);
+    throw new Error('generator boom');
+  }
+  const readable = fromSync(gen());
+  assert.throws(() => {
+    // eslint-disable-next-line no-unused-vars
+    for (const _ of readable) { /* consume */ }
+  }, { message: 'generator boom' });
+}
+
+function testFromSyncRejectsNonStreamable() {
   assert.throws(
     () => fromSync(12345),
-    { name: 'TypeError' },
+    { code: 'ERR_INVALID_ARG_TYPE' },
+  );
+  assert.throws(
+    () => fromSync(null),
+    { code: 'ERR_INVALID_ARG_TYPE' },
   );
 }
 
-async function testFromSyncEmptyGenerator() {
+function testFromSyncEmptyGenerator() {
   function* empty() {}
   let count = 0;
   // eslint-disable-next-line no-unused-vars
@@ -126,6 +147,7 @@ Promise.all([
   testFromSyncGenerator(),
   testFromSyncNestedIterables(),
   testFromSyncToStreamableProtocol(),
+  testFromSyncGeneratorError(),
   testFromSyncRejectsNonStreamable(),
   testFromSyncEmptyGenerator(),
 ]).then(common.mustCall());

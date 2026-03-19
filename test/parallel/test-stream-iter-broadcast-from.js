@@ -20,9 +20,10 @@ async function testBroadcastFromAsyncIterable() {
 
 async function testBroadcastFromNonArrayChunks() {
   // Source that yields single Uint8Array chunks (not arrays)
+  const enc = new TextEncoder();
   async function* singleChunkSource() {
-    yield new TextEncoder().encode('hello');
-    yield new TextEncoder().encode(' world');
+    yield enc.encode('hello');
+    yield enc.encode(' world');
   }
   const { broadcast: bc } = Broadcast.from(singleChunkSource());
   const consumer = bc.push();
@@ -98,10 +99,11 @@ async function testBroadcastFromCancelWhileBlocked() {
   // Create a slow async source that blocks between yields
   let sourceFinished = false;
   async function* slowSource() {
-    yield [new TextEncoder().encode('chunk1')];
+    const enc = new TextEncoder();
+    yield [enc.encode('chunk1')];
     // Simulate a long delay - the cancel should unblock this
     await new Promise((resolve) => setTimeout(resolve, 10000));
-    yield [new TextEncoder().encode('chunk2')];
+    yield [enc.encode('chunk2')];
     sourceFinished = true;
   }
 

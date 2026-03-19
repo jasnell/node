@@ -23,17 +23,11 @@ const {
 // =============================================================================
 
 async function roundTrip(input, compress, decompress) {
-  const source = from(input);
-  const compressed = pull(source, compress);
-  const decompressed = pull(compressed, decompress);
-  return text(decompressed);
+  return text(pull(pull(from(input), compress), decompress));
 }
 
 async function roundTripBytes(inputBuf, compress, decompress) {
-  const source = from(inputBuf);
-  const compressed = pull(source, compress);
-  const decompressed = pull(compressed, decompress);
-  return bytes(decompressed);
+  return bytes(pull(pull(from(inputBuf), compress), decompress));
 }
 
 // =============================================================================
@@ -106,8 +100,7 @@ async function testBrotliLargeData() {
 async function testBrotliActuallyCompresses() {
   const input = 'Repeated data compresses well. '.repeat(1000);
   const inputBuf = Buffer.from(input);
-  const source = from(inputBuf);
-  const compressed = await bytes(pull(source, compressBrotli()));
+  const compressed = await bytes(pull(from(inputBuf), compressBrotli()));
   assert.ok(compressed.byteLength < inputBuf.byteLength,
             `Compressed ${compressed.byteLength} should be < original ${inputBuf.byteLength}`);
 }
@@ -131,8 +124,7 @@ async function testZstdLargeData() {
 async function testZstdActuallyCompresses() {
   const input = 'Repeated data compresses well. '.repeat(1000);
   const inputBuf = Buffer.from(input);
-  const source = from(inputBuf);
-  const compressed = await bytes(pull(source, compressZstd()));
+  const compressed = await bytes(pull(from(inputBuf), compressZstd()));
   assert.ok(compressed.byteLength < inputBuf.byteLength,
             `Compressed ${compressed.byteLength} should be < original ${inputBuf.byteLength}`);
 }
@@ -141,17 +133,22 @@ async function testZstdActuallyCompresses() {
 // Binary data round-trip - verify no corruption on non-text data
 // =============================================================================
 
+// Create a buffer with a repeating byte pattern covering all 256 values.
+function makeBinaryTestData(size = 1024) {
+  const buf = Buffer.alloc(size);
+  for (let i = 0; i < size; i++) buf[i] = i & 0xFF;
+  return buf;
+}
+
 async function testBinaryRoundTripGzip() {
-  const input = Buffer.alloc(1024);
-  for (let i = 0; i < input.length; i++) input[i] = i & 0xFF;
+  const input = makeBinaryTestData();
   const result = await roundTripBytes(input, compressGzip(), decompressGzip());
   assert.strictEqual(result.byteLength, input.byteLength);
   assert.deepStrictEqual(Buffer.from(result), input);
 }
 
 async function testBinaryRoundTripDeflate() {
-  const input = Buffer.alloc(1024);
-  for (let i = 0; i < input.length; i++) input[i] = i & 0xFF;
+  const input = makeBinaryTestData();
   const result = await roundTripBytes(input, compressDeflate(),
                                       decompressDeflate());
   assert.strictEqual(result.byteLength, input.byteLength);
@@ -159,8 +156,7 @@ async function testBinaryRoundTripDeflate() {
 }
 
 async function testBinaryRoundTripBrotli() {
-  const input = Buffer.alloc(1024);
-  for (let i = 0; i < input.length; i++) input[i] = i & 0xFF;
+  const input = makeBinaryTestData();
   const result = await roundTripBytes(input, compressBrotli(),
                                       decompressBrotli());
   assert.strictEqual(result.byteLength, input.byteLength);
@@ -168,10 +164,8 @@ async function testBinaryRoundTripBrotli() {
 }
 
 async function testBinaryRoundTripZstd() {
-  const input = Buffer.alloc(1024);
-  for (let i = 0; i < input.length; i++) input[i] = i & 0xFF;
-  const result = await roundTripBytes(input, compressZstd(),
-                                      decompressZstd());
+  const input = makeBinaryTestData();
+  const result = await roundTripBytes(input, compressZstd(), decompressZstd());
   assert.strictEqual(result.byteLength, input.byteLength);
   assert.deepStrictEqual(Buffer.from(result), input);
 }
@@ -206,9 +200,8 @@ async function testEmptyInputZstd() {
 
 async function testChainedGzipDeflate() {
   const input = 'Double compression test data. '.repeat(100);
-  const source = from(input);
   // Compress: gzip then deflate
-  const compressed = pull(pull(source, compressGzip()), compressDeflate());
+  const compressed = pull(pull(from(input), compressGzip()), compressDeflate());
   // Decompress: deflate then gzip (reverse order)
   const decompressed = pull(pull(compressed, decompressDeflate()),
                             decompressGzip());
@@ -220,17 +213,15 @@ async function testChainedGzipDeflate() {
 // Transform protocol: verify each factory returns a proper transform object
 // =============================================================================
 
-async function testTransformProtocol() {
-  const factories = [
+function testTransformProtocol() {
+  [
     compressGzip, compressDeflate, compressBrotli, compressZstd,
     decompressGzip, decompressDeflate, decompressBrotli, decompressZstd,
-  ];
-
-  for (const factory of factories) {
+  ].forEach((factory) => {
     const t = factory();
     assert.strictEqual(typeof t.transform, 'function',
                        `${factory.name}() should have a transform function`);
-  }
+  });
 }
 
 // =============================================================================
@@ -291,7 +282,7 @@ async function testGzipWithLevel() {
   await testChainedGzipDeflate();
 
   // Protocol
-  await testTransformProtocol();
+  testTransformProtocol();
 
   // Compression with options
   await testGzipWithLevel();

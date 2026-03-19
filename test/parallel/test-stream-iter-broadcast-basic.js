@@ -55,11 +55,12 @@ async function testConsumerCount() {
   bc.push();
   assert.strictEqual(bc.consumerCount, 2);
 
-  // Consume c1 to completion (it returns immediately since no data has been
-  // pushed and we haven't ended yet - but we'll cancel to detach)
   bc.cancel();
 
-  // After cancel, consumers are detached
+  // After cancel, consumer count drops to 0
+  assert.strictEqual(bc.consumerCount, 0);
+
+  // Consumers are detached and yield nothing
   const batches = [];
   for await (const batch of c1) {
     batches.push(batch);
@@ -103,7 +104,7 @@ async function testWriterEnd() {
 
   await writer.write('data');
   const totalBytes = await writer.end();
-  assert.ok(totalBytes > 0);
+  assert.strictEqual(totalBytes, 4); // 'data' = 4 UTF-8 bytes
 
   const data = await text(consumer);
   assert.strictEqual(data, 'data');
@@ -174,6 +175,9 @@ async function testFailDetachesConsumers() {
   // Write some data, then fail the writer
   await writer.write('data');
   await writer.fail(new Error('writer failed'));
+
+  // After fail, consumers are detached
+  assert.strictEqual(bc.consumerCount, 0);
 
   // Both consumers should see the error
   await assert.rejects(

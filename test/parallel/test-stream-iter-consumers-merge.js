@@ -39,10 +39,7 @@ async function testMergeTwoSources() {
 }
 
 async function testMergeSingleSource() {
-  const source = from('only-one');
-  const merged = merge(source);
-
-  const data = await text(merged);
+  const data = await text(merge(from('only-one')));
   assert.strictEqual(data, 'only-one');
 }
 
@@ -59,8 +56,7 @@ async function testMergeWithAbortSignal() {
   const ac = new AbortController();
   ac.abort();
 
-  const source = from('data');
-  const merged = merge(source, { signal: ac.signal });
+  const merged = merge(from('data'), { signal: ac.signal });
 
   await assert.rejects(
     async () => {
@@ -69,7 +65,7 @@ async function testMergeWithAbortSignal() {
         assert.fail('Should not reach here');
       }
     },
-    (err) => err.name === 'AbortError',
+    { name: 'AbortError' },
   );
 }
 
@@ -91,10 +87,11 @@ async function testMergeSyncSources() {
 
 async function testMergeSourceError() {
   async function* goodSource() {
-    yield [new TextEncoder().encode('a')];
+    const enc = new TextEncoder();
+    yield [enc.encode('a')];
     // Slow so the bad source errors first
     await new Promise((r) => setTimeout(r, 50));
-    yield [new TextEncoder().encode('b')];
+    yield [enc.encode('b')];
   }
 
   async function* badSource() {
@@ -129,17 +126,19 @@ async function testMergeConsumerBreak() {
   for await (const _ of merge(source1(), source2())) {
     break; // Break after first batch
   }
-  await new Promise((r) => setTimeout(r, 10));
-  // At least one source should be cleaned up
-  assert.strictEqual(source1Return || source2Return, true);
+  // Give async cleanup a tick to complete
+  await new Promise(setImmediate);
+  // Both sources should be cleaned up
+  assert.strictEqual(source1Return && source2Return, true);
 }
 
 async function testMergeSignalMidIteration() {
   const ac = new AbortController();
   async function* slowSource() {
-    yield [new TextEncoder().encode('a')];
+    const enc = new TextEncoder();
+    yield [enc.encode('a')];
     await new Promise((r) => setTimeout(r, 100));
-    yield [new TextEncoder().encode('b')];
+    yield [enc.encode('b')];
   }
   const merged = merge(slowSource(), { signal: ac.signal });
   const iter = merged[Symbol.asyncIterator]();

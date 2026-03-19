@@ -25,15 +25,13 @@ function assertBytes(actual, expected) {
 
 async function testFromSyncCrossRealmUint8Array() {
   const crossRealm = vm.runInNewContext('new Uint8Array([1, 2, 3])');
-  const readable = fromSync(crossRealm);
-  const data = bytesSync(readable);
+  const data = bytesSync(fromSync(crossRealm));
   assertBytes(data, new Uint8Array([1, 2, 3]));
 }
 
 async function testFromCrossRealmUint8Array() {
   const crossRealm = vm.runInNewContext('new Uint8Array([4, 5, 6])');
-  const readable = from(crossRealm);
-  const result = await text(readable);
+  const result = await text(from(crossRealm));
   assert.strictEqual(result, '\x04\x05\x06');
 }
 
@@ -45,8 +43,7 @@ async function testFromSyncCrossRealmArrayBuffer() {
   const crossRealm = vm.runInNewContext(
     'new Uint8Array([7, 8, 9]).buffer',
   );
-  const readable = fromSync(crossRealm);
-  const data = bytesSync(readable);
+  const data = bytesSync(fromSync(crossRealm));
   assertBytes(data, new Uint8Array([7, 8, 9]));
 }
 
@@ -54,8 +51,7 @@ async function testFromCrossRealmArrayBuffer() {
   const crossRealm = vm.runInNewContext(
     'new Uint8Array([10, 11, 12]).buffer',
   );
-  const readable = from(crossRealm);
-  const result = await text(readable);
+  const result = await text(from(crossRealm));
   assert.strictEqual(result, '\x0a\x0b\x0c');
 }
 
@@ -67,8 +63,7 @@ async function testFromSyncCrossRealmUint8ArrayArray() {
   const crossRealm = vm.runInNewContext(
     '[new Uint8Array([1, 2]), new Uint8Array([3, 4])]',
   );
-  const readable = fromSync(crossRealm);
-  const data = bytesSync(readable);
+  const data = bytesSync(fromSync(crossRealm));
   assertBytes(data, new Uint8Array([1, 2, 3, 4]));
 }
 
@@ -76,8 +71,7 @@ async function testFromCrossRealmUint8ArrayArray() {
   const crossRealm = vm.runInNewContext(
     '[new Uint8Array([5, 6]), new Uint8Array([7, 8])]',
   );
-  const readable = from(crossRealm);
-  const result = await text(readable);
+  const result = await text(from(crossRealm));
   assert.strictEqual(result, '\x05\x06\x07\x08');
 }
 
@@ -87,7 +81,6 @@ async function testFromCrossRealmUint8ArrayArray() {
 
 async function testPullCrossRealmTransformOutput() {
   // Transform that returns cross-realm Uint8Array[] batches
-  const source = from('hello');
   const crossRealmTransform = (chunks) => {
     if (chunks === null) return null;
     // Re-encode each chunk as cross-realm Uint8Array
@@ -95,8 +88,7 @@ async function testPullCrossRealmTransformOutput() {
       `[new Uint8Array([${[...chunks[0]]}])]`,
     );
   };
-  const result = pull(source, crossRealmTransform);
-  const output = await text(result);
+  const output = await text(pull(from('hello'), crossRealmTransform));
   assert.strictEqual(output, 'hello');
 }
 
@@ -111,8 +103,7 @@ async function testFromCrossRealmPromise() {
   async function* gen() {
     yield crossRealmPromise;
   }
-  const readable = from(gen());
-  const result = await text(readable);
+  const result = await text(from(gen()));
   assert.strictEqual(result, 'promised-data');
 }
 
@@ -122,8 +113,7 @@ async function testFromCrossRealmPromise() {
 
 async function testFromSyncCrossRealmInt32Array() {
   const crossRealm = vm.runInNewContext('new Int32Array([1])');
-  const readable = fromSync(crossRealm);
-  const data = bytesSync(readable);
+  const data = bytesSync(fromSync(crossRealm));
   // Int32Array([1]) = 4 bytes, endianness varies by platform
   assert.strictEqual(data.length, 4);
   assert.strictEqual(new Int32Array(data.buffer, data.byteOffset, 1)[0], 1);

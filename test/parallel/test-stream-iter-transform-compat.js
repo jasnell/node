@@ -28,8 +28,7 @@ async function testGzipCompatWithZlib() {
   const gunzip = promisify(zlib.gunzip);
 
   const input = 'Cross-compat test with node:zlib. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressGzip()));
+  const compressed = await bytes(pull(from(input), compressGzip()));
 
   // Decompress with standard zlib
   const decompressed = await gunzip(compressed);
@@ -40,8 +39,7 @@ async function testDeflateCompatWithZlib() {
   const inflate = promisify(zlib.inflate);
 
   const input = 'Cross-compat deflate test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressDeflate()));
+  const compressed = await bytes(pull(from(input), compressDeflate()));
 
   // Decompress with standard zlib
   const decompressed = await inflate(compressed);
@@ -52,8 +50,7 @@ async function testBrotliCompatWithZlib() {
   const brotliDecompress = promisify(zlib.brotliDecompress);
 
   const input = 'Cross-compat brotli test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressBrotli()));
+  const compressed = await bytes(pull(from(input), compressBrotli()));
 
   const decompressed = await brotliDecompress(compressed);
   assert.strictEqual(decompressed.toString(), input);
@@ -63,8 +60,7 @@ async function testZstdCompatWithZlib() {
   const zstdDecompress = promisify(zlib.zstdDecompress);
 
   const input = 'Cross-compat zstd test. '.repeat(100);
-  const source = from(input);
-  const compressed = await bytes(pull(source, compressZstd()));
+  const compressed = await bytes(pull(from(input), compressZstd()));
 
   const decompressed = await zstdDecompress(compressed);
   assert.strictEqual(decompressed.toString(), input);

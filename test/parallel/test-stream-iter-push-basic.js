@@ -104,8 +104,35 @@ async function testAbortSignal() {
         assert.fail('Should not reach here');
       }
     },
-    (err) => err.name === 'AbortError',
+    { name: 'AbortError' },
   );
+}
+
+async function testPreAbortedSignal() {
+  const ac = new AbortController();
+  ac.abort();
+  const { readable } = push({ signal: ac.signal });
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) {
+      assert.fail('Should not reach here');
+    }
+  }, { name: 'AbortError' });
+}
+
+async function testConsumerBreakWriteSyncReturnsFalse() {
+  const { writer, readable } = push({ highWaterMark: 10 });
+  writer.writeSync('a');
+
+  // Break after first batch
+  // eslint-disable-next-line no-unused-vars
+  for await (const _ of readable) {
+    break;
+  }
+
+  // After consumer break, writeSync should return false
+  assert.strictEqual(writer.writeSync('b'), false);
+  assert.strictEqual(writer.desiredSize, null);
 }
 
 async function testPushWithTransforms() {
@@ -148,6 +175,8 @@ Promise.all([
   testWriterFail(),
   testConsumerBreak(),
   testAbortSignal(),
+  testPreAbortedSignal(),
+  testConsumerBreakWriteSyncReturnsFalse(),
   testPushWithTransforms(),
   testInvalidBackpressure(),
 ]).then(common.mustCall());
