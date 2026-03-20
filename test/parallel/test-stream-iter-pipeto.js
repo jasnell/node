@@ -8,8 +8,8 @@ const { pipeTo, pipeToSync, from, fromSync } = require('stream/iter');
 async function testPipeToSync() {
   const written = [];
   const writer = {
-    write(chunk) { written.push(chunk); },
-    end() { return written.length; },
+    writeSync(chunk) { written.push(chunk); return true; },
+    endSync() { return written.length; },
     fail() {},
   };
 
@@ -70,7 +70,7 @@ async function testPipeToSourceError() {
 async function testPipeToSyncSourceError() {
   let failCalled = false;
   const writer = {
-    write() { return true; },
+    writeSync() { return true; },
     fail(reason) { failCalled = true; },
   };
   function* failingSource() {
@@ -126,7 +126,7 @@ async function testPipeToWithTransforms() {
 async function testPipeToSyncWithTransforms() {
   const chunks = [];
   const writer = {
-    write(chunk) { chunks.push(new TextDecoder().decode(chunk)); },
+    writeSync(chunk) { chunks.push(new TextDecoder().decode(chunk)); return true; },
   };
   const upper = (batch) => {
     if (batch === null) return null;
@@ -185,7 +185,7 @@ async function testPipeToPreventFail() {
 async function testPipeToSyncPreventClose() {
   let endCalled = false;
   const writer = {
-    write() {},
+    writeSync() { return true; },
     endSync() { endCalled = true; return 0; },
   };
   pipeToSync(fromSync('hello'), writer, { preventClose: true });
@@ -209,8 +209,9 @@ async function testPipeToMinimalWriter() {
 async function testPipeToSyncMinimalWriter() {
   const chunks = [];
   const minimalWriter = {
-    write(chunk) {
+    writeSync(chunk) {
       chunks.push(chunk);
+      return true;
     },
   };
 

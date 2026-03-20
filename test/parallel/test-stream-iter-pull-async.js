@@ -286,7 +286,86 @@ async function testPullTransformYieldsStrings() {
     testPullStatelessTransformFlush(),
     testPullStatelessTransformFlushError(),
     testPullWithSyncSource(),
+    testPullStringSource(),
+    testTransformReturnsSingleUint8Array(),
+    testTransformReturnsSingleString(),
+    testTransformReturnsArrayBuffer(),
+    testPipeToStringSource(),
+    testTransformOptionsNotShared(),
   ]);
   // Run after all concurrent tests complete to avoid global handler races
   await testTransformSignalListenerErrorOnSourceError();
 })().then(common.mustCall());
+
+// pull() accepts a string source directly (normalized via from())
+async function testPullStringSource() {
+  const data = await text(pull('hello-direct'));
+  assert.strictEqual(data, 'hello-direct');
+}
+
+// Transform returning a single Uint8Array should be wrapped as a batch,
+// not iterated byte-by-byte
+async function testTransformReturnsSingleUint8Array() {
+  const transform = (chunks) => {
+    if (chunks === null) return null;
+    // Return a single Uint8Array, not an array
+    const enc = new TextEncoder();
+    return enc.encode('transformed');
+  };
+  const data = await text(pull(from('input'), transform));
+  assert.strictEqual(data, 'transformed');
+}
+
+// Transform returning a single string should be UTF-8 encoded,
+// not iterated character-by-character
+async function testTransformReturnsSingleString() {
+  const transform = (chunks) => {
+    if (chunks === null) return null;
+    return 'hello-string';
+  };
+  const data = await text(pull(from('input'), transform));
+  assert.strictEqual(data, 'hello-string');
+}
+
+// Transform returning an ArrayBuffer should be converted to Uint8Array
+async function testTransformReturnsArrayBuffer() {
+  const transform = (chunks) => {
+    if (chunks === null) return null;
+    const enc = new TextEncoder();
+    return enc.encode('arraybuf').buffer;
+  };
+  const data = await text(pull(from('input'), transform));
+  assert.strictEqual(data, 'arraybuf');
+}
+
+// pipeTo() accepts a string source directly (normalized via from())
+async function testPipeToStringSource() {
+  const { pipeTo, push: pushFn, text: textFn } = require('stream/iter');
+  const { writer, readable } = pushFn({ highWaterMark: 10 });
+  const consume = (async () => textFn(readable))();
+  await pipeTo('hello-pipe', writer);
+  const data = await consume;
+  assert.strictEqual(data, 'hello-pipe');
+}
+
+// INVARIANT: Each transform invocation receives its own options object.
+// A transform that mutates options must not affect subsequent transforms.
+async function testTransformOptionsNotShared() {
+  const seen = [];
+  const transform1 = (chunks, options) => {
+    // Mutate the options object
+    options.mutated = true;
+    seen.push({ id: 1, mutated: options.mutated });
+    return chunks;
+  };
+  const transform2 = (chunks, options) => {
+    // Should NOT see mutation from transform1
+    seen.push({ id: 2, mutated: options.mutated });
+    return chunks;
+  };
+  await text(pull(from('test'), transform1, transform2));
+  // transform1 sees its own mutation
+  assert.strictEqual(seen[0].mutated, true);
+  // transform2 gets a fresh options object - no mutation visible
+  assert.strictEqual(seen[1].mutated, undefined);
+}
