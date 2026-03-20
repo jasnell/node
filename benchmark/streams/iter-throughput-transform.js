@@ -1,5 +1,5 @@
 // Throughput benchmark: data flow through a single stateless transform.
-// Uses byte-level ASCII uppercase (branchless, no encoding dependency).
+// Uses buffer copy (allocate + memcpy) so pipeline overhead is measurable.
 'use strict';
 
 const common = require('../common.js');
@@ -15,13 +15,11 @@ const bench = common.createBenchmark(main, {
 
 const CHUNK_SIZE = 64 * 1024;
 
-// Byte-level ASCII uppercase: branchless, no string encoding.
-function upperBuf(buf) {
-  const out = Buffer.allocUnsafe(buf.length);
-  for (let i = 0; i < buf.length; i++) {
-    out[i] = buf[i] - (buf[i] >= 97 && buf[i] <= 122) * 32;
-  }
-  return out;
+// Buffer copy transform: allocate + memcpy. Cheap enough that pipeline
+// overhead is a measurable fraction of total time, but non-trivial (new
+// buffer per chunk, so it's a real transform that produces new data).
+function copyBuf(buf) {
+  return Buffer.copyBytesFrom(buf);
 }
 
 function main({ api, datasize, n }) {
@@ -53,7 +51,7 @@ function benchClassic(chunk, datasize, n, totalOps) {
     });
     const t = new Transform({
       transform(data, enc, cb) {
-        cb(null, upperBuf(data));
+        cb(null, copyBuf(data));
       },
     });
     const w = new Writable({ write(data, enc, cb) { cb(); } });
@@ -82,7 +80,7 @@ function benchWebStream(chunk, datasize, n, totalOps) {
     });
     const ts = new TransformStream({
       transform(c, controller) {
-        controller.enqueue(upperBuf(c));
+        controller.enqueue(copyBuf(c));
       },
     });
     const ws = new WritableStream({ write() {} });
@@ -101,7 +99,7 @@ function benchIter(chunk, datasize, n, totalOps) {
 
   const upper = (chunks) => {
     if (chunks === null) return null;
-    return chunks.map((c) => upperBuf(c));
+    return chunks.map((c) => copyBuf(c));
   };
 
   async function run() {
@@ -129,7 +127,7 @@ function benchIterSync(chunk, datasize, n, totalOps) {
 
   const upper = (chunks) => {
     if (chunks === null) return null;
-    return chunks.map((c) => upperBuf(c));
+    return chunks.map((c) => copyBuf(c));
   };
 
   bench.start();
