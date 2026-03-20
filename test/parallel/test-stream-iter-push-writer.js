@@ -185,22 +185,22 @@ async function testWriteAfterEnd() {
 
 async function testWriteAfterFail() {
   const { writer } = push();
-  writer.failSync(new Error('failed'));
+  writer.fail(new Error('failed'));
   // Sync write after fail returns false
   assert.strictEqual(writer.writeSync('fail'), false);
-  // Async write after fail rejects
-  await assert.rejects(
-    () => writer.write('fail'),
-    { code: 'ERR_INVALID_STATE' },
-  );
+   // Async write after fail rejects with the stored error
+   await assert.rejects(
+     () => writer.write('fail'),
+     { message: 'failed' },
+   );
 }
 
-async function testFailSync() {
+async function testFail() {
   const { writer, readable } = push();
   writer.writeSync('hello');
-  assert.strictEqual(writer.failSync(new Error('boom')), true);
-  // Second failSync returns false
-  assert.strictEqual(writer.failSync(new Error('boom2')), false);
+  writer.fail(new Error('boom'));
+  // Second fail is a no-op (already errored)
+  writer.fail(new Error('boom2'));
   await assert.rejects(async () => {
     // eslint-disable-next-line no-unused-vars
     for await (const _ of readable) { /* consume */ }
@@ -208,10 +208,16 @@ async function testFailSync() {
 }
 
 async function testEndAsyncReturnValue() {
-  const { writer } = push();
+  const { writer, readable } = push();
   writer.writeSync('hello');
+  // Start consuming concurrently (end() waits for drain)
+  const consume = (async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) { /* drain */ }
+  })();
   const total = await writer.end();
   assert.strictEqual(total, 5);
+  await consume;
 }
 
 async function testWriteUint8Array() {
@@ -282,7 +288,7 @@ async function testFailRejectsPendingRead() {
 
   await new Promise(setImmediate);
 
-  writer.failSync(new Error('fail during read'));
+   writer.fail(new Error('fail during read'));
   await assert.rejects(
     () => readPromise,
     { message: 'fail during read' },
@@ -325,12 +331,83 @@ Promise.all([
   testWritevMixedTypes(),
   testWriteAfterEnd(),
   testWriteAfterFail(),
-  testFailSync(),
+   testFail(),
   testEndAsyncReturnValue(),
   testWriteUint8Array(),
   testOndrainWaitsForDrain(),
   testConsumerThrowRejectsWrites(),
   testEndResolvesPendingRead(),
   testFailRejectsPendingRead(),
-  testEndRejectsPendingWrites(),
+   testEndRejectsPendingWrites(),
+   testEndIdempotentWhenClosed(),
+   testEndRejectsWhenErrored(),
+   testAsyncDispose(),
+   testSyncDispose(),
 ]).then(common.mustCall());
+
+async function testEndIdempotentWhenClosed() {
+  const { writer, readable } = push({ highWaterMark: 10 });
+  await writer.write('hello');
+  // Start consuming concurrently (end() waits for drain)
+  const consume = (async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) { /* drain */ }
+  })();
+  const first = await writer.end();
+  assert.strictEqual(first, 5);
+  // Second end() should resolve with same byte count (idempotent)
+  const second = await writer.end();
+  assert.strictEqual(second, 5);
+  await consume;
+}
+
+async function testAsyncDispose() {
+  const { writer, readable } = push({ highWaterMark: 10 });
+  writer.writeSync('hello');
+  // Symbol.asyncDispose calls fail() with no argument
+  await writer[Symbol.asyncDispose]();
+  // Writer is now errored, writes should fail
+  assert.strictEqual(writer.writeSync('fail'), false);
+  // Drain readable
+  try {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) { /* consume */ }
+  } catch {
+    // Expected - reader sees the error
+  }
+}
+
+async function testSyncDispose() {
+  const { writer, readable } = push({ highWaterMark: 10 });
+  writer.writeSync('hello');
+  // Symbol.dispose calls fail() with no argument
+  writer[Symbol.dispose]();
+  // Writer is now errored, writes should fail
+  assert.strictEqual(writer.writeSync('fail'), false);
+  // Drain readable
+  try {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) { /* consume */ }
+  } catch {
+    // Expected
+  }
+}
+
+async function testEndRejectsWhenErrored() {
+  const { writer, readable } = push({ highWaterMark: 10 });
+  await writer.write('hello');
+  const err = new Error('boom');
+  await writer.fail(err);
+  // end() after fail should reject with the stored error
+  await assert.rejects(
+    () => writer.end(),
+    (e) => e === err,
+  );
+  // Drain readable
+  try {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of readable) { break; }
+  } catch {
+    // Expected - reader may see the error
+  }
+}

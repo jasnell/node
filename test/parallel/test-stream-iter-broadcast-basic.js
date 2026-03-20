@@ -114,7 +114,7 @@ async function testWriterFail() {
   const { writer, broadcast: bc } = broadcast();
   const consumer = bc.push();
 
-  await writer.fail(new Error('test error'));
+  writer.fail(new Error('test error'));
 
   await assert.rejects(
     async () => {
@@ -202,16 +202,16 @@ async function testFailDetachesConsumers() {
 }
 
 // =============================================================================
-// Writer failSync
+// Writer fail idempotent
 // =============================================================================
 
-async function testWriterFailSync() {
+async function testWriterFailIdempotent() {
   const { writer, broadcast: bc } = broadcast();
   const consumer = bc.push();
   writer.writeSync('hello');
-  assert.strictEqual(writer.failSync(new Error('fail!')), true);
-  // Second call still returns true (idempotent)
-  assert.strictEqual(writer.failSync(new Error('fail2')), true);
+  writer.fail(new Error('fail!'));
+  // Second call is a no-op (already errored)
+  writer.fail(new Error('fail2'));
   await assert.rejects(async () => {
     // eslint-disable-next-line no-unused-vars
     for await (const _ of consumer) { /* consume */ }
@@ -229,5 +229,5 @@ Promise.all([
   testCancelWithoutReason(),
   testCancelWithReason(),
   testFailDetachesConsumers(),
-  testWriterFailSync(),
+  testWriterFailIdempotent(),
 ]).then(common.mustCall());

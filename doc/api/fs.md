@@ -946,11 +946,8 @@ added: REPLACEME
     * `options` {Object}
       * `signal` {AbortSignal} If the signal is already aborted, `end()`
         rejects with `AbortError` and the writer remains open.
-  * `fail(reason)` {Function} Returns {Promise\<void>}. Puts the writer
-    into a terminal error state.
-  * `failSync(reason)` {Function} Returns {boolean}. Synchronous best-effort
-    cleanup. Marks the writer as closed so subsequent writes fail immediately.
-    Cannot honor `autoClose` (requires async I/O).
+  * `fail(reason)` {Function} Puts the writer into a terminal error state.
+    Synchronous. If the writer is already closed or errored, this is a no-op.
 
 Return a [`node:stream/iter`][] writer backed by this file handle.
 

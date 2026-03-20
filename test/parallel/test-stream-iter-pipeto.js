@@ -68,10 +68,10 @@ async function testPipeToSourceError() {
 
 // PipeToSync source error calls writer.fail()
 async function testPipeToSyncSourceError() {
-  let failSyncCalled = false;
+  let failCalled = false;
   const writer = {
-    write() {},
-    failSync(reason) { failSyncCalled = true; return true; },
+    write() { return true; },
+    fail(reason) { failCalled = true; },
   };
   function* failingSource() {
     yield [new TextEncoder().encode('a')];
@@ -81,7 +81,7 @@ async function testPipeToSyncSourceError() {
     () => pipeToSync(failingSource(), writer),
     { message: 'sync pipe boom' },
   );
-  assert.strictEqual(failSyncCalled, true);
+  assert.strictEqual(failCalled, true);
 }
 
 // PipeTo with AbortSignal

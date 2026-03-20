@@ -144,7 +144,7 @@ async function testEmptyDuplex() {
 // Channel fail propagation
 async function testChannelFail() {
   const [a, b] = duplex();
-  a.writer.failSync(new Error('channel failed'));
+  a.writer.fail(new Error('channel failed'));
   await assert.rejects(async () => {
     // eslint-disable-next-line no-unused-vars
     for await (const _ of b.readable) { /* consume */ }

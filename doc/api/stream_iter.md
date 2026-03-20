@@ -409,7 +409,7 @@ complete:
 if (!writer.writeSync(chunk)) await writer.write(chunk);
 if (!writer.writevSync(chunks)) await writer.writev(chunks);
 if (writer.endSync() < 0) await writer.end();
-if (!writer.failSync(err)) await writer.fail(err);
+writer.fail(err);  // Always synchronous, no fallback needed
 ```
 
 ### `writer.desiredSize`
@@ -446,18 +446,12 @@ if (result < 0) {
 
 ### `writer.fail(reason)`
 
-* `reason` {Error}
-* Returns: {Promise\<void>}
+* `reason` {any}
 
-Fail the stream with an error.
-
-### `writer.failSync(reason)`
-
-* `reason` {Error}
-* Returns: {boolean} `true` if the writer was failed, `false` if already
-  errored.
-
-Synchronous variant of `writer.fail()`.
+Put the writer into a terminal error state. If the writer is already closed
+or errored, this is a no-op. Unlike `write()` and `end()`, `fail()` is
+unconditionally synchronous because failing a writer is a pure state
+transition with no async work to perform.
 
 ### `writer.write(chunk[, options])`
 
@@ -604,10 +598,10 @@ Pipe a source through transforms into a writer. If the writer has a
 scatter/gather I/O).
 
 If the writer implements the optional `*Sync` methods (`writeSync`, `writevSync`,
-`endSync`, `failSync`), `pipeTo()` will attempt to use the synchronous methods
+`endSync`), `pipeTo()` will attempt to use the synchronous methods
 first as a fast path, and fall back to the async versions only when the sync
 methods indicate they cannot complete (e.g., backpressure or waiting for the
-next tick).
+next tick). `fail()` is always called synchronously.
 
 ```mjs
 import { from, pipeTo, compressGzip } from 'node:stream/iter';
@@ -655,7 +649,7 @@ Synchronous version of [`pipeTo()`][]. The `source`, all transforms, and the
 `writer` must be synchronous. Cannot accept async iterables or promises.
 
 The `writer` must have the `*Sync` methods (`writeSync`, `writevSync`,
-`endSync`, `failSync`) for this to work.
+`endSync`) and `fail()` for this to work.
 
 ### `pull(source[, ...transforms][, options])`
 
