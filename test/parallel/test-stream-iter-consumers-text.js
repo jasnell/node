@@ -116,6 +116,35 @@ async function testTextMultiChunkSplitCodepoint() {
   assert.strictEqual(result, '€');
 }
 
+// BOM should be stripped (ignoreBOM defaults to false per spec)
+async function testTextBOMStripped() {
+  // UTF-8 BOM: 0xEF, 0xBB, 0xBF followed by 'hi'
+  const withBOM = new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0x69]);
+  const result = await text(from(withBOM));
+  assert.strictEqual(result, 'hi');
+}
+
+async function testTextSyncBOMStripped() {
+  const withBOM = new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0x69]);
+  const result = textSync(fromSync(withBOM));
+  assert.strictEqual(result, 'hi');
+}
+
+// Unsupported encoding throws RangeError
+async function testTextUnsupportedEncodingThrowsRangeError() {
+  await assert.rejects(
+    () => text(from('hello'), { encoding: 'not-a-real-encoding' }),
+    { name: 'RangeError' },
+  );
+}
+
+function testTextSyncUnsupportedEncodingThrowsRangeError() {
+  assert.throws(
+    () => textSync(fromSync('hello'), { encoding: 'not-a-real-encoding' }),
+    { name: 'RangeError' },
+  );
+}
+
 Promise.all([
   testTextSyncBasic(),
   testTextAsync(),
@@ -128,4 +157,8 @@ Promise.all([
   testTextEmpty(),
   testTextWithSignal(),
   testTextMultiChunkSplitCodepoint(),
+  testTextBOMStripped(),
+  testTextSyncBOMStripped(),
+  testTextUnsupportedEncodingThrowsRangeError(),
+  testTextSyncUnsupportedEncodingThrowsRangeError(),
 ]).then(common.mustCall());

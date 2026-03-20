@@ -182,6 +182,23 @@ async function testConsumersNonArrayBatchSync() {
   assert.strictEqual(arr.length, 2);
 }
 
+// Consumers accept string sources directly (normalized via from/fromSync)
+async function testBytesStringSource() {
+  const result = await bytes('hello-bytes');
+  assert.strictEqual(new TextDecoder().decode(result), 'hello-bytes');
+}
+
+function testBytesSyncStringSource() {
+  const result = bytesSync('hello-sync');
+  assert.strictEqual(new TextDecoder().decode(result), 'hello-sync');
+}
+
+async function testTextStringSource() {
+  const { text } = require('stream/iter');
+  const result = await text('direct-string');
+  assert.strictEqual(result, 'direct-string');
+}
+
 Promise.all([
   testBytesSyncBasic(),
   testBytesSyncLimit(),
@@ -197,4 +214,7 @@ Promise.all([
   testArrayAsyncLimit(),
   testConsumersNonArrayBatch(),
   testConsumersNonArrayBatchSync(),
+  testBytesStringSource(),
+  testBytesSyncStringSource(),
+  testTextStringSource(),
 ]).then(common.mustCall());
