@@ -266,37 +266,6 @@ async function testPullTransformYieldsStrings() {
   assert.strictEqual(result, 'hello');
 }
 
-// Run the uncaughtException test sequentially (it installs a global handler
-// that would interfere with concurrent tests).
-(async () => {
-  await Promise.all([
-    testPullIdentity(),
-    testPullStatelessTransform(),
-    testPullStatefulTransform(),
-    testPullWithAbortSignal(),
-    testPullChainedTransforms(),
-    testPullSourceError(),
-    testTapCallbackError(),
-    testPullSignalAbortMidIteration(),
-    testPullConsumerBreakCleanup(),
-    testPullTransformReturnsPromise(),
-    testPullTransformYieldsStrings(),
-    testPullStatelessTransformError(),
-    testPullStatefulTransformError(),
-    testPullStatelessTransformFlush(),
-    testPullStatelessTransformFlushError(),
-    testPullWithSyncSource(),
-    testPullStringSource(),
-    testTransformReturnsSingleUint8Array(),
-    testTransformReturnsSingleString(),
-    testTransformReturnsArrayBuffer(),
-    testPipeToStringSource(),
-    testTransformOptionsNotShared(),
-  ]);
-  // Run after all concurrent tests complete to avoid global handler races
-  await testTransformSignalListenerErrorOnSourceError();
-})().then(common.mustCall());
-
 // pull() accepts a string source directly (normalized via from())
 async function testPullStringSource() {
   const data = await text(pull('hello-direct'));
@@ -369,3 +338,34 @@ async function testTransformOptionsNotShared() {
   // transform2 gets a fresh options object - no mutation visible
   assert.strictEqual(seen[1].mutated, undefined);
 }
+
+// Run the uncaughtException test sequentially (it installs a global handler
+// that would interfere with concurrent tests).
+(async () => {
+  await Promise.all([
+    testPullIdentity(),
+    testPullStatelessTransform(),
+    testPullStatefulTransform(),
+    testPullWithAbortSignal(),
+    testPullChainedTransforms(),
+    testPullSourceError(),
+    testTapCallbackError(),
+    testPullSignalAbortMidIteration(),
+    testPullConsumerBreakCleanup(),
+    testPullTransformReturnsPromise(),
+    testPullTransformYieldsStrings(),
+    testPullStatelessTransformError(),
+    testPullStatefulTransformError(),
+    testPullStatelessTransformFlush(),
+    testPullStatelessTransformFlushError(),
+    testPullWithSyncSource(),
+    testPullStringSource(),
+    testTransformReturnsSingleUint8Array(),
+    testTransformReturnsSingleString(),
+    testTransformReturnsArrayBuffer(),
+    testPipeToStringSource(),
+    testTransformOptionsNotShared(),
+  ]);
+  // Run after all concurrent tests complete to avoid global handler races
+  await testTransformSignalListenerErrorOnSourceError();
+})().then(common.mustCall());

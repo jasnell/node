@@ -330,34 +330,6 @@ async function testEndRejectsPendingWrites() {
   for await (const _ of readable) { break; }
 }
 
-Promise.all([
-  testOndrain(),
-  testOndrainNonDrainable(),
-  testWriteWithSignalRejects(),
-  testWriteWithPreAbortedSignal(),
-  testCancelledWriteRemovedFromQueue(),
-  testOndrainResolvesFalseOnConsumerBreak(),
-  testOndrainRejectsOnConsumerThrow(),
-  testWritev(),
-  testWritevSync(),
-  testWritevMixedTypes(),
-  testWriteAfterEnd(),
-  testWriteAfterFail(),
-  testOndrainProtocolErrorPropagates(),
-  testFail(),
-  testEndAsyncReturnValue(),
-  testWriteUint8Array(),
-  testOndrainWaitsForDrain(),
-  testConsumerThrowRejectsWrites(),
-  testEndResolvesPendingRead(),
-  testFailRejectsPendingRead(),
-  testEndRejectsPendingWrites(),
-  testEndIdempotentWhenClosed(),
-  testEndRejectsWhenErrored(),
-  testAsyncDispose(),
-  testSyncDispose(),
-]).then(common.mustCall());
-
 async function testEndIdempotentWhenClosed() {
   const { writer, readable } = push({ highWaterMark: 10 });
   await writer.write('hello');
@@ -424,3 +396,31 @@ async function testEndRejectsWhenErrored() {
     // Expected - reader may see the error
   }
 }
+
+Promise.all([
+  testOndrain(),
+  testOndrainNonDrainable(),
+  testWriteWithSignalRejects(),
+  testWriteWithPreAbortedSignal(),
+  testCancelledWriteRemovedFromQueue(),
+  testOndrainResolvesFalseOnConsumerBreak(),
+  testOndrainRejectsOnConsumerThrow(),
+  testWritev(),
+  testWritevSync(),
+  testWritevMixedTypes(),
+  testWriteAfterEnd(),
+  testWriteAfterFail(),
+  testOndrainProtocolErrorPropagates(),
+  testFail(),
+  testEndAsyncReturnValue(),
+  testWriteUint8Array(),
+  testOndrainWaitsForDrain(),
+  testConsumerThrowRejectsWrites(),
+  testEndResolvesPendingRead(),
+  testFailRejectsPendingRead(),
+  testEndRejectsPendingWrites(),
+  testEndIdempotentWhenClosed(),
+  testEndRejectsWhenErrored(),
+  testAsyncDispose(),
+  testSyncDispose(),
+]).then(common.mustCall());

@@ -144,6 +144,13 @@ function testShareSyncSourceError() {
   }, { message: 'sync share boom' });
 }
 
+// shareSync() accepts string source directly (normalized via fromSync())
+function testShareSyncStringSource() {
+  const shared = shareSync('hello-sync-share');
+  const result = textSync(shared.pull());
+  assert.strictEqual(result, 'hello-sync-share');
+}
+
 Promise.all([
   testShareSyncBasic(),
   testShareSyncMultipleConsumers(),
@@ -153,10 +160,3 @@ Promise.all([
   testShareSyncSourceError(),
   testShareSyncStringSource(),
 ]).then(common.mustCall());
-
-// shareSync() accepts string source directly (normalized via fromSync())
-function testShareSyncStringSource() {
-  const shared = shareSync('hello-sync-share');
-  const result = textSync(shared.pull());
-  assert.strictEqual(result, 'hello-sync-share');
-}

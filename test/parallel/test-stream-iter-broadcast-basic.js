@@ -229,6 +229,20 @@ async function testCancelWithFalsyReason() {
   assert.strictEqual(result, 0);
 }
 
+// Late-joining consumer should read from oldest buffered entry
+async function testLateJoinerSeesBufferedData() {
+  const { writer, broadcast: bc } = broadcast({ highWaterMark: 16 });
+
+  // Write data before any consumer joins
+  writer.writeSync('before-join');
+  writer.endSync();
+
+  // Consumer joins after data is written
+  const consumer = bc.push();
+  const result = await text(consumer);
+  assert.strictEqual(result, 'before-join');
+}
+
 Promise.all([
   testBasicBroadcast(),
   testMultipleWrites(),
@@ -244,17 +258,3 @@ Promise.all([
   testWriterFailIdempotent(),
   testLateJoinerSeesBufferedData(),
 ]).then(common.mustCall());
-
-// Late-joining consumer should read from oldest buffered entry
-async function testLateJoinerSeesBufferedData() {
-  const { writer, broadcast: bc } = broadcast({ highWaterMark: 16 });
-
-  // Write data before any consumer joins
-  writer.writeSync('before-join');
-  writer.endSync();
-
-  // Consumer joins after data is written
-  const consumer = bc.push();
-  const result = await text(consumer);
-  assert.strictEqual(result, 'before-join');
-}
