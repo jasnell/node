@@ -114,7 +114,7 @@ function benchIterSync(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    const writer = { write() {} };
+    const writer = { writeSync() {} };
     pipeToSync(source(), writer);
   }
   bench.end(totalOps);

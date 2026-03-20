@@ -126,7 +126,7 @@ function benchIterSync(chunk, datasize, n, totalOps) {
       }
     }
     // Drain to no-op sink, matching other benchmarks
-    pipeToSync(source(), { write() {} });
+    pipeToSync(source(), { writeSync() {} });
   }
   bench.end(totalOps);
 }

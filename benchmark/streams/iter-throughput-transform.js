@@ -142,7 +142,7 @@ function benchIterSync(chunk, datasize, n, totalOps) {
         yield [size === chunk.length ? chunk : chunk.subarray(0, size)];
       }
     }
-    pipeToSync(source(), upper, { write() {} });
+    pipeToSync(source(), upper, { writeSync() {} });
   }
   bench.end(totalOps);
 }
