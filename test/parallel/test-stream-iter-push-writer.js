@@ -26,6 +26,18 @@ async function testOndrainNonDrainable() {
   assert.strictEqual(ondrain('string'), null);
 }
 
+async function testOndrainProtocolErrorPropagates() {
+  const badDrainable = {
+    [Symbol.for('Stream.drainableProtocol')]() {
+      throw new Error('protocol error');
+    },
+  };
+  assert.throws(
+    () => ondrain(badDrainable),
+    { message: 'protocol error' },
+  );
+}
+
 async function testWriteWithSignalRejects() {
   const { writer, readable } = push({ highWaterMark: 1 });
 
@@ -331,6 +343,7 @@ Promise.all([
   testWritevMixedTypes(),
   testWriteAfterEnd(),
   testWriteAfterFail(),
+  testOndrainProtocolErrorPropagates(),
   testFail(),
   testEndAsyncReturnValue(),
   testWriteUint8Array(),

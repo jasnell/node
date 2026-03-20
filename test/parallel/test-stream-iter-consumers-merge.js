@@ -147,6 +147,21 @@ async function testMergeSignalMidIteration() {
   await assert.rejects(() => iter.next(), { name: 'AbortError' });
 }
 
+// merge() accepts string sources (normalized via from())
+async function testMergeStringSources() {
+  const batches = [];
+  for await (const batch of merge('hello', 'world')) {
+    batches.push(batch);
+  }
+  // Each string becomes a single-batch source
+  assert.strictEqual(batches.length >= 2, true);
+  const combined = new TextDecoder().decode(
+    Buffer.concat(batches.flat()));
+  // Both strings should appear (order may vary)
+  assert.ok(combined.includes('hello'));
+  assert.ok(combined.includes('world'));
+}
+
 Promise.all([
   testMergeTwoSources(),
   testMergeSingleSource(),
@@ -156,4 +171,5 @@ Promise.all([
   testMergeSourceError(),
   testMergeConsumerBreak(),
   testMergeSignalMidIteration(),
+  testMergeStringSources(),
 ]).then(common.mustCall());
