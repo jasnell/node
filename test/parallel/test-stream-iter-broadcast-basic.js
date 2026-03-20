@@ -218,6 +218,17 @@ async function testWriterFailIdempotent() {
   }, { message: 'fail!' });
 }
 
+// cancel() with falsy reason (0, "", false) should still treat as error
+async function testCancelWithFalsyReason() {
+  const { broadcast: bc } = broadcast();
+  const consumer = bc.push();
+  const resultPromise = text(consumer).catch((err) => err);
+  await new Promise((resolve) => setImmediate(resolve));
+  bc.cancel(0);
+  const result = await resultPromise;
+  assert.strictEqual(result, 0);
+}
+
 Promise.all([
   testBasicBroadcast(),
   testMultipleWrites(),
@@ -228,6 +239,22 @@ Promise.all([
   testWriterFail(),
   testCancelWithoutReason(),
   testCancelWithReason(),
+  testCancelWithFalsyReason(),
   testFailDetachesConsumers(),
   testWriterFailIdempotent(),
+  testLateJoinerSeesBufferedData(),
 ]).then(common.mustCall());
+
+// Late-joining consumer should read from oldest buffered entry
+async function testLateJoinerSeesBufferedData() {
+  const { writer, broadcast: bc } = broadcast({ highWaterMark: 16 });
+
+  // Write data before any consumer joins
+  writer.writeSync('before-join');
+  writer.endSync();
+
+  // Consumer joins after data is written
+  const consumer = bc.push();
+  const result = await text(consumer);
+  assert.strictEqual(result, 'before-join');
+}

@@ -271,4 +271,12 @@ Promise.all([
   testShareLateJoiningConsumer(),
   testShareConsumerBreak(),
   testShareMultipleConsumersConcurrentPull(),
+  testShareStringSource(),
 ]).then(common.mustCall());
+
+// share() accepts string source directly (normalized via from())
+async function testShareStringSource() {
+  const shared = share('hello-share');
+  const result = await text(shared.pull());
+  assert.strictEqual(result, 'hello-share');
+}
