@@ -188,11 +188,11 @@ async function testWriteAfterFail() {
   writer.fail(new Error('failed'));
   // Sync write after fail returns false
   assert.strictEqual(writer.writeSync('fail'), false);
-   // Async write after fail rejects with the stored error
-   await assert.rejects(
-     () => writer.write('fail'),
-     { message: 'failed' },
-   );
+  // Async write after fail rejects with the stored error
+  await assert.rejects(
+    () => writer.write('fail'),
+    { message: 'failed' },
+  );
 }
 
 async function testFail() {
@@ -288,7 +288,7 @@ async function testFailRejectsPendingRead() {
 
   await new Promise(setImmediate);
 
-   writer.fail(new Error('fail during read'));
+  writer.fail(new Error('fail during read'));
   await assert.rejects(
     () => readPromise,
     { message: 'fail during read' },
@@ -331,18 +331,18 @@ Promise.all([
   testWritevMixedTypes(),
   testWriteAfterEnd(),
   testWriteAfterFail(),
-   testFail(),
+  testFail(),
   testEndAsyncReturnValue(),
   testWriteUint8Array(),
   testOndrainWaitsForDrain(),
   testConsumerThrowRejectsWrites(),
   testEndResolvesPendingRead(),
   testFailRejectsPendingRead(),
-   testEndRejectsPendingWrites(),
-   testEndIdempotentWhenClosed(),
-   testEndRejectsWhenErrored(),
-   testAsyncDispose(),
-   testSyncDispose(),
+  testEndRejectsPendingWrites(),
+  testEndIdempotentWhenClosed(),
+  testEndRejectsWhenErrored(),
+  testAsyncDispose(),
+  testSyncDispose(),
 ]).then(common.mustCall());
 
 async function testEndIdempotentWhenClosed() {

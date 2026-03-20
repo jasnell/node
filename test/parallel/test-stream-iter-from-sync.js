@@ -139,6 +139,81 @@ function testFromSyncEmptyGenerator() {
   assert.strictEqual(count, 0);
 }
 
+// Top-level toStreamable protocol on input to fromSync()
+function testFromSyncTopLevelToStreamable() {
+  const obj = {
+    [Symbol.for('Stream.toStreamable')]() {
+      return 'top-level-sync';
+    },
+  };
+  const batches = [];
+  for (const batch of fromSync(obj)) {
+    batches.push(batch);
+  }
+  assert.strictEqual(batches.length, 1);
+  assert.deepStrictEqual(batches[0][0],
+                         new TextEncoder().encode('top-level-sync'));
+}
+
+// Top-level: toStreamable takes precedence over Symbol.iterator
+function testFromSyncTopLevelProtocolOverIterator() {
+  const obj = {
+    [Symbol.for('Stream.toStreamable')]() { return 'from-protocol'; },
+    *[Symbol.iterator]() { yield [new TextEncoder().encode('from-iterator')]; },
+  };
+  const batches = [];
+  for (const batch of fromSync(obj)) {
+    batches.push(batch);
+  }
+  assert.strictEqual(batches.length, 1);
+  assert.deepStrictEqual(batches[0][0],
+                         new TextEncoder().encode('from-protocol'));
+}
+
+// Top-level: toAsyncStreamable is ignored by fromSync
+function testFromSyncIgnoresAsyncStreamable() {
+  const obj = {
+    [Symbol.for('Stream.toAsyncStreamable')]() { return 'async'; },
+  };
+  // Has no toStreamable and no Symbol.iterator, should throw
+  assert.throws(() => fromSync(obj), { code: 'ERR_INVALID_ARG_TYPE' });
+}
+
+// Explicit async iterable rejected
+function testFromSyncRejectsAsyncIterable() {
+  async function* gen() { yield [new TextEncoder().encode('a')]; }
+  assert.throws(() => fromSync(gen()), { code: 'ERR_INVALID_ARG_TYPE' });
+}
+
+// Promise rejected
+function testFromSyncRejectsPromise() {
+  assert.throws(() => fromSync(Promise.resolve('hello')),
+                { code: 'ERR_INVALID_ARG_TYPE' });
+}
+
+// DataView input should be converted to Uint8Array (zero-copy)
+function testFromSyncDataView() {
+  const buf = new ArrayBuffer(3);
+  const view = new DataView(buf);
+  view.setUint8(0, 0x48); // H
+  view.setUint8(1, 0x49); // I
+  view.setUint8(2, 0x21); // !
+  const batches = [];
+  for (const batch of fromSync(view)) {
+    batches.push(batch);
+  }
+  assert.strictEqual(batches.length, 1);
+  assert.deepStrictEqual(batches[0][0], new Uint8Array([0x48, 0x49, 0x21]));
+}
+
+function testFromSyncNullThrows() {
+  assert.throws(() => fromSync(null), { code: 'ERR_INVALID_ARG_TYPE' });
+}
+
+function testFromSyncUndefinedThrows() {
+  assert.throws(() => fromSync(undefined), { code: 'ERR_INVALID_ARG_TYPE' });
+}
+
 Promise.all([
   testFromSyncString(),
   testFromSyncUint8Array(),
@@ -150,4 +225,12 @@ Promise.all([
   testFromSyncGeneratorError(),
   testFromSyncRejectsNonStreamable(),
   testFromSyncEmptyGenerator(),
+  testFromSyncNullThrows(),
+  testFromSyncUndefinedThrows(),
+  testFromSyncTopLevelToStreamable(),
+  testFromSyncTopLevelProtocolOverIterator(),
+  testFromSyncIgnoresAsyncStreamable(),
+  testFromSyncRejectsAsyncIterable(),
+  testFromSyncRejectsPromise(),
+  testFromSyncDataView(),
 ]).then(common.mustCall());

@@ -520,7 +520,8 @@ Including the `node:` prefix on the module specifier is optional.
 added: REPLACEME
 -->
 
-* `input` {string|ArrayBuffer|ArrayBufferView|Iterable|AsyncIterable}
+* `input` {string|ArrayBuffer|ArrayBufferView|Iterable|AsyncIterable|Object}
+  Must not be `null` or `undefined`.
 * Returns: {AsyncIterable\<Uint8Array\[]>}
 
 Create an async byte stream from the given input. Strings are UTF-8 encoded.
@@ -528,7 +529,10 @@ Create an async byte stream from the given input. Strings are UTF-8 encoded.
 and iterables are recursively flattened and normalized.
 
 Objects implementing `Symbol.for('Stream.toAsyncStreamable')` or
-`Symbol.for('Stream.toStreamable')` are converted via those protocols.
+`Symbol.for('Stream.toStreamable')` are converted via those protocols. The
+`toAsyncStreamable` protocol takes precedence over `toStreamable`, which takes
+precedence over the iteration protocols (`Symbol.asyncIterator`,
+`Symbol.iterator`).
 
 ```mjs
 import { Buffer } from 'node:buffer';
@@ -556,11 +560,15 @@ run().catch(console.error);
 added: REPLACEME
 -->
 
-* `input` {string|ArrayBuffer|ArrayBufferView|Iterable}
+* `input` {string|ArrayBuffer|ArrayBufferView|Iterable|Object}
+  Must not be `null` or `undefined`.
 * Returns: {Iterable\<Uint8Array\[]>}
 
 Synchronous version of [`from()`][]. Returns a sync iterable. Cannot accept
-async iterables or promises.
+async iterables or promises. Objects implementing
+`Symbol.for('Stream.toStreamable')` are converted via that protocol (takes
+precedence over `Symbol.iterator`). The `toAsyncStreamable` protocol is
+ignored entirely.
 
 ```mjs
 import { fromSync, textSync } from 'node:stream/iter';
