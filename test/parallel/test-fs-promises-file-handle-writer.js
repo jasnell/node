@@ -120,7 +120,7 @@ async function testAutoCloseOnFail() {
   const fh = await open(filePath, 'w');
   const w = fh.writer({ autoClose: true });
   await w.write(Buffer.from('partial'));
-  await w.fail(new Error('test fail'));
+  w.fail(new Error('test fail'));
 
   // Handle should be closed
   await assert.rejects(fh.stat(), { code: 'EBADF' });
@@ -246,11 +246,11 @@ async function testWriteAfterEndRejects() {
   await w.end();
 
   await assert.rejects(w.write(Buffer.from('more')), {
-    name: 'Error',
+    name: 'TypeError',
     message: /closed/,
   });
   await assert.rejects(w.writev([Buffer.from('more')]), {
-    name: 'Error',
+    name: 'TypeError',
     message: /closed/,
   });
 
