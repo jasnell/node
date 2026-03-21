@@ -516,6 +516,558 @@ async function testEndWithAbortedSignalRejects() {
 }
 
 // =============================================================================
+// write() with string input (UTF-8 encoding)
+// =============================================================================
+
+async function testWriteString() {
+  const filePath = path.join(tmpDir, 'writer-string.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+  await w.write('Hello ');
+  await w.write('World!');
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 12);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');
+}
+
+// =============================================================================
+// write() with string containing multi-byte UTF-8 characters
+// =============================================================================
+
+async function testWriteStringMultibyte() {
+  const filePath = path.join(tmpDir, 'writer-string-multibyte.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+  const input = 'café ☕ 日本語';
+  await w.write(input);
+  const totalBytes = await w.end();
+  await fh.close();
+
+  const expected = Buffer.from(input, 'utf8');
+  assert.strictEqual(totalBytes, expected.byteLength);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), input);
+}
+
+// =============================================================================
+// writev() with string chunks (UTF-8 encoding)
+// =============================================================================
+
+async function testWritevStrings() {
+  const filePath = path.join(tmpDir, 'writer-writev-strings.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+  await w.writev(['aaa', 'bbb', 'ccc']);
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 9);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'aaabbbccc');
+}
+
+// =============================================================================
+// writev() with mixed string and Uint8Array chunks
+// =============================================================================
+
+async function testWritevMixed() {
+  const filePath = path.join(tmpDir, 'writer-writev-mixed.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+  await w.writev(['hello', Buffer.from(' '), 'world']);
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 11);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'hello world');
+}
+
+// =============================================================================
+// Symbol.dispose calls fail()
+// =============================================================================
+
+async function testSyncDispose() {
+  const filePath = path.join(tmpDir, 'writer-sync-dispose.txt');
+  const fh = await open(filePath, 'w');
+
+  {
+    using w = fh.writer();
+    await w.write(Buffer.from('before dispose'));
+  }
+  // Symbol.dispose calls fail(), which unlocks the handle.
+  // The handle should be reusable.
+  const w2 = fh.writer();
+  await w2.write(Buffer.from('after dispose'));
+  await w2.end();
+  await fh.close();
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  assert.ok(content.includes('after dispose'),
+            `Expected 'after dispose' in ${JSON.stringify(content)}`);
+}
+
+// =============================================================================
+// Symbol.dispose on error unwind
+// =============================================================================
+
+async function testSyncDisposeOnError() {
+  const filePath = path.join(tmpDir, 'writer-sync-dispose-error.txt');
+  const fh = await open(filePath, 'w');
+
+  try {
+    using w = fh.writer();
+    await w.write(Buffer.from('data'));
+    throw new Error('intentional');
+  } catch (e) {
+    assert.strictEqual(e.message, 'intentional');
+  }
+
+  // Handle should be unlocked and reusable after sync dispose
+  const w2 = fh.writer();
+  await w2.write(Buffer.from('recovered'));
+  await w2.end();
+  await fh.close();
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  assert.ok(content.includes('recovered'),
+            `Expected 'recovered' in ${JSON.stringify(content)}`);
+}
+
+// =============================================================================
+// writeSync() basic
+// =============================================================================
+
+async function testWriteSyncBasic() {
+  const filePath = path.join(tmpDir, 'writer-writesync-basic.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  assert.strictEqual(w.writeSync('Hello '), true);
+  assert.strictEqual(w.writeSync(Buffer.from('World!')), true);
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 12);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');
+}
+
+// =============================================================================
+// writevSync() basic
+// =============================================================================
+
+async function testWritevSyncBasic() {
+  const filePath = path.join(tmpDir, 'writer-writevsync-basic.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  assert.strictEqual(w.writevSync(['aaa', Buffer.from('bbb'), 'ccc']), true);
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 9);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'aaabbbccc');
+}
+
+// =============================================================================
+// writeSync() returns false for large chunks
+// =============================================================================
+
+async function testWriteSyncLargeChunk() {
+  const filePath = path.join(tmpDir, 'writer-writesync-large.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  // Chunk larger than 131072 should return false
+  const bigChunk = Buffer.alloc(131073, 'x');
+  assert.strictEqual(w.writeSync(bigChunk), false);
+
+  // Chunk at exactly 131072 should succeed
+  const exactChunk = Buffer.alloc(131072, 'y');
+  assert.strictEqual(w.writeSync(exactChunk), true);
+
+  await w.end();
+  await fh.close();
+
+  // Only the exact chunk should have been written
+  const content = fs.readFileSync(filePath);
+  assert.strictEqual(content.length, 131072);
+}
+
+// =============================================================================
+// writeSync() returns false when async op is in flight
+// =============================================================================
+
+async function testWriteSyncReturnsFalseDuringAsync() {
+  const filePath = path.join(tmpDir, 'writer-writesync-async.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  // Start an async write but don't await yet
+  const p = w.write(Buffer.from('async'));
+
+  // Sync write should return false because async is in flight
+  assert.strictEqual(w.writeSync(Buffer.from('sync')), false);
+
+  await p;
+
+  // After async completes, sync should work again
+  assert.strictEqual(w.writeSync(Buffer.from(' then sync')), true);
+
+  await w.end();
+  await fh.close();
+
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'async then sync');
+}
+
+// =============================================================================
+// writeSync() returns false on closed/errored writer
+// =============================================================================
+
+async function testWriteSyncClosedErrored() {
+  const filePath = path.join(tmpDir, 'writer-writesync-closed.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  await w.end();
+
+  // Should return false after end()
+  assert.strictEqual(w.writeSync(Buffer.from('data')), false);
+  await fh.close();
+
+  // Test errored state
+  const fh2 = await open(filePath, 'w');
+  const w2 = fh2.writer();
+  w2.fail(new Error('test'));
+  assert.strictEqual(w2.writeSync(Buffer.from('data')), false);
+  await fh2.close();
+}
+
+// =============================================================================
+// endSync() basic
+// =============================================================================
+
+async function testEndSyncBasic() {
+  const filePath = path.join(tmpDir, 'writer-endsync-basic.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  w.writeSync(Buffer.from('hello'));
+  const totalBytes = w.endSync();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 5);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'hello');
+}
+
+// =============================================================================
+// endSync() returns -1 when async op is in flight
+// =============================================================================
+
+async function testEndSyncReturnsFalseDuringAsync() {
+  const filePath = path.join(tmpDir, 'writer-endsync-async.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  const p = w.write(Buffer.from('data'));
+  assert.strictEqual(w.endSync(), -1);
+
+  await p;
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 4);
+}
+
+// =============================================================================
+// endSync() idempotent on closed writer
+// =============================================================================
+
+async function testEndSyncIdempotent() {
+  const filePath = path.join(tmpDir, 'writer-endsync-idempotent.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  w.writeSync(Buffer.from('data'));
+  const first = w.endSync();
+  const second = w.endSync();
+
+  assert.strictEqual(first, 4);
+  assert.strictEqual(second, 4);  // Idempotent
+  await fh.close();
+}
+
+// =============================================================================
+// endSync() with autoClose fires handle.close()
+// =============================================================================
+
+async function testEndSyncAutoClose() {
+  const filePath = path.join(tmpDir, 'writer-endsync-autoclose.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ autoClose: true });
+
+  w.writeSync(Buffer.from('auto'));
+  const totalBytes = w.endSync();
+
+  assert.strictEqual(totalBytes, 4);
+
+  // Handle should be closed synchronously
+  await assert.rejects(fh.stat(), { code: 'EBADF' });
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'auto');
+}
+
+// =============================================================================
+// Full sync pipeline: writeSync + endSync (no async at all)
+// =============================================================================
+
+async function testFullSyncPipeline() {
+  const filePath = path.join(tmpDir, 'writer-full-sync.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  // Entirely synchronous write pipeline
+  w.writeSync('line 1\n');
+  w.writeSync('line 2\n');
+  w.writevSync(['line 3\n', 'line 4\n']);
+  const totalBytes = w.endSync();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 28);
+  assert.strictEqual(
+    fs.readFileSync(filePath, 'utf8'),
+    'line 1\nline 2\nline 3\nline 4\n',
+  );
+}
+
+// =============================================================================
+// end() rejects on errored writer
+// =============================================================================
+
+async function testEndRejectsOnErrored() {
+  const filePath = path.join(tmpDir, 'writer-end-errored.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  await w.write(Buffer.from('data'));
+  w.fail(new Error('test error'));
+
+  await assert.rejects(
+    w.end(),
+    { message: 'test error' },
+  );
+  await fh.close();
+}
+
+// =============================================================================
+// end() is idempotent when closing/closed
+// =============================================================================
+
+async function testEndIdempotent() {
+  const filePath = path.join(tmpDir, 'writer-end-idempotent.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  await w.write(Buffer.from('data'));
+
+  // Call end() twice concurrently - second should return same promise
+  const p1 = w.end();
+  const p2 = w.end();
+  const [bytes1, bytes2] = await Promise.all([p1, p2]);
+
+  assert.strictEqual(bytes1, 4);
+  assert.strictEqual(bytes2, 4);
+
+  // After closed, calling end() again returns totalBytesWritten
+  const bytes3 = await w.end();
+  assert.strictEqual(bytes3, 4);
+
+  await fh.close();
+}
+
+// =============================================================================
+// asyncDispose waits for pending end() when closing
+// =============================================================================
+
+async function testAsyncDisposeWhileClosing() {
+  const filePath = path.join(tmpDir, 'writer-dispose-closing.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ autoClose: true });
+
+  await w.write(Buffer.from('closing test'));
+
+  // Start end() but don't await - writer is now "closing"
+  const endPromise = w.end();
+
+  // asyncDispose should wait for the pending end, not call fail()
+  await w[Symbol.asyncDispose]();
+  await endPromise;
+
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'closing test');
+}
+
+// =============================================================================
+// asyncDispose calls fail() on open writer (not graceful cleanup)
+// =============================================================================
+
+async function testAsyncDisposeCallsFail() {
+  const filePath = path.join(tmpDir, 'writer-dispose-fails.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer();
+
+  await w.write(Buffer.from('some data'));
+
+  // Dispose without end() - should call fail(), not graceful cleanup
+  await w[Symbol.asyncDispose]();
+
+  // Writer should be in errored state - write should reject
+  await assert.rejects(
+    w.write(Buffer.from('more')),
+    (err) => err instanceof Error,
+  );
+
+  // Handle should be unlocked and reusable
+  const w2 = fh.writer();
+  await w2.end();
+  await fh.close();
+}
+
+// =============================================================================
+// writer() with limit - async write within limit succeeds
+// =============================================================================
+
+async function testWriterLimit() {
+  const filePath = path.join(tmpDir, 'writer-limit.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ limit: 10 });
+
+  await w.write(Buffer.from('12345'));  // 5 bytes, 5 remaining
+  await w.write(Buffer.from('67890'));  // 5 bytes, 0 remaining
+  const totalBytes = await w.end();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 10);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), '1234567890');
+}
+
+// =============================================================================
+// writer() with limit - async write exceeding limit rejects
+// =============================================================================
+
+async function testWriterLimitExceeded() {
+  const filePath = path.join(tmpDir, 'writer-limit-exceeded.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ limit: 5 });
+
+  await w.write(Buffer.from('123'));  // 3 bytes, 2 remaining
+
+  await assert.rejects(
+    w.write(Buffer.from('45678')),  // 5 bytes > 2 remaining
+    { code: 'ERR_OUT_OF_RANGE' },
+  );
+
+  await w.end();
+  await fh.close();
+}
+
+// =============================================================================
+// writer() with limit - writev exceeding limit rejects
+// =============================================================================
+
+async function testWriterLimitWritev() {
+  const filePath = path.join(tmpDir, 'writer-limit-writev.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ limit: 6 });
+
+  await w.writev([Buffer.from('ab'), Buffer.from('cd')]);  // 4 bytes
+
+  await assert.rejects(
+    w.writev([Buffer.from('ef'), Buffer.from('gh')]),  // 4 bytes > 2 remaining
+    { code: 'ERR_OUT_OF_RANGE' },
+  );
+
+  await w.end();
+  await fh.close();
+}
+
+// =============================================================================
+// writer() with limit - writeSync returns false when exceeding limit
+// =============================================================================
+
+async function testWriterLimitWriteSync() {
+  const filePath = path.join(tmpDir, 'writer-limit-writesync.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ limit: 10 });
+
+  assert.strictEqual(w.writeSync(Buffer.from('12345')), true);   // 5 ok
+  assert.strictEqual(w.writeSync(Buffer.from('678')), true);     // 3 ok
+  assert.strictEqual(w.writeSync(Buffer.from('901')), false);    // 3 > 2 remaining
+
+  const totalBytes = w.endSync();
+  await fh.close();
+
+  assert.strictEqual(totalBytes, 8);
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), '12345678');
+}
+
+// =============================================================================
+// writer() with limit - writevSync returns false when exceeding limit
+// =============================================================================
+
+async function testWriterLimitWritevSync() {
+  const filePath = path.join(tmpDir, 'writer-limit-writevsync.txt');
+  const fh = await open(filePath, 'w');
+  const w = fh.writer({ limit: 5 });
+
+  assert.strictEqual(w.writevSync([Buffer.from('ab')]), true);
+  // 4 bytes > 3 remaining
+  assert.strictEqual(
+    w.writevSync([Buffer.from('cd'), Buffer.from('ef')]), false);
+
+  w.endSync();
+  await fh.close();
+}
+
+// =============================================================================
+// writer() with limit + start
+// =============================================================================
+
+async function testWriterLimitAndStart() {
+  const filePath = path.join(tmpDir, 'writer-limit-start.txt');
+  // Pre-fill file with dots
+  fs.writeFileSync(filePath, '...........');  // 11 dots
+
+  const fh = await open(filePath, 'r+');
+  const w = fh.writer({ start: 3, limit: 5 });
+
+  await w.write(Buffer.from('HELLO'));  // Write at offset 3
+  await w.end();
+  await fh.close();
+
+  assert.strictEqual(fs.readFileSync(filePath, 'utf8'), '...HELLO...');
+}
+
+// =============================================================================
+// Argument validation
+// =============================================================================
+
+async function testWriterArgumentValidation() {
+  const filePath = path.join(tmpDir, 'pull-arg-validation.txt');
+  fs.writeFileSync(filePath, 'data');
+
+  const fh = await open(filePath, 'r');
+  try {
+    assert.throws(() => fh.writer({ autoClose: 'no' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.writer({ start: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.writer({ limit: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.writer({ chunkSize: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.writer({ start: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+    assert.throws(() => fh.writer({ limit: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+    assert.throws(() => fh.writer({ chunkSize: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
 // Run all tests
 // =============================================================================
 
@@ -542,4 +1094,31 @@ Promise.all([
   testWriteWithAbortedSignalRejects(),
   testWritevWithAbortedSignalRejects(),
   testEndWithAbortedSignalRejects(),
+  testWriteString(),
+  testWriteStringMultibyte(),
+  testWritevStrings(),
+  testWritevMixed(),
+  testSyncDispose(),
+  testSyncDisposeOnError(),
+  testWriteSyncBasic(),
+  testWritevSyncBasic(),
+  testWriteSyncLargeChunk(),
+  testWriteSyncReturnsFalseDuringAsync(),
+  testWriteSyncClosedErrored(),
+  testEndSyncBasic(),
+  testEndSyncReturnsFalseDuringAsync(),
+  testEndSyncIdempotent(),
+  testEndSyncAutoClose(),
+  testFullSyncPipeline(),
+  testEndRejectsOnErrored(),
+  testEndIdempotent(),
+  testAsyncDisposeWhileClosing(),
+  testAsyncDisposeCallsFail(),
+  testWriterLimit(),
+  testWriterLimitExceeded(),
+  testWriterLimitWritev(),
+  testWriterLimitWriteSync(),
+  testWriterLimitWritevSync(),
+  testWriterLimitAndStart(),
+  testWriterArgumentValidation(),
 ]).then(common.mustCall());

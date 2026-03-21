@@ -241,6 +241,182 @@ async function testPullIterateBatches() {
   }
 }
 
+// =============================================================================
+// pull() with start option - read from specific position
+// =============================================================================
+
+async function testPullStart() {
+  const filePath = path.join(tmpDir, 'pull-start.txt');
+  fs.writeFileSync(filePath, 'AAABBBCCC');
+
+  const fh = await open(filePath, 'r');
+  try {
+    // Read from offset 3
+    const data = await text(fh.pull({ start: 3 }));
+    assert.strictEqual(data, 'BBBCCC');
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with limit option - read at most N bytes
+// =============================================================================
+
+async function testPullLimit() {
+  const filePath = path.join(tmpDir, 'pull-limit.txt');
+  fs.writeFileSync(filePath, 'Hello, World! Extra data here.');
+
+  const fh = await open(filePath, 'r');
+  try {
+    const data = await text(fh.pull({ limit: 13 }));
+    assert.strictEqual(data, 'Hello, World!');
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with start + limit - read a slice
+// =============================================================================
+
+async function testPullStartAndLimit() {
+  const filePath = path.join(tmpDir, 'pull-start-limit.txt');
+  fs.writeFileSync(filePath, 'AAABBBCCCDDD');
+
+  const fh = await open(filePath, 'r');
+  try {
+    // Read 3 bytes starting at offset 3
+    const data = await text(fh.pull({ start: 3, limit: 3 }));
+    assert.strictEqual(data, 'BBB');
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with limit larger than file - reads whole file
+// =============================================================================
+
+async function testPullLimitLargerThanFile() {
+  const filePath = path.join(tmpDir, 'pull-limit-large.txt');
+  fs.writeFileSync(filePath, 'short');
+
+  const fh = await open(filePath, 'r');
+  try {
+    const data = await text(fh.pull({ limit: 1000000 }));
+    assert.strictEqual(data, 'short');
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with limit spanning multiple chunks
+// =============================================================================
+
+async function testPullLimitMultiChunk() {
+  const filePath = path.join(tmpDir, 'pull-limit-multi.bin');
+  // 300KB file - spans multiple 128KB reads
+  const input = Buffer.alloc(300 * 1024, 'x');
+  fs.writeFileSync(filePath, input);
+
+  const fh = await open(filePath, 'r');
+  try {
+    // Read exactly 200KB from offset 50KB
+    const data = await bytes(fh.pull({ start: 50 * 1024, limit: 200 * 1024 }));
+    assert.strictEqual(data.byteLength, 200 * 1024);
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with start + limit + transforms
+// =============================================================================
+
+async function testPullStartLimitWithTransforms() {
+  const filePath = path.join(tmpDir, 'pull-start-limit-transform.txt');
+  fs.writeFileSync(filePath, 'aaabbbcccddd');
+
+  const fh = await open(filePath, 'r');
+  try {
+    const { compressGzip, decompressGzip } = require('stream/iter');
+    const compressed = fh.pull(compressGzip(), { start: 3, limit: 6 });
+    const decompressed = await text(
+      require('stream/iter').pull(compressed, decompressGzip()));
+    assert.strictEqual(decompressed, 'bbbccc');
+  } finally {
+    await fh.close();
+  }
+}
+
+// =============================================================================
+// pull() with chunkSize option
+// =============================================================================
+
+async function testPullChunkSize() {
+  const filePath = path.join(tmpDir, 'pull-chunksize.bin');
+  // Write 64KB of data
+  const input = Buffer.alloc(64 * 1024, 'z');
+  fs.writeFileSync(filePath, input);
+
+  const fh = await open(filePath, 'r');
+  try {
+    // Use 16KB chunks - should produce 4 batches
+    let batchCount = 0;
+    for await (const batch of fh.pull({ chunkSize: 16 * 1024 })) {
+      batchCount++;
+      for (const chunk of batch) {
+        assert.ok(chunk.byteLength <= 16 * 1024,
+                  `Chunk ${chunk.byteLength} should be <= 16384`);
+      }
+    }
+    assert.strictEqual(batchCount, 4);
+  } finally {
+    await fh.close();
+  }
+}
+
+async function testPullChunkSizeSmall() {
+  const filePath = path.join(tmpDir, 'pull-chunksize-small.txt');
+  fs.writeFileSync(filePath, 'hello');
+
+  const fh = await open(filePath, 'r');
+  try {
+    // 1-byte chunks
+    let totalBytes = 0;
+    let batchCount = 0;
+    for await (const batch of fh.pull({ chunkSize: 1 })) {
+      batchCount++;
+      for (const chunk of batch) totalBytes += chunk.byteLength;
+    }
+    assert.strictEqual(totalBytes, 5);
+    assert.strictEqual(batchCount, 5);
+  } finally {
+    await fh.close();
+  }
+}
+
+async function testPullSyncArgumentValidation() {
+  const filePath = path.join(tmpDir, 'pull-arg-validation.txt');
+  fs.writeFileSync(filePath, 'data');
+
+  const fh = await open(filePath, 'r');
+  try {
+    assert.throws(() => fh.pull({ autoClose: 'no' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.pull({ start: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.pull({ limit: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.pull({ chunkSize: 'a' }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.pull({ signal: {} }), { code: 'ERR_INVALID_ARG_TYPE' });
+    assert.throws(() => fh.pull({ start: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+    assert.throws(() => fh.pull({ limit: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+    assert.throws(() => fh.pull({ chunkSize: 1.1 }), { code: 'ERR_OUT_OF_RANGE' });
+  } finally {
+    await fh.close();
+  }
+}
+
 Promise.all([
   testBasicPull(),
   testPullBinary(),
@@ -252,4 +428,13 @@ Promise.all([
   testPullClosedHandle(),
   testPullAbortSignal(),
   testPullIterateBatches(),
+  testPullStart(),
+  testPullLimit(),
+  testPullStartAndLimit(),
+  testPullLimitLargerThanFile(),
+  testPullLimitMultiChunk(),
+  testPullStartLimitWithTransforms(),
+  testPullChunkSize(),
+  testPullChunkSizeSmall(),
+  testPullSyncArgumentValidation(),
 ]).then(common.mustCall());

@@ -1414,26 +1414,45 @@ added: REPLACEME
 
 ## Compression and decompression transforms
 
-These transforms apply zlib, Brotli, and Zstd compression transforms.
+These transforms apply zlib, Brotli, and Zstd compression and decompression.
+Each algorithm has both an async variant (stateful async generator, for use
+with `pull()` and `pipeTo()`) and a sync variant (stateful sync generator,
+for use with `pullSync()` and `pipeToSync()`).
+
+The async transforms run compression on the libuv threadpool, overlapping
+I/O with JavaScript execution. The sync transforms run compression directly
+on the main thread.
+
+> Note: The defaults for these transforms are tuned for streaming throughput,
+> and differ from the defaults in `node:zlib`. In particular, gzip/deflate
+> default to level 4 (not 6) and memLevel 9 (not 8), and Brotli defaults to
+> quality 6 (not 11). These choices match common HTTP server configurations
+> and provide significantly faster compression with only a small reduction in
+> compression ratio. All defaults can be overridden via options.
 
 ### `compressBrotli([options])`
+
+### `compressBrotliSync([options])`
 
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} **Default:** `16384`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
   * `params` {Object} Key-value object where keys and values are
     `zlib.constants` entries. The most important compressor parameters are:
     * `BROTLI_PARAM_MODE` -- `BROTLI_MODE_GENERIC` (default),
       `BROTLI_MODE_TEXT`, or `BROTLI_MODE_FONT`.
     * `BROTLI_PARAM_QUALITY` -- ranges from `BROTLI_MIN_QUALITY` to
-      `BROTLI_MAX_QUALITY`. **Default:** `BROTLI_DEFAULT_QUALITY`.
+      `BROTLI_MAX_QUALITY`. **Default:** `6` (not `BROTLI_DEFAULT_QUALITY`
+      which is 11). Quality 6 is appropriate for streaming; quality 11 is
+      intended for offline/build-time compression.
     * `BROTLI_PARAM_SIZE_HINT` -- expected input size. **Default:** `0`
       (unknown).
-    * `BROTLI_PARAM_LGWIN` -- window size (log2). Ranges from
-      `BROTLI_MIN_WINDOW_BITS` to `BROTLI_MAX_WINDOW_BITS`.
+    * `BROTLI_PARAM_LGWIN` -- window size (log2). **Default:** `20` (1 MB).
+      The Brotli library default is 22 (4 MB); the reduced default saves
+      memory without significant compression impact for streaming workloads.
     * `BROTLI_PARAM_LGBLOCK` -- input block size (log2).
       See the [Brotli compressor options][] in the zlib documentation for the
       full list.
@@ -1441,47 +1460,52 @@ added: REPLACEME
 * Returns: {Object} A stateful transform.
 
 Create a Brotli compression transform. Output is compatible with
-`zlib.brotliDecompress()` and `decompressBrotli()`.
+`zlib.brotliDecompress()` and `decompressBrotli()`/`decompressBrotliSync()`.
 
 ### `compressDeflate([options])`
+
+### `compressDeflateSync([options])`
 
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `level` {number} Compression level (`0`-`9`). **Default:** `Z_DEFAULT_COMPRESSION`.
-  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
-  * `memLevel` {number} **Default:** `Z_DEFAULT_MEMLEVEL`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
+  * `level` {number} Compression level (`0`-`9`). **Default:** `4`.
+  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS` (15).
+  * `memLevel` {number} **Default:** `9`.
   * `strategy` {number} **Default:** `Z_DEFAULT_STRATEGY`.
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
 Create a deflate compression transform. Output is compatible with
-`zlib.inflate()` and `decompressDeflate()`.
+`zlib.inflate()` and `decompressDeflate()`/`decompressDeflateSync()`.
 
 ### `compressGzip([options])`
+
+### `compressGzipSync([options])`
 
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `level` {number} Compression level (`0`-`9`). **Default:** `Z_DEFAULT_COMPRESSION`.
-  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
-  * `memLevel` {number} **Default:** `Z_DEFAULT_MEMLEVEL`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
+  * `level` {number} Compression level (`0`-`9`). **Default:** `4`.
+  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS` (15).
+  * `memLevel` {number} **Default:** `9`.
   * `strategy` {number} **Default:** `Z_DEFAULT_STRATEGY`.
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
 Create a gzip compression transform. Output is compatible with `zlib.gunzip()`
-and `decompressGzip()`.
+and `decompressGzip()`/`decompressGzipSync()`.
 
 ```mjs
 import { from, pull, bytes, text, compressGzip, decompressGzip } from 'node:stream/iter';
 
+// Async round-trip
 const compressed = await bytes(pull(from('hello'), compressGzip()));
 const original = await text(pull(from(compressed), decompressGzip()));
 console.log(original); // 'hello'
@@ -1499,14 +1523,33 @@ async function run() {
 run().catch(console.error);
 ```
 
+```mjs
+import { fromSync, pullSync, textSync, compressGzipSync, decompressGzipSync } from 'node:stream/iter';
+
+// Sync round-trip
+const compressed = pullSync(fromSync('hello'), compressGzipSync());
+const original = textSync(pullSync(compressed, decompressGzipSync()));
+console.log(original); // 'hello'
+```
+
+```cjs
+const { fromSync, pullSync, textSync, compressGzipSync, decompressGzipSync } = require('node:stream/iter');
+
+const compressed = pullSync(fromSync('hello'), compressGzipSync());
+const original = textSync(pullSync(compressed, decompressGzipSync()));
+console.log(original); // 'hello'
+```
+
 ### `compressZstd([options])`
+
+### `compressZstdSync([options])`
 
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} **Default:** `16384`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
   * `params` {Object} Key-value object where keys and values are
     `zlib.constants` entries. The most important compressor parameters are:
     * `ZSTD_c_compressionLevel` -- **Default:** `ZSTD_CLEVEL_DEFAULT` (3).
@@ -1522,16 +1565,18 @@ added: REPLACEME
 * Returns: {Object} A stateful transform.
 
 Create a Zstandard compression transform. Output is compatible with
-`zlib.zstdDecompress()` and `decompressZstd()`.
+`zlib.zstdDecompress()` and `decompressZstd()`/`decompressZstdSync()`.
 
 ### `decompressBrotli([options])`
+
+### `decompressBrotliSync([options])`
 
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} **Default:** `16384`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
   * `params` {Object} Key-value object where keys and values are
     `zlib.constants` entries. Available decompressor parameters:
     * `BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION` -- boolean
@@ -1547,13 +1592,15 @@ Create a Brotli decompression transform.
 
 ### `decompressDeflate([options])`
 
+### `decompressDeflateSync([options])`
+
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
+  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS` (15).
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
@@ -1561,13 +1608,15 @@ Create a deflate decompression transform.
 
 ### `decompressGzip([options])`
 
+### `decompressGzipSync([options])`
+
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} Output buffer size. **Default:** `16384`.
-  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
+  * `windowBits` {number} **Default:** `Z_DEFAULT_WINDOWBITS` (15).
   * `dictionary` {Buffer|TypedArray|DataView}
 * Returns: {Object} A stateful transform.
 
@@ -1575,12 +1624,14 @@ Create a gzip decompression transform.
 
 ### `decompressZstd([options])`
 
+### `decompressZstdSync([options])`
+
 <!-- YAML
 added: REPLACEME
 -->
 
 * `options` {Object}
-  * `chunkSize` {number} **Default:** `16384`.
+  * `chunkSize` {number} Output buffer size. **Default:** `65536` (64 KB).
   * `params` {Object} Key-value object where keys and values are
     `zlib.constants` entries. Available decompressor parameters:
     * `ZSTD_d_windowLogMax` -- maximum window size (log2) the decompressor
