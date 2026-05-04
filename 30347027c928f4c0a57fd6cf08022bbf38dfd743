@@ -1,0 +1,23 @@
+lib/internal/quic/quic.js
+  fbe123407a33686b 284-290,293-299,303,305,307-309,317,320,356-368,374-378,382-389,391-397,400-403,405-408,413,417-443,458-459,462-467,478-482,501-520,531-570,575-600,615,618-619,624,627,632-637,641-646,1243-1244,1702-1705,3032,3034,3043,3054-3056,3902,3927,4583,4687
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "30347027c928f4c0a57fd6cf08022bbf38dfd743",
+  "prompts": {
+    "fbe123407a33686b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20c29fa94ffeKbgfs47cFPODeX",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "James M Snell",
+      "messages": [],
+      "total_additions": 240,
+      "total_deletions": 54,
+      "accepted_lines": 240,
+      "overriden_lines": 0
+    }
+  }
+}
