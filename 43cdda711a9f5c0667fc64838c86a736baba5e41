@@ -1,0 +1,31 @@
+src/crypto/crypto_util.cc
+  fbe123407a33686b 556-593
+src/tcp_wrap.h
+  fbe123407a33686b 85-86
+src/node_errors.cc
+  fbe123407a33686b 164
+test/addons/async-resource/binding.cc
+  fbe123407a33686b 42
+test/cctest/test_environment.cc
+  fbe123407a33686b 703-711
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "43cdda711a9f5c0667fc64838c86a736baba5e41",
+  "prompts": {
+    "fbe123407a33686b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20c29fa94ffeKbgfs47cFPODeX",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "James M Snell",
+      "messages": [],
+      "total_additions": 51,
+      "total_deletions": 51,
+      "accepted_lines": 51,
+      "overriden_lines": 0
+    }
+  }
+}
