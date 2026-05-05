@@ -1,0 +1,23 @@
+doc/api/quic.md
+  fbe123407a33686b 2864-3016,3498-3500,3510,3512,3515,3517,3523,3527-3529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "a69b645466e1a9f33ad79e23b2191074251e511c",
+  "prompts": {
+    "fbe123407a33686b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_20c29fa94ffeKbgfs47cFPODeX",
+        "model": "anthropic/claude-opus-4-7"
+      },
+      "human_author": "James M Snell",
+      "messages": [],
+      "total_additions": 164,
+      "total_deletions": 0,
+      "accepted_lines": 164,
+      "overriden_lines": 0
+    }
+  }
+}
