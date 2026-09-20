@@ -749,6 +749,28 @@ For example, to run a module with "development" resolutions:
 node -C development app.js
 ```
 
+### `--connect=path`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+> Stability: 1.0 - Early development
+
+Dispatch the entry point and its arguments, or the code given with
+[`--eval`][] or [`--print`][] and its arguments, to the fork server listening
+on the Unix domain socket at `path` (see [`--experimental-zygote`][]) instead
+of running it in this process. The process passes its stdio, working
+directory, environment and umask to the server, forwards signals to the forked
+child, and exits with the child's exit code or terminates with the child's
+signal. Other Node.js options are ignored. Linux only.
+
+```bash
+node --experimental-zygote=/tmp/app.sock --require ./preload.js &
+node --connect=/tmp/app.sock app.js
+node --connect=/tmp/app.sock -p 'process.pid'
+```
+
 ### `--cpu-prof`
 
 <!-- YAML
@@ -1729,6 +1751,21 @@ added:
 > Stability: 1.1 - Active Development
 
 Enable experimental support for the worker inspection with Chrome DevTools.
+
+### `--experimental-zygote=path`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+> Stability: 1.0 - Early development
+
+Run as a fork server listening on the Unix domain socket at `path` instead of
+running an entry point. Modules loaded with [`--require`][] are preloaded
+once; each client connection forks a child that adopts the client's stdio,
+working directory, environment and arguments and runs the requested main
+module. Clients connect with [`--connect`][]. Implies `--disable-sigusr1`.
+Linux only.
 
 ### `--force-context-aware`
 
@@ -4806,14 +4843,17 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`--allow-wasi`]: #--allow-wasi
 [`--allow-worker`]: #--allow-worker
 [`--build-snapshot`]: #--build-snapshot
+[`--connect`]: #--connectpath
 [`--cpu-prof-dir`]: #--cpu-prof-dir
 [`--diagnostic-dir`]: #--diagnostic-dirdirectory
 [`--disable-sigusr1`]: #--disable-sigusr1
 [`--enable-fips`]: #--enable-fips
 [`--env-file-if-exists`]: #--env-file-if-existsfile
 [`--env-file`]: #--env-filefile
+[`--eval`]: #-e---eval-script
 [`--experimental-sea-config`]: single-executable-applications.md#1-generating-single-executable-preparation-blobs
 [`--experimental-vfs`]: #--experimental-vfs
+[`--experimental-zygote`]: #--experimental-zygotepath
 [`--heap-prof-dir`]: #--heap-prof-dir
 [`--import`]: #--importmodule
 [`--no-require-module`]: #--no-require-module

@@ -116,7 +116,8 @@
   V(wasm_web_api)                                                              \
   V(watchdog)                                                                  \
   V(worker)                                                                    \
-  V(zlib)
+  V(zlib)                                                                      \
+  V(zygote)
 
 #define NODE_BUILTIN_BINDINGS(V)                                               \
   NODE_BUILTIN_STANDARD_BINDINGS(V)                                            \

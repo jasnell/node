@@ -969,6 +969,12 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
   AddOption("--experimental-worker-inspection",
             "experimental worker inspection support",
             BOOL_FIELD(experimental_worker_inspection));
+  AddOption("--experimental-zygote",
+            "run as a fork server listening on the given Unix socket path",
+            &EnvironmentOptions::experimental_zygote);
+  // The SIGUSR1 watchdog thread cannot be stopped, which would make fork()
+  // unsafe.
+  Implies("--experimental-zygote", "--disable-sigusr1");
   AddOption("--experimental-inspector-network-resource",
             "experimental load network resources via the inspector",
             BOOL_FIELD(experimental_inspector_network_resource));
@@ -1697,6 +1703,10 @@ PerProcessOptionsParser::PerProcessOptionsParser(
   AddOption("--run",
             "Run a script specified in package.json",
             &PerProcessOptions::run);
+  AddOption("--connect",
+            "dispatch the script to the zygote listening on the given Unix "
+            "socket path",
+            &PerProcessOptions::connect_path);
   AddOption(
       "--disable-wasm-trap-handler",
       "Disable trap-handler-based WebAssembly bound checks. V8 will insert "

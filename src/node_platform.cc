@@ -244,18 +244,22 @@ class WorkerThreadsTaskRunner::DelayedTaskScheduler {
 
 WorkerThreadsTaskRunner::WorkerThreadsTaskRunner(
     int thread_pool_size, PlatformDebugLogLevel debug_log_level)
-    : debug_log_level_(debug_log_level) {
+    : thread_pool_size_(thread_pool_size), debug_log_level_(debug_log_level) {
+  StartThreads();
+}
+
+void WorkerThreadsTaskRunner::StartThreads() {
   Mutex platform_workers_mutex;
   ConditionVariable platform_workers_ready;
 
   Mutex::ScopedLock lock(platform_workers_mutex);
-  int pending_platform_workers = thread_pool_size;
+  int pending_platform_workers = thread_pool_size_;
 
   delayed_task_scheduler_ = std::make_unique<DelayedTaskScheduler>(
       &pending_worker_tasks_);
   threads_.push_back(delayed_task_scheduler_->Start());
 
-  for (int i = 0; i < thread_pool_size; i++) {
+  for (int i = 0; i < thread_pool_size_; i++) {
     auto worker_data = std::make_unique<PlatformWorkerData>(
         PlatformWorkerData{&pending_worker_tasks_,
                            &platform_workers_mutex,
@@ -292,6 +296,9 @@ void WorkerThreadsTaskRunner::PostDelayedTask(
     std::unique_ptr<v8::Task> task,
     const v8::SourceLocation& location,
     double delay_in_seconds) {
+  // Nothing may post tasks between StopThreadsForFork() and
+  // RestartThreadsAfterFork().
+  CHECK_NOT_NULL(delayed_task_scheduler_);
   delayed_task_scheduler_->PostDelayedTask(
       priority, std::move(task), delay_in_seconds);
 }
@@ -302,10 +309,24 @@ void WorkerThreadsTaskRunner::BlockingDrain() {
 
 void WorkerThreadsTaskRunner::Shutdown() {
   pending_worker_tasks_.Lock().Stop();
-  delayed_task_scheduler_->Stop();
+  // Null if the threads were stopped for a fork and never restarted.
+  if (delayed_task_scheduler_) delayed_task_scheduler_->Stop();
   for (size_t i = 0; i < threads_.size(); i++) {
     CHECK_EQ(0, uv_thread_join(threads_[i].get()));
   }
+}
+
+void WorkerThreadsTaskRunner::StopThreadsForFork() {
+  CHECK(!threads_.empty());
+  Shutdown();
+  threads_.clear();
+  delayed_task_scheduler_.reset();
+}
+
+void WorkerThreadsTaskRunner::RestartThreadsAfterFork() {
+  CHECK(threads_.empty());
+  pending_worker_tasks_.Lock().Resume();
+  StartThreads();
 }
 
 int WorkerThreadsTaskRunner::NumberOfWorkerThreads() const {
@@ -532,6 +553,16 @@ void NodePlatform::Shutdown() {
     Mutex::ScopedLock lock(per_isolate_mutex_);
     per_isolate_.clear();
   }
+}
+
+void NodePlatform::StopWorkerThreadsForFork() {
+  CHECK(!has_shut_down_);
+  worker_thread_task_runner_->StopThreadsForFork();
+}
+
+void NodePlatform::RestartWorkerThreadsAfterFork() {
+  CHECK(!has_shut_down_);
+  worker_thread_task_runner_->RestartThreadsAfterFork();
 }
 
 int NodePlatform::NumberOfWorkerThreads() {
@@ -824,6 +855,11 @@ template <class T>
 void TaskQueue<T>::Locked::Stop() {
   queue_->stopped_ = true;
   queue_->tasks_available_.Broadcast(lock_);
+}
+
+template <class T>
+void TaskQueue<T>::Locked::Resume() {
+  queue_->stopped_ = false;
 }
 
 template <class T>

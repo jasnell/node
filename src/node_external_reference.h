@@ -120,7 +120,8 @@ class ExternalReferenceRegistry {
   V(v8)                                                                        \
   V(zlib)                                                                      \
   V(wasm_web_api)                                                              \
-  V(worker)
+  V(worker)                                                                    \
+  V(zygote)
 
 #if NODE_HAVE_I18N_SUPPORT
 #define EXTERNAL_REFERENCE_BINDING_LIST_I18N(V) V(icu)

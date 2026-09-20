@@ -46,6 +46,7 @@
 #include "node_snapshot_builder.h"
 #include "node_v8_platform-inl.h"
 #include "node_version.h"
+#include "node_zygote.h"
 
 #if HAVE_OPENSSL
 #include "ncrypto.h"
@@ -372,6 +373,10 @@ MaybeLocal<Value> StartExecution(Environment* env,
 
   if (per_process::cli_options->print_help) {
     return StartExecution(env, "internal/main/print_help");
+  }
+
+  if (!env->options()->experimental_zygote.empty()) {
+    return StartExecution(env, "internal/main/zygote");
   }
 
   if (env->options()->prof_process) {
@@ -1202,6 +1207,21 @@ InitializeOncePerProcessInternal(const std::vector<std::string>& args,
     result->early_return_ = true;
     task_runner::RunTask(
         result, per_process::cli_options->run, positional_args);
+    return result;
+  }
+
+  // `--connect=<socket>`: hand the script to a zygote. This process never
+  // initializes OpenSSL, the V8 platform or V8.
+  if (!per_process::cli_options->connect_path.empty()) {
+    const auto& env_options = per_process::cli_options->per_isolate->per_env;
+    result->early_return_ = true;
+    result->exit_code_ = zygote::RunClient(
+        per_process::cli_options->connect_path,
+        result->args_,
+        env_options->has_eval_string
+            ? std::optional<std::string>(env_options->eval_string)
+            : std::nullopt,
+        env_options->print_eval);
     return result;
   }
 
