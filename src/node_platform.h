@@ -35,6 +35,8 @@ class TaskQueue {
     void NotifyOfOutstandingCompletion();
     void BlockingDrain();
     void Stop();
+    // Undoes Stop(). Tasks queued while stopped are kept.
+    void Resume();
     // All queued tasks, in the order Pop() would have returned them. Store the
     // result before iterating it: used directly as a range-for initializer,
     // `Lock().PopAll()` keeps the lock held for the whole loop from C++23 on.
@@ -204,9 +206,19 @@ class WorkerThreadsTaskRunner {
   void BlockingDrain();
   void Shutdown();
 
+  // Joins all platform threads (including the delayed task scheduler) so that
+  // the process can be forked while no platform thread holds a lock. Tasks
+  // that are already running finish first; queued tasks are kept and run once
+  // the threads are restarted. Delayed tasks whose timers have not fired yet
+  // are dropped.
+  void StopThreadsForFork();
+  void RestartThreadsAfterFork();
+
   int NumberOfWorkerThreads() const;
 
  private:
+  void StartThreads();
+
   // A queue shared by all threads. The consumers are the worker threads which
   // take tasks from it to run in PlatformWorkerThread(). The producers can be
   // any thread. Both the foreground thread and the worker threads can push
@@ -221,6 +233,7 @@ class WorkerThreadsTaskRunner {
   std::unique_ptr<DelayedTaskScheduler> delayed_task_scheduler_;
 
   std::vector<std::unique_ptr<uv_thread_t>> threads_;
+  int thread_pool_size_;
   PlatformDebugLogLevel debug_log_level_ = PlatformDebugLogLevel::kNone;
 };
 
@@ -233,6 +246,10 @@ class NodePlatform : public MultiIsolatePlatform {
 
   void DrainTasks(v8::Isolate* isolate) override;
   void Shutdown();
+
+  // See WorkerThreadsTaskRunner::StopThreadsForFork().
+  void StopWorkerThreadsForFork();
+  void RestartWorkerThreadsAfterFork();
 
   // v8::Platform implementation.
   int NumberOfWorkerThreads() override;
