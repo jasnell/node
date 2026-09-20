@@ -970,7 +970,8 @@ EnvironmentOptionsParser::EnvironmentOptionsParser() {
             "experimental worker inspection support",
             BOOL_FIELD(experimental_worker_inspection));
   AddOption("--experimental-zygote",
-            "run as a fork server listening on the given Unix socket path",
+            "run as a fork server listening on the given Unix socket path "
+            "or host:port",
             &EnvironmentOptions::experimental_zygote);
   // The SIGUSR1 watchdog thread cannot be stopped, which would make fork()
   // unsafe.
@@ -1705,7 +1706,7 @@ PerProcessOptionsParser::PerProcessOptionsParser(
             &PerProcessOptions::run);
   AddOption("--connect",
             "dispatch the script to the zygote listening on the given Unix "
-            "socket path",
+            "socket path or host:port",
             &PerProcessOptions::connect_path);
   AddOption(
       "--disable-wasm-trap-handler",

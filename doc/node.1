@@ -440,18 +440,34 @@ For example, to run a module with "development" resolutions:
 node -C development app.js
 .Ed
 .
-.It Fl -connect Ns = Ns Ar path
+.It Fl -connect Ns = Ns Ar address
 Dispatch the entry point and its arguments, or the code given with
 \fB--eval\fR or \fB--print\fR and its arguments, to the fork server listening
-on the Unix domain socket at \fBpath\fR (see \fB--experimental-zygote\fR) instead
-of running it in this process. The process passes its stdio, working
-directory, environment and umask to the server, forwards signals to the forked
-child, and exits with the child's exit code or terminates with the child's
-signal. Other Node.js options are ignored. Linux only.
+at \fBaddress\fR (see \fB--experimental-zygote\fR) instead of running it in this
+process. The process exits with the child's exit code or terminates with the
+child's signal. Other Node.js options are ignored. Linux only.
+\fBaddress\fR is a Unix domain socket path, or \fBhost:port\fR for TCP: a value
+without \fB/\fR that ends in \fB:port\fR, with IPv6 hosts in brackets.
+.Bl -bullet
+.It
+With a Unix domain socket, the process passes its stdio file descriptors,
+working directory, environment and umask to the server, and forwards signals
+to the forked child.
+.It
+With \fBhost:port\fR, the process first sends the token from the
+\fBNODE_ZYGOTE_TOKEN\fR environment variable, in plain text. It sends its working
+directory, environment and umask, copies its stdin to the child and the
+child's stdout and stderr back, and forwards signals as messages. The child's
+stdio are pipes, so \fBisTTY\fR is \fBfalse\fR in the child.
+.El
 .Bd -literal
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
 node --connect=/tmp/app.sock app.js
 node --connect=/tmp/app.sock -p 'process.pid'
+
+export NODE_ZYGOTE_TOKEN="$(head -c 24 /dev/urandom | base64)"
+node --experimental-zygote=127.0.0.1:7000 --require ./preload.js &
+node --connect=127.0.0.1:7000 app.js
 .Ed
 .
 .It Fl -cpu-prof
@@ -925,13 +941,15 @@ Enable experimental support for the Web Worker API.
 .It Fl -experimental-worker-inspection
 Enable experimental support for the worker inspection with Chrome DevTools.
 .
-.It Fl -experimental-zygote Ns = Ns Ar path
-Run as a fork server listening on the Unix domain socket at \fBpath\fR instead of
-running an entry point. Modules loaded with \fB--require\fR are preloaded
-once; each client connection forks a child that adopts the client's stdio,
-working directory, environment and arguments and runs the requested main
-module. Clients connect with \fB--connect\fR. Implies \fB--disable-sigusr1\fR.
-Linux only.
+.It Fl -experimental-zygote Ns = Ns Ar address
+Run as a fork server listening at \fBaddress\fR instead of running an entry point.
+\fBaddress\fR is a Unix domain socket path or \fBhost:port\fR, in the format described
+for \fB--connect\fR. Modules loaded with \fB--require\fR are preloaded once.
+Each dispatch forks a child that adopts the client's working directory,
+environment and arguments and runs the requested program. With \fBhost:port\fR,
+the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment variable (16 to 256
+characters) and only serves clients that send the same token. Implies
+\fB--disable-sigusr1\fR. Linux only.
 .
 .It Fl -force-context-aware
 Disable loading native addons that are not context-aware.

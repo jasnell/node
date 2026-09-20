@@ -749,7 +749,7 @@ For example, to run a module with "development" resolutions:
 node -C development app.js
 ```
 
-### `--connect=path`
+### `--connect=address`
 
 <!-- YAML
 added: REPLACEME
@@ -759,16 +759,30 @@ added: REPLACEME
 
 Dispatch the entry point and its arguments, or the code given with
 [`--eval`][] or [`--print`][] and its arguments, to the fork server listening
-on the Unix domain socket at `path` (see [`--experimental-zygote`][]) instead
-of running it in this process. The process passes its stdio, working
-directory, environment and umask to the server, forwards signals to the forked
-child, and exits with the child's exit code or terminates with the child's
-signal. Other Node.js options are ignored. Linux only.
+at `address` (see [`--experimental-zygote`][]) instead of running it in this
+process. The process exits with the child's exit code or terminates with the
+child's signal. Other Node.js options are ignored. Linux only.
+
+`address` is a Unix domain socket path, or `host:port` for TCP: a value
+without `/` that ends in `:port`, with IPv6 hosts in brackets.
+
+* With a Unix domain socket, the process passes its stdio file descriptors,
+  working directory, environment and umask to the server, and forwards signals
+  to the forked child.
+* With `host:port`, the process first sends the token from the
+  `NODE_ZYGOTE_TOKEN` environment variable, in plain text. It sends its working
+  directory, environment and umask, copies its stdin to the child and the
+  child's stdout and stderr back, and forwards signals as messages. The child's
+  stdio are pipes, so `isTTY` is `false` in the child.
 
 ```bash
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
 node --connect=/tmp/app.sock app.js
 node --connect=/tmp/app.sock -p 'process.pid'
+
+export NODE_ZYGOTE_TOKEN="$(head -c 24 /dev/urandom | base64)"
+node --experimental-zygote=127.0.0.1:7000 --require ./preload.js &
+node --connect=127.0.0.1:7000 app.js
 ```
 
 ### `--cpu-prof`
@@ -1752,7 +1766,7 @@ added:
 
 Enable experimental support for the worker inspection with Chrome DevTools.
 
-### `--experimental-zygote=path`
+### `--experimental-zygote=address`
 
 <!-- YAML
 added: REPLACEME
@@ -1760,12 +1774,14 @@ added: REPLACEME
 
 > Stability: 1.0 - Early development
 
-Run as a fork server listening on the Unix domain socket at `path` instead of
-running an entry point. Modules loaded with [`--require`][] are preloaded
-once; each client connection forks a child that adopts the client's stdio,
-working directory, environment and arguments and runs the requested main
-module. Clients connect with [`--connect`][]. Implies `--disable-sigusr1`.
-Linux only.
+Run as a fork server listening at `address` instead of running an entry point.
+`address` is a Unix domain socket path or `host:port`, in the format described
+for [`--connect`][]. Modules loaded with [`--require`][] are preloaded once.
+Each dispatch forks a child that adopts the client's working directory,
+environment and arguments and runs the requested program. With `host:port`,
+the server requires the `NODE_ZYGOTE_TOKEN` environment variable (16 to 256
+characters) and only serves clients that send the same token. Implies
+`--disable-sigusr1`. Linux only.
 
 ### `--force-context-aware`
 
@@ -4843,7 +4859,7 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`--allow-wasi`]: #--allow-wasi
 [`--allow-worker`]: #--allow-worker
 [`--build-snapshot`]: #--build-snapshot
-[`--connect`]: #--connectpath
+[`--connect`]: #--connectaddress
 [`--cpu-prof-dir`]: #--cpu-prof-dir
 [`--diagnostic-dir`]: #--diagnostic-dirdirectory
 [`--disable-sigusr1`]: #--disable-sigusr1
@@ -4853,7 +4869,7 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`--eval`]: #-e---eval-script
 [`--experimental-sea-config`]: single-executable-applications.md#1-generating-single-executable-preparation-blobs
 [`--experimental-vfs`]: #--experimental-vfs
-[`--experimental-zygote`]: #--experimental-zygotepath
+[`--experimental-zygote`]: #--experimental-zygoteaddress
 [`--heap-prof-dir`]: #--heap-prof-dir
 [`--import`]: #--importmodule
 [`--no-require-module`]: #--no-require-module
