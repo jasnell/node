@@ -189,9 +189,9 @@ for (const samplePerIteration of [false, true]) {
 }
 
 {
-  // Delays greater than highest are counted by exceeds instead of being
-  // recorded. Interval samples include the resolution, so every sample is
-  // greater than highest here.
+  // Check that delays greater than highest are counted by exceeds.
+  // Delayed timer callbacks can run close together, so some samples may
+  // still be recorded despite resolution being much larger than highest.
   const histogram = monitorEventLoopDelay({
     resolution: 20,
     highest: 2_000_000,
@@ -200,7 +200,7 @@ for (const samplePerIteration of [false, true]) {
 
   const done = common.mustCall(() => {
     histogram.disable();
-    assert.strictEqual(histogram.count, 0);
+    assert.ok(histogram.exceeds >= 2);
   });
 
   (function wait() {

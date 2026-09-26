@@ -1927,7 +1927,7 @@ are not guaranteed to reflect any correct state of the event loop.
 added: v11.10.0
 changes:
   - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/00000
+    pr-url: https://github.com/nodejs/node/pull/66115
     description: Added the `lowest`, `highest`, and `figures` options.
   - version:
      - v26.5.0
