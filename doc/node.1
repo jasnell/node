@@ -992,6 +992,11 @@ guess it offline. Anyone with the token can run code as the server's user.
 Programs also run as the server's user and are not isolated from it or from
 each other: for example, memory they inherit can hold TLS secrets of earlier
 connections.
+Programs that need unpredictable values should use \fBcrypto.getRandomValues()\fR
+or the other \fBnode:crypto\fR functions rather than \fBMath.random()\fR: each child gets
+a newly seeded \fBMath.random()\fR, but a reference to \fBMath.random\fR that a preloaded
+module saved, and \fBMath.random()\fR in contexts created later (for example with
+\fBvm.createContext()\fR), return the same sequence in every child.
 Implies \fB--disable-sigusr1\fR. Linux only.
 .
 .It Fl -force-context-aware

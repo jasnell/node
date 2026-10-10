@@ -1828,6 +1828,11 @@ guess it offline. Anyone with the token can run code as the server's user.
 Programs also run as the server's user and are not isolated from it or from
 each other: for example, memory they inherit can hold TLS secrets of earlier
 connections.
+Programs that need unpredictable values should use [`crypto.getRandomValues()`][]
+or the other `node:crypto` functions rather than `Math.random()`: each child gets
+a newly seeded `Math.random()`, but a reference to `Math.random` that a preloaded
+module saved, and `Math.random()` in contexts created later (for example with
+[`vm.createContext()`][]), return the same sequence in every child.
 Implies `--disable-sigusr1`. Linux only.
 
 ### `--force-context-aware`
@@ -5005,6 +5010,7 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`child_process.execSync()`]: child_process.md#child_processexecsynccommand-options
 [`child_process.fork()`]: child_process.md#child_processforkmodulepath-args-options
 [`crypto.createPrivateKey()`]: crypto.md#cryptocreateprivatekeykey
+[`crypto.getRandomValues()`]: crypto.md#cryptogetrandomvaluestypedarray
 [`dns.lookup()`]: dns.md#dnslookuphostname-options-callback
 [`dns.setDefaultResultOrder()`]: dns.md#dnssetdefaultresultorderorder
 [`dnsPromises.lookup()`]: dns.md#dnspromiseslookuphostname-options
@@ -5026,6 +5032,7 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`v8.startupSnapshot.setDeserializeMainFunction()`]: v8.md#v8startupsnapshotsetdeserializemainfunctioncallback-data
 [`v8.startupSnapshot` API]: v8.md#startup-snapshot-api
 [`vfs.mount()`]: vfs.md#vfsmount
+[`vm.createContext()`]: vm.md#vmcreatecontextcontextobject-options
 [asynchronous module customization hooks]: module.md#asynchronous-customization-hooks
 [benchmark runner]: bench.md#command-line-runner
 [captured by the built-in snapshot of Node.js]: https://github.com/nodejs/node/blob/b19525a33cc84033af4addd0f80acd4dc33ce0cf/test/parallel/test-bootstrap-modules.js#L24
