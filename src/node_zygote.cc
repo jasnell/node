@@ -1412,6 +1412,8 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   Request req = ServeUnix(listen_fd);
 #endif  // NODE_ZYGOTE_HAVE_TLS
 
+  // process.uptime() counts from here.
+  per_process::node_start_time = uv_hrtime();
   // New session: no controlling terminal and a process group that can be
   // signaled as a whole.
   setsid();
