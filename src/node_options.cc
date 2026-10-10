@@ -480,6 +480,24 @@ void EnvironmentOptions::CheckOptions(std::vector<std::string>* errors,
 
   debug_options_.CheckOptions(errors, argv);
 #endif  // HAVE_INSPECTOR
+
+  // A zygote only preloads and serves; what to run comes from its clients.
+  if (!experimental_zygote.empty()) {
+    if (has_eval_string || print_eval) {
+      errors->push_back(
+          "--experimental-zygote cannot be used with --eval or --print");
+    } else if (argv->size() > 1) {  // (*argv)[0] is the program name.
+      errors->push_back(
+          "--experimental-zygote does not run a script; pass it to "
+          "`node --connect` instead");
+    }
+    if (test_runner || watch_mode || !watch_mode_paths.empty() || force_repl ||
+        syntax_check_only) {
+      errors->push_back(
+          "--experimental-zygote cannot be used with --test, --watch, "
+          "--interactive or --check");
+    }
+  }
 }
 
 void EnvironmentOptions::CheckBenchOptions(
