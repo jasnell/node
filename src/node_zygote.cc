@@ -1497,6 +1497,22 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
 
   MakeMappingsInheritable();
 
+  // A preload that listens for one of these signals installs libuv's handler,
+  // which only wakes up the event loop. The zygote never runs its loop again,
+  // so it would ignore the signal. Use the default actions while serving, and
+  // give programs the preloads' handlers back. Ignored signals stay ignored
+  // (as with nohup).
+  constexpr int kStopSignals[] = {SIGHUP, SIGINT, SIGTERM};
+  struct sigaction preload_actions[arraysize(kStopSignals)];
+  for (size_t i = 0; i < arraysize(kStopSignals); i++) {
+    CHECK_EQ(sigaction(kStopSignals[i], nullptr, &preload_actions[i]), 0);
+    if (preload_actions[i].sa_handler == SIG_IGN) continue;
+    struct sigaction default_action {};
+    default_action.sa_handler = SIG_DFL;
+    sigemptyset(&default_action.sa_mask);
+    CHECK_EQ(sigaction(kStopSignals[i], &default_action, nullptr), 0);
+  }
+
   // Only children that become programs get past this point.
 #if NODE_ZYGOTE_HAVE_TLS
   Request req = tcp ? ServeTcp(listen_fd, tls_ctx.get()) : ServeUnix(listen_fd);
@@ -1504,6 +1520,9 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   Request req = ServeUnix(listen_fd);
 #endif  // NODE_ZYGOTE_HAVE_TLS
 
+  for (size_t i = 0; i < arraysize(kStopSignals); i++) {
+    CHECK_EQ(sigaction(kStopSignals[i], &preload_actions[i], nullptr), 0);
+  }
   // process.uptime() counts from here.
   per_process::node_start_time = uv_hrtime();
   // New session: no controlling terminal and a process group that can be
