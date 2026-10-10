@@ -96,6 +96,12 @@ struct TaskQueueEntry {
   }
 };
 
+// A delayed task taken out of the scheduler, with the delay it had left.
+struct PendingDelayedTask {
+  std::unique_ptr<TaskQueueEntry> entry;
+  double delay_in_seconds;
+};
+
 struct DelayedTask {
   std::unique_ptr<v8::Task> task;
   v8::TaskPriority priority;
@@ -210,7 +216,8 @@ class WorkerThreadsTaskRunner {
   // the process can be forked while no platform thread holds a lock. Tasks
   // that are already running finish first; queued tasks are kept and run once
   // the threads are restarted. Delayed tasks whose timers have not fired yet
-  // are dropped.
+  // are kept too, and are posted again with the delay they had left, measured
+  // when the threads stopped.
   void StopThreadsForFork();
   void RestartThreadsAfterFork();
 
@@ -218,6 +225,7 @@ class WorkerThreadsTaskRunner {
 
  private:
   void StartThreads();
+  void StopAndJoinThreads(bool keep_delayed_tasks);
 
   // A queue shared by all threads. The consumers are the worker threads which
   // take tasks from it to run in PlatformWorkerThread(). The producers can be
@@ -233,6 +241,8 @@ class WorkerThreadsTaskRunner {
   std::unique_ptr<DelayedTaskScheduler> delayed_task_scheduler_;
 
   std::vector<std::unique_ptr<uv_thread_t>> threads_;
+  // Delayed tasks kept by StopThreadsForFork() for RestartThreadsAfterFork().
+  std::vector<PendingDelayedTask> delayed_tasks_for_fork_;
   int thread_pool_size_;
   PlatformDebugLogLevel debug_log_level_ = PlatformDebugLogLevel::kNone;
 };

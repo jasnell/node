@@ -178,3 +178,43 @@ TEST(TaskQueueTest, HigherPriorityFirstThenPostingOrder) {
   const std::vector<int> expected = {2, 4, 0, 3, 6, 1, 5};
   EXPECT_EQ(log, expected);
 }
+
+class SignalingTask : public v8::Task {
+ public:
+  explicit SignalingTask(uv_sem_t* ran) : ran_(ran) {}
+  void Run() override { uv_sem_post(ran_); }
+
+ private:
+  uv_sem_t* ran_;
+};
+
+// StopWorkerThreadsForFork() must keep delayed worker tasks whose timers have
+// not fired yet, and RestartWorkerThreadsAfterFork() must post them again
+// with the delay they had left.
+TEST(NodePlatformForkTest, DelayedWorkerTasksSurviveStopAndRestart) {
+  node::NodePlatform platform(2, nullptr);
+  uv_sem_t ran;
+  ASSERT_EQ(uv_sem_init(&ran, 0), 0);
+
+  const uint64_t posted = uv_hrtime();
+  platform.PostDelayedTaskOnWorkerThread(v8::TaskPriority::kUserVisible,
+                                         std::make_unique<SignalingTask>(&ran),
+                                         0.5);
+  platform.StopWorkerThreadsForFork();
+  EXPECT_EQ(platform.NumberOfWorkerThreads(), 0);
+  platform.RestartWorkerThreadsAfterFork();
+  EXPECT_EQ(platform.NumberOfWorkerThreads(), 3);
+
+  // Not early: the task waits for what was left of its delay.
+  EXPECT_NE(uv_sem_trywait(&ran), 0);
+  bool done = false;
+  for (int i = 0; i < 500 && !done; i++) {
+    done = uv_sem_trywait(&ran) == 0;
+    if (!done) uv_sleep(10);
+  }
+  EXPECT_TRUE(done);
+  EXPECT_GE(uv_hrtime() - posted, 400u * 1000 * 1000);
+
+  platform.Shutdown();
+  uv_sem_destroy(&ran);
+}

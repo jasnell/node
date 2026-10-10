@@ -132,10 +132,27 @@ class WorkerThreadsTaskRunner::DelayedTaskScheduler {
     uv_async_send(&flush_tasks_);
   }
 
-  void Stop() {
+  // Ends the scheduler's thread. With `keep_pending`, delayed tasks whose
+  // timers have not fired yet are kept, with their remaining delays, for
+  // TakeKeptTasks(); otherwise they are dropped.
+  void Stop(bool keep_pending = false) {
     auto locked = tasks_.Lock();
     has_shut_down_ = true;
+    keep_pending_ = keep_pending;
     locked.Push(std::make_unique<StopTask>(this));
+    uv_async_send(&flush_tasks_);
+  }
+
+  // Call only after the scheduler's thread has been joined.
+  std::vector<PendingDelayedTask> TakeKeptTasks() { return std::move(kept_); }
+
+  // Like PostDelayedTask(), for a task kept by Stop().
+  void PostDelayedEntry(std::unique_ptr<TaskQueueEntry> entry,
+                        double delay_in_seconds) {
+    auto locked = tasks_.Lock();
+    if (has_shut_down_) return;
+    locked.Push(std::make_unique<ScheduleTask>(
+        this, std::move(entry), delay_in_seconds));
     uv_async_send(&flush_tasks_);
   }
 
@@ -174,8 +191,15 @@ class WorkerThreadsTaskRunner::DelayedTaskScheduler {
       std::vector<uv_timer_t*> timers;
       for (uv_timer_t* timer : scheduler_->timers_)
         timers.push_back(timer);
-      for (uv_timer_t* timer : timers)
-        scheduler_->TakeTimerTask(timer);
+      for (uv_timer_t* timer : timers) {
+        const uint64_t due_in_ms = uv_timer_get_due_in(timer);
+        std::unique_ptr<TaskQueueEntry> entry =
+            scheduler_->TakeTimerTask(timer);
+        if (scheduler_->keep_pending_) {
+          scheduler_->kept_.push_back(
+              {std::move(entry), static_cast<double>(due_in_ms) / 1000});
+        }
+      }
       uv_close(reinterpret_cast<uv_handle_t*>(&scheduler_->flush_tasks_),
                [](uv_handle_t* handle) {});
     }
@@ -240,6 +264,8 @@ class WorkerThreadsTaskRunner::DelayedTaskScheduler {
   uv_async_t flush_tasks_;
   std::unordered_set<uv_timer_t*> timers_;
   bool has_shut_down_ = false;
+  bool keep_pending_ = false;
+  std::vector<PendingDelayedTask> kept_;
 };
 
 WorkerThreadsTaskRunner::WorkerThreadsTaskRunner(
@@ -308,9 +334,14 @@ void WorkerThreadsTaskRunner::BlockingDrain() {
 }
 
 void WorkerThreadsTaskRunner::Shutdown() {
+  StopAndJoinThreads(false);
+}
+
+void WorkerThreadsTaskRunner::StopAndJoinThreads(bool keep_delayed_tasks) {
   pending_worker_tasks_.Lock().Stop();
   // Null if the threads were stopped for a fork and never restarted.
-  if (delayed_task_scheduler_) delayed_task_scheduler_->Stop();
+  if (delayed_task_scheduler_)
+    delayed_task_scheduler_->Stop(keep_delayed_tasks);
   for (size_t i = 0; i < threads_.size(); i++) {
     CHECK_EQ(0, uv_thread_join(threads_[i].get()));
   }
@@ -318,8 +349,9 @@ void WorkerThreadsTaskRunner::Shutdown() {
 
 void WorkerThreadsTaskRunner::StopThreadsForFork() {
   CHECK(!threads_.empty());
-  Shutdown();
+  StopAndJoinThreads(true);
   threads_.clear();
+  delayed_tasks_for_fork_ = delayed_task_scheduler_->TakeKeptTasks();
   delayed_task_scheduler_.reset();
 }
 
@@ -327,6 +359,12 @@ void WorkerThreadsTaskRunner::RestartThreadsAfterFork() {
   CHECK(threads_.empty());
   pending_worker_tasks_.Lock().Resume();
   StartThreads();
+  // Each forked process has its own copy of the kept tasks.
+  for (PendingDelayedTask& pending : delayed_tasks_for_fork_) {
+    delayed_task_scheduler_->PostDelayedEntry(std::move(pending.entry),
+                                              pending.delay_in_seconds);
+  }
+  delayed_tasks_for_fork_.clear();
 }
 
 int WorkerThreadsTaskRunner::NumberOfWorkerThreads() const {
