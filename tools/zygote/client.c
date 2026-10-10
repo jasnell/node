@@ -8,6 +8,7 @@
 // way the child did.
 
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
@@ -26,6 +27,7 @@ extern char** environ;
 #define REQUEST_MAGIC 0x4e5a5947u  // "NZYG"
 #define EXIT_CLIENT_ERROR 125
 
+// All integers on the wire are big-endian (network byte order).
 struct request_header {
   uint32_t magic;
   uint32_t mode;  // 0: argv[0] is the main module
@@ -114,12 +116,12 @@ int main(int argc, char** argv) {
   umask(mask);
 
   const struct request_header header = {
-      .magic = REQUEST_MAGIC,
-      .mode = 0,
-      .argc = (uint32_t)(argc - 2),
-      .envc = (uint32_t)envc,
-      .umask = (uint32_t)mask,
-      .payload_size = (uint32_t)payload_size,
+      .magic = htonl(REQUEST_MAGIC),
+      .mode = htonl(0),
+      .argc = htonl((uint32_t)(argc - 2)),
+      .envc = htonl((uint32_t)envc),
+      .umask = htonl((uint32_t)mask),
+      .payload_size = htonl((uint32_t)payload_size),
   };
   const size_t total = sizeof(header) + payload_size;
   char* message = malloc(total);
@@ -177,6 +179,8 @@ int main(int argc, char** argv) {
       fprintf(stderr, "zygote-client: lost connection to the zygote\n");
       return EXIT_CLIENT_ERROR;
     }
+    reply.type = ntohl(reply.type);
+    reply.value = (int32_t)ntohl((uint32_t)reply.value);
     if (reply.type == 'P') {
       child_pid = reply.value;
       if (pending_signal != 0) forward_signal(pending_signal);

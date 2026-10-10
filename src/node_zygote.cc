@@ -30,7 +30,8 @@
 // `node --connect=<socket> -e|-p <code> [args...]` (RunClient()), which runs
 // right after option parsing, before V8 and OpenSSL are initialized.
 //
-// Wire protocol (host byte order):
+// Wire protocol (all integers are big-endian, i.e. in network byte order, so
+// that a client and a zygote on different machines agree):
 //   request:  RequestHeader, then payload_size bytes of NUL-terminated
 //             strings: cwd, argv[0..argc), env[0..envc). The first sendmsg()
 //             carries SCM_RIGHTS with the client's fds 0, 1 and 2. With
@@ -59,6 +60,7 @@
 #include <vector>
 
 #ifdef __linux__
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -231,13 +233,21 @@ static void AppendFrame(std::string* out,
                         uint32_t type,
                         const char* data,
                         size_t size) {
-  const FrameHeader header{type, static_cast<uint32_t>(size)};
+  const FrameHeader header{htonl(type), htonl(static_cast<uint32_t>(size))};
   out->append(reinterpret_cast<const char*>(&header), sizeof(header));
   if (size > 0) out->append(data, size);
 }
 
 static void AppendInt32Frame(std::string* out, uint32_t type, int32_t value) {
-  AppendFrame(out, type, reinterpret_cast<const char*>(&value), sizeof(value));
+  const uint32_t wire = htonl(static_cast<uint32_t>(value));
+  AppendFrame(out, type, reinterpret_cast<const char*>(&wire), sizeof(wire));
+}
+
+// The value of a frame written by AppendInt32Frame().
+static int32_t ReadInt32Frame(const char* data) {
+  uint32_t wire;
+  memcpy(&wire, data, sizeof(wire));
+  return static_cast<int32_t>(ntohl(wire));
 }
 
 // Calls `fn(type, data, size)` for each complete frame at the start of `*in`
@@ -250,6 +260,8 @@ static bool ConsumeFrames(std::string* in, Fn&& fn) {
   while (in->size() - offset >= sizeof(FrameHeader)) {
     FrameHeader header;
     memcpy(&header, in->data() + offset, sizeof(header));
+    header.type = ntohl(header.type);
+    header.size = ntohl(header.size);
     if (header.size > kMaxFrameSize) {
       ok = false;
       break;
@@ -566,14 +578,22 @@ static bool ReadFully(int fd, char* buf, size_t len) {
 }
 
 static void SendReply(int fd, uint32_t type, int32_t value) {
-  const Reply reply{type, value};
+  const Reply reply{htonl(type),
+                    static_cast<int32_t>(htonl(static_cast<uint32_t>(value)))};
   // The client may already be gone; there is nobody to report errors to.
   USE(send(fd, &reply, sizeof(reply), MSG_NOSIGNAL));
 }
 
-static bool IsValidRequestHeader(const RequestHeader& header) {
-  return header.magic == kRequestMagic && header.mode <= kModePrint &&
-         header.argc > 0 && header.payload_size <= kMaxPayloadSize;
+// Converts `*header`, as received, to host byte order and checks it.
+static bool DecodeRequestHeader(RequestHeader* header) {
+  header->magic = ntohl(header->magic);
+  header->mode = ntohl(header->mode);
+  header->argc = ntohl(header->argc);
+  header->envc = ntohl(header->envc);
+  header->umask = ntohl(header->umask);
+  header->payload_size = ntohl(header->payload_size);
+  return header->magic == kRequestMagic && header->mode <= kModePrint &&
+         header->argc > 0 && header->payload_size <= kMaxPayloadSize;
 }
 
 // Fills in `req` from a valid `header` and its `payload`.
@@ -642,7 +662,7 @@ static bool ReadRequest(int conn, Request* req) {
       (static_cast<size_t>(n) == sizeof(header) ||
        ReadFully(
            conn, reinterpret_cast<char*>(&header) + n, sizeof(header) - n)) &&
-      IsValidRequestHeader(header);
+      DecodeRequestHeader(&header);
   if (!header_ok) {
     req->CloseFds();
     return false;
@@ -662,7 +682,7 @@ static bool ReadRequest(TlsConnection* conn, uint64_t deadline, Request* req) {
   RequestHeader header;
   if (!TlsReadFully(
           conn, reinterpret_cast<char*>(&header), sizeof(header), deadline) ||
-      !IsValidRequestHeader(header)) {
+      !DecodeRequestHeader(&header)) {
     return false;
   }
   std::string payload(header.payload_size, '\0');
@@ -969,8 +989,7 @@ static void PumpRelay(TlsConnection* conn,
     } else if (type == kFrameStdinEnd) {
       stdin_end = true;
     } else if (type == kFrameSignal && size == sizeof(int32_t)) {
-      int32_t signo;
-      memcpy(&signo, data, sizeof(signo));
+      const int32_t signo = ReadInt32Frame(data);
       if (signo > 0 && signo < NSIG && kill(-child, signo) != 0) {
         kill(child, signo);
       }
@@ -1482,12 +1501,12 @@ static bool BuildRequest(const char* self,
 
   const mode_t mask = umask(0);
   umask(mask);
-  const RequestHeader header{kRequestMagic,
-                             mode,
-                             static_cast<uint32_t>(argv.size()),
-                             envc,
-                             static_cast<uint32_t>(mask),
-                             static_cast<uint32_t>(payload.size())};
+  const RequestHeader header{htonl(kRequestMagic),
+                             htonl(mode),
+                             htonl(static_cast<uint32_t>(argv.size())),
+                             htonl(envc),
+                             htonl(static_cast<uint32_t>(mask)),
+                             htonl(static_cast<uint32_t>(payload.size()))};
   message->assign(reinterpret_cast<const char*>(&header), sizeof(header));
   *message += payload;
   return true;
@@ -1619,6 +1638,9 @@ static ExitCode RunUnixClient(const char* self,
               socket_path.c_str());
       return kClientFailure;
     }
+    reply.type = ntohl(reply.type);
+    reply.value =
+        static_cast<int32_t>(ntohl(static_cast<uint32_t>(reply.value)));
     if (reply.type == kReplyPid) {
       client_child_pid = reply.value;
       if (client_pending_signal != 0) {
@@ -1779,9 +1801,7 @@ static ExitCode RunTcpClient(const char* self,
     } else if (type == kFrameStderr) {
       if (stderr_open) stderr_open = WriteAll(2, data, size);
     } else if (type == kFrameExit && size == sizeof(int32_t)) {
-      int32_t status;
-      memcpy(&status, data, sizeof(status));
-      exit_status = status;
+      exit_status = ReadInt32Frame(data);
     }
   };
   for (;;) {
