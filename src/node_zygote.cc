@@ -225,6 +225,10 @@ constexpr uint64_t kHandshakeTimeoutNs = 10000000000;
 constexpr uint64_t kRequestTimeoutNs = 10000000000;
 // The client gives the zygote a little longer than the zygote gives it.
 constexpr uint64_t kClientHandshakeTimeoutNs = 12000000000;
+// At most this many TLS handshakes are in progress in the zygote at a time.
+// When another connection arrives, the oldest one is dropped: a peer that
+// opens connections slowly and never completes them cannot keep others out.
+constexpr size_t kMaxPendingHandshakes = 64;
 // Readers stop reading once this much data is waiting to be written.
 constexpr size_t kMaxBuffered = 1 << 20;
 constexpr uint32_t kMaxFrameSize = 1 << 20;
@@ -248,6 +252,53 @@ struct Relay {
   pid_t pid;
   int pidfd;
 };
+
+// How long the accept loops stop accepting after running out of a resource
+// (usually file descriptors). The listening socket stays readable meanwhile,
+// so polling it would spin.
+constexpr uint64_t kAcceptBackoffNs = 100000000;
+
+enum class AcceptResult { kAccepted, kDrained, kBackOff };
+
+// Accepts one connection on the non-blocking `listen_fd` into `*conn`.
+static AcceptResult AcceptConnection(int listen_fd, int flags, int* conn) {
+  for (;;) {
+    *conn = accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC | flags);
+    if (*conn >= 0) return AcceptResult::kAccepted;
+    switch (errno) {
+      case EAGAIN:
+        return AcceptResult::kDrained;
+      case EINTR:
+      case ECONNABORTED:
+      // Linux reports pending network errors of the new connection from
+      // accept(); see accept(2). The next connection may be fine.
+      case ENETDOWN:
+      case EPROTO:
+      case ENOPROTOOPT:
+      case EHOSTDOWN:
+      case ENONET:
+      case EHOSTUNREACH:
+      case EOPNOTSUPP:
+      case ENETUNREACH:
+      case EPERM:  // Rejected by a firewall rule.
+        continue;
+      default:  // EMFILE, ENFILE, ENOBUFS, ENOMEM.
+        return AcceptResult::kBackOff;
+    }
+  }
+}
+
+// Returns the poll() timeout in ms until `deadline`, at least 0.
+static int MsUntil(uint64_t deadline, uint64_t now) {
+  return deadline > now ? static_cast<int>((deadline - now) / 1000000) + 1 : 0;
+}
+
+// Combines poll() timeouts, where -1 means none.
+static int EarlierTimeout(int a, int b) {
+  if (a < 0) return b;
+  if (b < 0) return a;
+  return a < b ? a : b;
+}
 
 static void SetNonBlocking(int fd, bool non_blocking) {
   const int flags = fcntl(fd, F_GETFL);
@@ -890,9 +941,12 @@ static int ListenTcp(const std::string& host,
 static Request ServeUnix(int listen_fd) {
   std::vector<Child> children;
   std::vector<pollfd> pollfds;
+  uint64_t accept_after = 0;  // See kAcceptBackoffNs.
   for (;;) {
+    const uint64_t now = uv_hrtime();
+    const bool accepting = now >= accept_after;
     pollfds.clear();
-    pollfds.push_back({listen_fd, POLLIN, 0});
+    pollfds.push_back({accepting ? listen_fd : -1, POLLIN, 0});
     for (const Child& child : children) {
       pollfds.push_back({child.pidfd, POLLIN, 0});
       // Hangup only: the child reads its request from this socket, so the
@@ -900,7 +954,9 @@ static Request ServeUnix(int listen_fd) {
       pollfds.push_back(
           {child.client_gone ? -1 : child.conn_fd, POLLRDHUP, 0});
     }
-    if (poll(pollfds.data(), pollfds.size(), -1) < 0) {
+    if (poll(pollfds.data(),
+             pollfds.size(),
+             accepting ? -1 : MsUntil(accept_after, now)) < 0) {
       CHECK_EQ(errno, EINTR);
       continue;
     }
@@ -929,11 +985,12 @@ static Request ServeUnix(int listen_fd) {
     // Fork a child for every pending connection. Each child reads its own
     // request, so a slow client delays only its own program.
     for (;;) {
-      const int conn = accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC);
-      if (conn < 0) {
-        if (errno == EINTR || errno == ECONNABORTED) continue;
-        break;  // EAGAIN: the backlog is drained.
+      int conn;
+      const AcceptResult accepted = AcceptConnection(listen_fd, 0, &conn);
+      if (accepted == AcceptResult::kBackOff) {
+        accept_after = uv_hrtime() + kAcceptBackoffNs;
       }
+      if (accepted != AcceptResult::kAccepted) break;
       ucred cred{};
       socklen_t cred_len = sizeof(cred);
       if (getsockopt(conn, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
@@ -1216,27 +1273,24 @@ static HandshakeResult ContinueHandshake(PendingConnection* conn) {
 // within kHandshakeTimeoutNs before the zygote forks a relay for it. Returns
 // only in a program child, with the relay's pipes installed on fds 0-2.
 static Request ServeTcp(int listen_fd, SSL_CTX* ctx) {
+  // Oldest first.
   std::vector<PendingConnection> pending;
   std::vector<Relay> relays;
   std::vector<pollfd> pollfds;
+  uint64_t accept_after = 0;  // See kAcceptBackoffNs.
   for (;;) {
+    const uint64_t now = uv_hrtime();
+    const bool accepting = now >= accept_after;
+    int timeout_ms = accepting ? -1 : MsUntil(accept_after, now);
     pollfds.clear();
-    pollfds.push_back({listen_fd, POLLIN, 0});
+    pollfds.push_back({accepting ? listen_fd : -1, POLLIN, 0});
     for (const Relay& relay : relays) {
       pollfds.push_back({relay.pidfd, POLLIN, 0});
     }
     const size_t relay_count = relays.size();
-    int timeout_ms = -1;
-    const uint64_t now = uv_hrtime();
     for (const PendingConnection& conn : pending) {
       pollfds.push_back({conn.fd, conn.events, 0});
-      const int remaining_ms =
-          conn.deadline > now
-              ? static_cast<int>((conn.deadline - now) / 1000000) + 1
-              : 0;
-      if (timeout_ms < 0 || remaining_ms < timeout_ms) {
-        timeout_ms = remaining_ms;
-      }
+      timeout_ms = EarlierTimeout(timeout_ms, MsUntil(conn.deadline, now));
     }
     if (poll(pollfds.data(), pollfds.size(), timeout_ms) < 0) {
       CHECK_EQ(errno, EINTR);
@@ -1297,11 +1351,17 @@ static Request ServeTcp(int listen_fd, SSL_CTX* ctx) {
 
     if (!(pollfds[0].revents & POLLIN)) continue;
     for (;;) {
-      const int fd =
-          accept4(listen_fd, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
-      if (fd < 0) {
-        if (errno == EINTR || errno == ECONNABORTED) continue;
-        break;  // EAGAIN: the backlog is drained.
+      int fd;
+      const AcceptResult accepted =
+          AcceptConnection(listen_fd, SOCK_NONBLOCK, &fd);
+      if (accepted == AcceptResult::kBackOff) {
+        accept_after = uv_hrtime() + kAcceptBackoffNs;
+      }
+      if (accepted != AcceptResult::kAccepted) break;
+      if (pending.size() >= kMaxPendingHandshakes) {
+        SSL_free(pending.front().ssl);
+        close(pending.front().fd);
+        pending.erase(pending.begin());
       }
       SSL* ssl = SSL_new(ctx);
       if (ssl == nullptr || SSL_set_fd(ssl, fd) != 1) {
