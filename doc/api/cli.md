@@ -984,7 +984,8 @@ without `/` that ends in `:port`, with IPv6 hosts in brackets.
   process then sends its working directory, environment and umask, copies its
   stdin to the child and the child's stdout and stderr back, and forwards
   signals as messages. The child's stdio are pipes, so `isTTY` is `false` in
-  the child. Requires a build with OpenSSL.
+  the child. `NODE_ZYGOTE_TOKEN` is not passed on to the child. Requires a
+  build with OpenSSL.
 
 ```bash
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &

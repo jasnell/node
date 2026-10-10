@@ -104,6 +104,15 @@ freePort(common.mustCall((port) => {
       assert.match(child.stderr, /stderr:arg1\n/);
     }
 
+    // The program gets the client's environment without the token.
+    {
+      const child = client(port, [
+        '-p', 'JSON.stringify([process.env.NODE_ZYGOTE_TOKEN, process.env.OTHER])',
+      ], { env: { ...env, OTHER: 'kept' } });
+      assert.strictEqual(child.status, 0, child.stderr);
+      assert.strictEqual(child.stdout, '[null,"kept"]\n');
+    }
+
     // A client with another token fails the handshake, and the zygote keeps
     // serving.
     {

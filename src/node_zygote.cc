@@ -57,6 +57,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef __linux__
@@ -138,6 +139,15 @@ constexpr uint32_t kReplyExit = 'X';
 constexpr uint32_t kMaxPayloadSize = 1 << 20;
 // Exit status of a child whose request could not be read or was invalid.
 constexpr int kInvalidRequestExitCode = 125;
+
+// The token only authenticates a TCP client to the zygote; the program has no
+// use for it. Clients do not forward it, and the zygote drops it from requests
+// sent by clients that do.
+constexpr std::string_view kTokenEnvPrefix = "NODE_ZYGOTE_TOKEN=";
+
+static bool IsTokenEnvEntry(std::string_view entry) {
+  return entry.starts_with(kTokenEnvPrefix);
+}
 
 // RequestHeader::mode.
 constexpr uint32_t kModeScript = 0;
@@ -622,6 +632,7 @@ static bool ParseRequest(const RequestHeader& header,
                    std::make_move_iterator(strings.begin() + 1 + header.argc));
   req->env.assign(std::make_move_iterator(strings.begin() + 1 + header.argc),
                   std::make_move_iterator(strings.end()));
+  std::erase_if(req->env, IsTokenEnvEntry);
   return true;
 }
 
@@ -1495,8 +1506,10 @@ static bool BuildRequest(const char* self,
     payload.append(arg.c_str(), arg.size() + 1);
   }
   uint32_t envc = 0;
-  for (char** entry = ::environ; *entry != nullptr; entry++, envc++) {
+  for (char** entry = ::environ; *entry != nullptr; entry++) {
+    if (IsTokenEnvEntry(*entry)) continue;
     payload.append(*entry, strlen(*entry) + 1);
+    envc++;
   }
   if (payload.size() > kMaxPayloadSize) {
     fprintf(stderr, "%s: --connect: request too large\n", self);

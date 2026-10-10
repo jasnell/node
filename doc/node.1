@@ -626,7 +626,8 @@ certificates. The handshake fails unless both sides have the same token. The
 process then sends its working directory, environment and umask, copies its
 stdin to the child and the child's stdout and stderr back, and forwards
 signals as messages. The child's stdio are pipes, so \fBisTTY\fR is \fBfalse\fR in
-the child. Requires a build with OpenSSL.
+the child. \fBNODE_ZYGOTE_TOKEN\fR is not passed on to the child. Requires a
+build with OpenSSL.
 .El
 .Bd -literal
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
