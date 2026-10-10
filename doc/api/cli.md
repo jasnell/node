@@ -1819,7 +1819,7 @@ Run as a fork server listening at `address` instead of running an entry point.
 for [`--connect`][]. Modules loaded with [`--require`][] are preloaded once.
 Each dispatch forks a child that adopts the client's working directory,
 environment and arguments and runs the requested program. With `host:port`,
-the server requires the `NODE_ZYGOTE_TOKEN` environment variable (16 to 256
+the server requires the `NODE_ZYGOTE_TOKEN` environment variable (32 to 256
 characters) and only serves clients that complete a TLS handshake keyed with
 the same token. The token must be random, such as 24 bytes from
 `/dev/urandom` encoded in base64: anyone who records a handshake can try to

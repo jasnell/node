@@ -21,6 +21,20 @@ const tls = require('tls');
 const token = crypto.randomBytes(24).toString('base64');
 const env = { ...process.env, NODE_ZYGOTE_TOKEN: token };
 
+// Both sides reject tokens that are too short to be random enough, before
+// using the network.
+{
+  const short = { ...process.env, NODE_ZYGOTE_TOKEN: 'x'.repeat(31) };
+  const zygote = spawnSync(process.execPath, ['--experimental-zygote=127.0.0.1:1'],
+                           { encoding: 'utf8', env: short });
+  assert.notStrictEqual(zygote.status, 0);
+  assert.match(zygote.stderr, /requires NODE_ZYGOTE_TOKEN with 32 to 256 characters/);
+  const client = spawnSync(process.execPath, ['--connect=127.0.0.1:1', '-p', '1'],
+                           { encoding: 'utf8', env: short });
+  assert.strictEqual(client.status, 9);
+  assert.match(client.stderr, /requires NODE_ZYGOTE_TOKEN with 32 to 256 characters/);
+}
+
 // A port nothing listens on right now.
 function freePort(callback) {
   const server = net.createServer().listen(0, '127.0.0.1', () => {

@@ -983,7 +983,7 @@ Run as a fork server listening at \fBaddress\fR instead of running an entry poin
 for \fB--connect\fR. Modules loaded with \fB--require\fR are preloaded once.
 Each dispatch forks a child that adopts the client's working directory,
 environment and arguments and runs the requested program. With \fBhost:port\fR,
-the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment variable (16 to 256
+the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment variable (32 to 256
 characters) and only serves clients that complete a TLS handshake keyed with
 the same token. The token must be random, such as 24 bytes from
 \fB/dev/urandom\fR encoded in base64: anyone who records a handshake can try to

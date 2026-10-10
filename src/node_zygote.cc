@@ -185,7 +185,11 @@ struct Child {
 // the shared token before the zygote forks a relay process for the
 // connection. The request follows, without file descriptors. After that both
 // sides exchange frames: a FrameHeader followed by `size` bytes.
-constexpr size_t kMinTokenSize = 16;
+// The TLS key is derived from the token, and a recorded handshake allows an
+// offline guessing attack on it, so the token must be long and random. 32
+// characters is what 24 random bytes (192 bits) take in base64. The length
+// cannot prove that a token is random, but it rules out short passwords.
+constexpr size_t kMinTokenSize = 32;
 constexpr size_t kMaxTokenSize = 256;
 
 #if NODE_ZYGOTE_HAVE_TLS
@@ -1308,7 +1312,7 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   if (tcp && (token.size() < kMinTokenSize || token.size() > kMaxTokenSize)) {
     return THROW_ERR_INVALID_STATE(
         env,
-        "zygote: a TCP address requires NODE_ZYGOTE_TOKEN with 16 to 256 "
+        "zygote: a TCP address requires NODE_ZYGOTE_TOKEN with 32 to 256 "
         "characters");
   }
 
@@ -1668,7 +1672,7 @@ static ExitCode RunTcpClient(const char* self,
   const size_t token_size = token != nullptr ? strlen(token) : 0;
   if (token_size < kMinTokenSize || token_size > kMaxTokenSize) {
     fprintf(stderr,
-            "%s: --connect=%s requires NODE_ZYGOTE_TOKEN with 16 to 256 "
+            "%s: --connect=%s requires NODE_ZYGOTE_TOKEN with 32 to 256 "
             "characters\n",
             self,
             address.c_str());
