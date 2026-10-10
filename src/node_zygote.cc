@@ -103,6 +103,7 @@ using v8::Array;
 using v8::Context;
 using v8::Float64Array;
 using v8::FunctionCallbackInfo;
+using v8::Int32;
 using v8::Integer;
 using v8::Isolate;
 using v8::Local;
@@ -130,6 +131,23 @@ static void FillRandom(const FunctionCallbackInfo<Value>& args) {
     const double value = static_cast<double>(bits[i] >> 11) * 0x1.0p-53;
     memcpy(data + i * sizeof(value), &value, sizeof(value));
   }
+}
+
+// replaceFd(from, to): makes descriptor `to` refer to what `from` does,
+// close-on-exec. Children use it to point stdio streams that preloads created
+// in the zygote at the client's stdio.
+static void ReplaceFd(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args[0]->IsInt32());
+  CHECK(args[1]->IsInt32());
+  const int from = args[0].As<Int32>()->Value();
+  const int to = args[1].As<Int32>()->Value();
+  CHECK_NE(from, to);
+  int r;
+  do {
+    r = dup2(from, to);
+  } while (r < 0 && errno == EINTR);
+  CHECK_EQ(r, to);
+  CHECK_EQ(fcntl(to, F_SETFD, FD_CLOEXEC), 0);
 }
 
 #ifdef __linux__
@@ -2129,11 +2147,13 @@ static void Initialize(Local<Object> target,
                        void* priv) {
   SetMethod(context, target, "serve", Serve);
   SetMethod(context, target, "fillRandom", FillRandom);
+  SetMethod(context, target, "replaceFd", ReplaceFd);
 }
 
 static void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(Serve);
   registry->Register(FillRandom);
+  registry->Register(ReplaceFd);
 }
 
 }  // namespace zygote
