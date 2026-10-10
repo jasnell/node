@@ -1825,6 +1825,9 @@ characters) and only serves clients that complete a TLS handshake keyed with
 the same token. The token must be random, such as 24 bytes from
 `/dev/urandom` encoded in base64: anyone who records a handshake can try to
 guess it offline. Anyone with the token can run code as the server's user.
+Programs also run as the server's user and are not isolated from it or from
+each other: for example, memory they inherit can hold TLS secrets of earlier
+connections.
 Implies `--disable-sigusr1`. Linux only.
 
 ### `--force-context-aware`

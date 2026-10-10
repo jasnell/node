@@ -989,6 +989,9 @@ characters) and only serves clients that complete a TLS handshake keyed with
 the same token. The token must be random, such as 24 bytes from
 \fB/dev/urandom\fR encoded in base64: anyone who records a handshake can try to
 guess it offline. Anyone with the token can run code as the server's user.
+Programs also run as the server's user and are not isolated from it or from
+each other: for example, memory they inherit can hold TLS secrets of earlier
+connections.
 Implies \fB--disable-sigusr1\fR. Linux only.
 .
 .It Fl -force-context-aware

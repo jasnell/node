@@ -149,6 +149,21 @@ static bool IsTokenEnvEntry(std::string_view entry) {
   return entry.starts_with(kTokenEnvPrefix);
 }
 
+// Returns the value of NODE_ZYGOTE_TOKEN and removes the variable, wiping the
+// value where it was stored. The zygote derives the TLS key from the token
+// once; nothing else in it or in the processes it forks needs the token.
+static std::string TakeTokenFromEnvironment() {
+  char* value = getenv("NODE_ZYGOTE_TOKEN");
+  if (value == nullptr) return {};
+  std::string token(value);
+  // getenv() points into the variable's storage, such as the initial
+  // environment block that /proc/<pid>/environ shows. unsetenv() would only
+  // drop the pointer to it.
+  explicit_bzero(value, strlen(value));
+  unsetenv("NODE_ZYGOTE_TOKEN");
+  return token;
+}
+
 // RequestHeader::mode.
 constexpr uint32_t kModeScript = 0;
 constexpr uint32_t kModeEval = 1;
@@ -1137,13 +1152,11 @@ static Request RunRelay(int fd, SSL* ssl) {
   }
   if (child == 0) {
     close(fd);
-    // The program has no use for the connection or the PSK. The SSL does not
-    // own `fd`, so freeing it sends nothing. This is hygiene, not isolation:
-    // the program runs as the zygote's user, can read the token from the
-    // client's environment, and OpenSSL does not wipe all key material that
-    // the zygote freed before forking.
+    // The program has no use for the connection. The SSL does not own `fd`,
+    // so freeing it sends nothing. This is hygiene, not isolation: the program
+    // runs as the zygote's user, and freeing does not wipe the connection's
+    // secrets (see ServeTcp()).
     SSL_free(ssl);
-    ForgetTlsKey();
     signal(SIGPIPE, old_sigpipe);
     // The relay keeps fds 0-2 open, so the pipe fds are all > 2.
     CHECK_EQ(dup2(stdin_pipe[0], 0), 0);
@@ -1265,10 +1278,15 @@ static Request ServeTcp(int listen_fd, SSL_CTX* ctx) {
           close(other.fd);
         }
         for (const Relay& relay : relays) close(relay.pidfd);
+        // Only the zygote completes handshakes.
+        ForgetTlsKey();
         return RunRelay(conn.fd, conn.ssl);
       }
       // The relay owns the connection now. The SSL does not own the fd, so
-      // freeing it here sends nothing.
+      // freeing it here sends nothing. OpenSSL does not wipe the connection's
+      // secrets when it frees them, and has no API to do so: they stay in the
+      // zygote's freed memory, which relays and programs forked later
+      // inherit. The secrets are only good for this connection.
       SSL_free(conn.ssl);
       close(conn.fd);
       if (pid < 0) continue;
@@ -1310,13 +1328,17 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   CHECK(env->is_main_thread());
   CHECK(env->owns_process_state());
   CHECK(args[0]->IsString());
-  CHECK(args[1]->IsString());
   const std::string address = Utf8Value(isolate, args[0]).ToString();
-  const std::string token = Utf8Value(isolate, args[1]).ToString();
 
   std::string host;
   std::string port;
   const bool tcp = ParseTcpAddress(address, &host, &port);
+  // Read here rather than in JavaScript, so that no copy of the token is left
+  // on the JavaScript heap, which every forked process inherits.
+  std::string token;
+  auto wipe_token =
+      OnScopeLeave([&token]() { explicit_bzero(token.data(), token.size()); });
+  if (tcp) token = TakeTokenFromEnvironment();
   if (tcp && !IsValidPort(port)) {
     return THROW_ERR_INVALID_STATE(env, "zygote: invalid port in %s", address);
   }
@@ -1342,7 +1364,9 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   });
   if (tcp) {
     tls_ctx = NewTlsContext(true);
-    if (!tls_ctx || !SetTlsKey(token)) {
+    const bool key_ok = tls_ctx && SetTlsKey(token);
+    explicit_bzero(token.data(), token.size());
+    if (!key_ok) {
       return THROW_ERR_INVALID_STATE(
           env, "zygote: cannot set up TLS: %s", TlsError());
     }
@@ -1743,9 +1767,10 @@ static ExitCode RunTcpClient(const char* self,
   SetNonBlocking(sock, true);
 
   SslCtxPointer ctx = NewTlsContext(false);
-  SslPointer ssl(ctx && SetTlsKey(std::string(token, token_size))
-                     ? SSL_new(ctx.get())
-                     : nullptr);
+  std::string token_copy(token, token_size);
+  const bool key_ok = ctx && SetTlsKey(token_copy);
+  explicit_bzero(token_copy.data(), token_copy.size());
+  SslPointer ssl(key_ok ? SSL_new(ctx.get()) : nullptr);
   if (!ssl || SSL_set_fd(ssl.get(), sock) != 1) {
     fprintf(stderr, "%s: cannot set up TLS: %s\n", self, TlsError().c_str());
     return kClientFailure;
