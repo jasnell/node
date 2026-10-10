@@ -620,11 +620,13 @@ With a Unix domain socket, the process passes its stdio file descriptors,
 working directory, environment and umask to the server, and forwards signals
 to the forked child.
 .It
-With \fBhost:port\fR, the process first sends the token from the
-\fBNODE_ZYGOTE_TOKEN\fR environment variable, in plain text. It sends its working
-directory, environment and umask, copies its stdin to the child and the
-child's stdout and stderr back, and forwards signals as messages. The child's
-stdio are pipes, so \fBisTTY\fR is \fBfalse\fR in the child.
+With \fBhost:port\fR, the process connects with TLS 1.3, using a pre-shared key
+derived from the \fBNODE_ZYGOTE_TOKEN\fR environment variable instead of
+certificates. The handshake fails unless both sides have the same token. The
+process then sends its working directory, environment and umask, copies its
+stdin to the child and the child's stdout and stderr back, and forwards
+signals as messages. The child's stdio are pipes, so \fBisTTY\fR is \fBfalse\fR in
+the child. Requires a build with OpenSSL.
 .El
 .Bd -literal
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
@@ -982,8 +984,11 @@ for \fB--connect\fR. Modules loaded with \fB--require\fR are preloaded once.
 Each dispatch forks a child that adopts the client's working directory,
 environment and arguments and runs the requested program. With \fBhost:port\fR,
 the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment variable (16 to 256
-characters) and only serves clients that send the same token. Implies
-\fB--disable-sigusr1\fR. Linux only.
+characters) and only serves clients that complete a TLS handshake keyed with
+the same token. The token must be random, such as 24 bytes from
+\fB/dev/urandom\fR encoded in base64: anyone who records a handshake can try to
+guess it offline. Anyone with the token can run code as the server's user.
+Implies \fB--disable-sigusr1\fR. Linux only.
 .
 .It Fl -force-context-aware
 Disable loading native addons that are not context-aware.

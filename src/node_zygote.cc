@@ -13,10 +13,13 @@
 // back to its client.
 //
 // TCP: file descriptors and peer credentials cannot cross a TCP connection.
-// The zygote checks a shared token (NODE_ZYGOTE_TOKEN) without blocking, then
-// forks a relay process. The relay reads the request, forks the program child
-// with pipes on its fds 0-2, and exchanges stdin, stdout, stderr, signals and
-// the exit status with the client as frames.
+// Connections use TLS 1.3 with an external pre-shared key derived from a
+// shared token (NODE_ZYGOTE_TOKEN), so that neither side needs a certificate:
+// the handshake proves to each side that the other knows the key, and its
+// (EC)DHE exchange gives forward secrecy. The zygote completes the handshake
+// without blocking, then forks a relay process. The relay reads the request,
+// forks the program child with pipes on its fds 0-2, and exchanges stdin,
+// stdout, stderr, signals and the exit status with the client as frames.
 //
 // fork() is only safe while no other thread holds a lock, so serve() first
 // joins the V8 platform threads and refuses to run while any thread that is
@@ -36,8 +39,8 @@
 //             remaining argv strings are the program's arguments.
 //   replies:  Reply{'P', pid} once the child is forked, then
 //             Reply{'X', wait status} once it has terminated.
-// Over TCP the request is preceded by AuthHeader and the token, carries no
-// file descriptors, and is followed by frames (see FrameHeader).
+// Over TCP everything is sent inside the TLS connection: the request, without
+// file descriptors, and then frames (see FrameHeader) instead of replies.
 
 #include "node_zygote.h"
 #include "env-inl.h"
@@ -73,6 +76,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif  // __linux__
+
+#if HAVE_OPENSSL
+#include <openssl/crypto.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#endif  // HAVE_OPENSSL
+
+// The TCP transport needs OpenSSL's TLS 1.3 external PSK API, which BoringSSL
+// does not have.
+#if HAVE_OPENSSL && !defined(OPENSSL_IS_BORINGSSL)
+#define NODE_ZYGOTE_HAVE_TLS 1
+#else
+#define NODE_ZYGOTE_HAVE_TLS 0
+#endif
 
 namespace node {
 namespace zygote {
@@ -161,14 +179,21 @@ struct Child {
   bool client_gone;
 };
 
-// TCP transport. The client first sends AuthHeader and the token, which the
-// zygote checks before forking a relay process for the connection. The request
-// follows, without file descriptors. After that both sides exchange frames: a
-// FrameHeader followed by `size` bytes.
-constexpr uint32_t kAuthMagic = 0x4e5a5954;  // "NZYT"
+// TCP transport. The client and the zygote complete a TLS handshake keyed by
+// the shared token before the zygote forks a relay process for the
+// connection. The request follows, without file descriptors. After that both
+// sides exchange frames: a FrameHeader followed by `size` bytes.
 constexpr size_t kMinTokenSize = 16;
 constexpr size_t kMaxTokenSize = 256;
-constexpr uint64_t kAuthTimeoutNs = 1000000000;
+
+#if NODE_ZYGOTE_HAVE_TLS
+// How long a TCP peer has to complete the TLS handshake with the zygote, and
+// then to send its request to the relay. Generous, because the connection may
+// cross a slow network.
+constexpr uint64_t kHandshakeTimeoutNs = 10000000000;
+constexpr uint64_t kRequestTimeoutNs = 10000000000;
+// The client gives the zygote a little longer than the zygote gives it.
+constexpr uint64_t kClientHandshakeTimeoutNs = 12000000000;
 // Readers stop reading once this much data is waiting to be written.
 constexpr size_t kMaxBuffered = 1 << 20;
 constexpr uint32_t kMaxFrameSize = 1 << 20;
@@ -183,20 +208,9 @@ constexpr uint32_t kFrameStdout = 'O';  // data the program wrote to stdout
 constexpr uint32_t kFrameStderr = 'E';  // data the program wrote to stderr
 constexpr uint32_t kFrameExit = 'X';    // int32 wait status of the program
 
-struct AuthHeader {
-  uint32_t magic;
-  uint32_t token_size;
-};
-
 struct FrameHeader {
   uint32_t type;
   uint32_t size;
-};
-
-struct PendingConnection {
-  int fd;
-  uint64_t deadline;  // uv_hrtime()
-  std::string received;
 };
 
 struct Relay {
@@ -248,33 +262,263 @@ static bool ConsumeFrames(std::string* in, Fn&& fn) {
   return ok;
 }
 
-// Sends `*data` on a non-blocking socket, waiting up to `timeout_ms` whenever
-// the socket is full. Errors are ignored; the peer may be gone.
-static void FlushSocket(int fd, std::string* data, int timeout_ms) {
-  while (!data->empty()) {
-    const ssize_t n =
-        send(fd, data->data(), data->size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-    if (n > 0) {
-      data->erase(0, n);
-      continue;
-    }
-    if (n < 0 && errno == EINTR) continue;
-    if (n < 0 && errno == EAGAIN) {
-      pollfd pfd{fd, POLLOUT, 0};
-      if (poll(&pfd, 1, timeout_ms) > 0) continue;
-    }
-    return;
+// Waits until `fd` reports one of `events`. Returns false once `deadline`
+// (uv_hrtime()) has passed, or on error.
+static bool WaitFor(int fd, int16_t events, uint64_t deadline) {
+  for (;;) {
+    const uint64_t now = uv_hrtime();
+    if (now >= deadline) return false;
+    pollfd pfd{fd, events, 0};
+    const int r =
+        poll(&pfd, 1, static_cast<int>((deadline - now) / 1000000) + 1);
+    if (r > 0) return true;
+    if (r < 0 && errno != EINTR) return false;
   }
 }
 
-static bool TokensEqual(const std::string& a, const std::string& b) {
-  if (a.size() != b.size()) return false;
-  unsigned char diff = 0;
-  for (size_t i = 0; i < a.size(); i++) {
-    diff |= static_cast<unsigned char>(a[i] ^ b[i]);
-  }
-  return diff == 0;
+// TLS 1.3 with an external pre-shared key (RFC 8446, section 2.2). OpenSSL
+// clients only offer the psk_dhe_ke mode, so every handshake still performs
+// an (EC)DHE exchange. Neither side has a certificate. A handshake with a
+// different key fails when the server checks the client's PSK binder.
+//
+// The key is derived from the token, which therefore must be random: a
+// recorded handshake allows an offline guessing attack on the token.
+constexpr char kPskIdentity[] = "node-zygote-v1";
+constexpr char kPskLabel[] = "node zygote tls psk v1";
+// TLS_AES_128_GCM_SHA256, whose hash the PSK is used with.
+constexpr unsigned char kPskCipherId[] = {0x13, 0x01};
+
+// SHA-256(kPskLabel, NUL, token). Set by SetTlsKey().
+static unsigned char tls_psk[32];
+
+static bool SetTlsKey(const std::string& token) {
+  std::string input(kPskLabel, sizeof(kPskLabel));  // Including the NUL.
+  input += token;
+  unsigned int size = 0;
+  const int r = EVP_Digest(
+      input.data(), input.size(), tls_psk, &size, EVP_sha256(), nullptr);
+  OPENSSL_cleanse(input.data(), input.size());
+  return r == 1 && size == sizeof(tls_psk);
 }
+
+static void ForgetTlsKey() {
+  OPENSSL_cleanse(tls_psk, sizeof(tls_psk));
+}
+
+// Drains OpenSSL's error queue into a message.
+static std::string TlsError() {
+  std::string result;
+  while (const unsigned long err = ERR_get_error()) {  // NOLINT(runtime/int)
+    char buf[256];
+    ERR_error_string_n(err, buf, sizeof(buf));
+    if (!result.empty()) result += "; ";
+    result += buf;
+  }
+  return result.empty() ? "unknown error" : result;
+}
+
+static SSL_SESSION* NewPskSession(SSL* ssl) {
+  const SSL_CIPHER* cipher = SSL_CIPHER_find(ssl, kPskCipherId);
+  if (cipher == nullptr) return nullptr;
+  SSL_SESSION* session = SSL_SESSION_new();
+  if (session == nullptr ||
+      SSL_SESSION_set1_master_key(session, tls_psk, sizeof(tls_psk)) != 1 ||
+      SSL_SESSION_set_cipher(session, cipher) != 1 ||
+      SSL_SESSION_set_protocol_version(session, TLS1_3_VERSION) != 1) {
+    SSL_SESSION_free(session);
+    return nullptr;
+  }
+  return session;
+}
+
+// Server: the PSK for the identity the client offered. Without one the
+// handshake fails, as the zygote has no certificate to fall back to.
+static int FindPskSession(SSL* ssl,
+                          const unsigned char* identity,
+                          size_t identity_len,
+                          SSL_SESSION** session) {
+  *session = nullptr;
+  if (identity_len != sizeof(kPskIdentity) - 1 ||
+      memcmp(identity, kPskIdentity, identity_len) != 0) {
+    return 1;
+  }
+  *session = NewPskSession(ssl);
+  return *session != nullptr;
+}
+
+// Client: the PSK to offer.
+static int UsePskSession(SSL* ssl,
+                         const EVP_MD* md,
+                         const unsigned char** identity,
+                         size_t* identity_len,
+                         SSL_SESSION** session) {
+  *session = nullptr;
+  // After a HelloRetryRequest, the PSK must use the digest of the cipher
+  // suite the server picked. Only TLS_AES_128_GCM_SHA256 is enabled.
+  if (md != nullptr && EVP_MD_type(md) != NID_sha256) return 1;
+  *session = NewPskSession(ssl);
+  if (*session == nullptr) return 0;
+  *identity = reinterpret_cast<const unsigned char*>(kPskIdentity);
+  *identity_len = sizeof(kPskIdentity) - 1;
+  return 1;
+}
+
+using SslCtxPointer = DeleteFnPtr<SSL_CTX, SSL_CTX_free>;
+using SslPointer = DeleteFnPtr<SSL, SSL_free>;
+
+static SslCtxPointer NewTlsContext(bool server) {
+  SslCtxPointer ctx(
+      SSL_CTX_new(server ? TLS_server_method() : TLS_client_method()));
+  if (!ctx || SSL_CTX_set_min_proto_version(ctx.get(), TLS1_3_VERSION) != 1 ||
+      SSL_CTX_set_max_proto_version(ctx.get(), TLS1_3_VERSION) != 1 ||
+      SSL_CTX_set_ciphersuites(ctx.get(), "TLS_AES_128_GCM_SHA256") != 1) {
+    return nullptr;
+  }
+  // Write() may be retried with what is left of a buffer whose start has
+  // been consumed in the meantime.
+  SSL_CTX_set_mode(
+      ctx.get(),
+      SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  // TlsConnection::HasBufferedData() relies on this.
+  SSL_CTX_set_read_ahead(ctx.get(), 0);
+  // Always combine the PSK with an (EC)DHE exchange, for forward secrecy,
+  // even if the OpenSSL configuration allows psk_ke.
+  uint64_t no_dhe = SSL_OP_ALLOW_NO_DHE_KEX;
+#ifdef SSL_OP_PREFER_NO_DHE_KEX
+  no_dhe |= SSL_OP_PREFER_NO_DHE_KEX;
+#endif
+  SSL_CTX_clear_options(ctx.get(), no_dhe);
+  // Every connection uses the same external PSK; there is nothing to resume,
+  // and no early data.
+  SSL_CTX_set_session_cache_mode(ctx.get(), SSL_SESS_CACHE_OFF);
+  SSL_CTX_set_max_early_data(ctx.get(), 0);
+  if (server) {
+    SSL_CTX_set_psk_find_session_callback(ctx.get(), FindPskSession);
+    SSL_CTX_set_num_tickets(ctx.get(), 0);
+    SSL_CTX_set_options(ctx.get(), SSL_OP_NO_TICKET);
+  } else {
+    SSL_CTX_set_psk_use_session_callback(ctx.get(), UsePskSession);
+    // The zygote has no certificate. With an empty trust store, a server
+    // that presents one instead of knowing the PSK fails verification.
+    SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_PEER, nullptr);
+  }
+  return ctx;
+}
+
+// A TLS connection on a non-blocking socket.
+class TlsConnection {
+ public:
+  // Read() and Write() return the number of bytes transferred, kWouldBlock or
+  // kClosed (closed by the peer, or failed).
+  static constexpr ssize_t kWouldBlock = 0;
+  static constexpr ssize_t kClosed = -1;
+
+  TlsConnection(SSL* ssl, int fd) : ssl_(ssl), fd_(fd) {}
+
+  int fd() const { return fd_; }
+
+  ssize_t Read(char* buf, size_t size) {
+    ERR_clear_error();
+    const int n = SSL_read(ssl_, buf, ClampSize(size));
+    if (n <= 0) return Blocked(n, &read_events_);
+    read_events_ = POLLIN;
+    return n;
+  }
+
+  ssize_t Write(const char* data, size_t size) {
+    ERR_clear_error();
+    const int n = SSL_write(ssl_, data, ClampSize(size));
+    if (n <= 0) return Blocked(n, &write_events_);
+    write_events_ = POLLOUT;
+    return n;
+  }
+
+  // Writes as much of `*data` as the socket takes, and removes it from
+  // `*data`. Each SSL_write() sends at most a few records. Returns false if
+  // the connection is closed.
+  bool WriteSome(std::string* data) {
+    while (!data->empty()) {
+      const ssize_t n = Write(data->data(), data->size());
+      if (n == kClosed) return false;
+      if (n == kWouldBlock) break;
+      data->erase(0, n);
+    }
+    return true;
+  }
+
+  // The poll() events on fd() that let the last Read() or Write() that
+  // returned kWouldBlock make progress. A TLS read can need to write, and
+  // vice versa.
+  int16_t read_events() const { return read_events_; }
+  int16_t write_events() const { return write_events_; }
+
+  // Read() can return data that OpenSSL has already decrypted, even though
+  // fd() is not readable: a reader that stopped early (or read exactly what
+  // it needed) left the rest of a record behind. Unlike SSL_has_pending(),
+  // this does not count a record that has only partly arrived; for that one,
+  // fd() becomes readable once the rest arrives. That holds because read-ahead
+  // is off, so OpenSSL never reads past the current record.
+  bool HasBufferedData() const { return SSL_pending(ssl_) > 0; }
+
+  // Sends close_notify without waiting for the peer's. Best effort.
+  void Shutdown() {
+    ERR_clear_error();
+    SSL_shutdown(ssl_);
+    ERR_clear_error();
+  }
+
+ private:
+  static int ClampSize(size_t size) {
+    return static_cast<int>(std::min<size_t>(size, 1 << 20));
+  }
+
+  ssize_t Blocked(int result, int16_t* events) {
+    switch (SSL_get_error(ssl_, result)) {
+      case SSL_ERROR_WANT_READ:
+        *events = POLLIN;
+        return kWouldBlock;
+      case SSL_ERROR_WANT_WRITE:
+        *events = POLLOUT;
+        return kWouldBlock;
+      default:
+        ERR_clear_error();
+        return kClosed;
+    }
+  }
+
+  SSL* ssl_;
+  int fd_;
+  int16_t read_events_ = POLLIN;
+  int16_t write_events_ = POLLOUT;
+};
+
+static bool TlsReadFully(TlsConnection* conn,
+                         char* buf,
+                         size_t size,
+                         uint64_t deadline) {
+  while (size > 0) {
+    const ssize_t n = conn->Read(buf, size);
+    if (n == TlsConnection::kClosed) return false;
+    if (n > 0) {
+      buf += n;
+      size -= n;
+    } else if (!WaitFor(conn->fd(), conn->read_events(), deadline)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Sends `*data` until `deadline`. Errors are ignored; the peer may be gone.
+static void TlsFlush(TlsConnection* conn,
+                     std::string* data,
+                     uint64_t deadline) {
+  while (conn->WriteSome(data) && !data->empty() &&
+         WaitFor(conn->fd(), conn->write_events(), deadline)) {
+  }
+}
+
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
 // `<host>:<port>` without a '/', with IPv6 hosts in brackets, is a TCP
 // address; anything else is a Unix domain socket path.
@@ -327,9 +571,39 @@ static void SendReply(int fd, uint32_t type, int32_t value) {
   USE(send(fd, &reply, sizeof(reply), MSG_NOSIGNAL));
 }
 
-// Reads RequestHeader and payload. With `expect_fds` (Unix domain sockets) the
-// client's fds 0-2 must arrive as SCM_RIGHTS data with the first bytes.
-static bool ReadRequest(int conn, Request* req, bool expect_fds) {
+static bool IsValidRequestHeader(const RequestHeader& header) {
+  return header.magic == kRequestMagic && header.mode <= kModePrint &&
+         header.argc > 0 && header.payload_size <= kMaxPayloadSize;
+}
+
+// Fills in `req` from a valid `header` and its `payload`.
+static bool ParseRequest(const RequestHeader& header,
+                         const std::string& payload,
+                         Request* req) {
+  if (!payload.empty() && payload.back() != '\0') return false;
+  std::vector<std::string> strings;
+  for (size_t start = 0; start < payload.size();) {
+    size_t end = payload.find('\0', start);
+    strings.emplace_back(payload, start, end - start);
+    start = end + 1;
+  }
+  if (strings.size() != 1 + static_cast<size_t>(header.argc) + header.envc) {
+    return false;
+  }
+
+  req->mode = header.mode;
+  req->umask = static_cast<mode_t>(header.umask & 0777);
+  req->cwd = std::move(strings[0]);
+  req->argv.assign(std::make_move_iterator(strings.begin() + 1),
+                   std::make_move_iterator(strings.begin() + 1 + header.argc));
+  req->env.assign(std::make_move_iterator(strings.begin() + 1 + header.argc),
+                  std::make_move_iterator(strings.end()));
+  return true;
+}
+
+// Reads a request from a Unix domain socket. The client's fds 0-2 must arrive
+// as SCM_RIGHTS data with the first bytes.
+static bool ReadRequest(int conn, Request* req) {
   RequestHeader header;
   char control[CMSG_SPACE(sizeof(int) * 3)];
   iovec iov{&header, sizeof(header)};
@@ -362,49 +636,40 @@ static bool ReadRequest(int conn, Request* req, bool expect_fds) {
     }
   }
 
-  if (!expect_fds) req->CloseFds();
-  const bool ok =
-      !(msg.msg_flags & MSG_CTRUNC) &&
-      (!expect_fds ||
-       (req->fds[0] >= 0 && req->fds[1] >= 0 && req->fds[2] >= 0)) &&
+  const bool header_ok =
+      !(msg.msg_flags & MSG_CTRUNC) && req->fds[0] >= 0 && req->fds[1] >= 0 &&
+      req->fds[2] >= 0 &&
       (static_cast<size_t>(n) == sizeof(header) ||
-       ReadFully(conn,
-                 reinterpret_cast<char*>(&header) + n,
-                 sizeof(header) - n)) &&
-      header.magic == kRequestMagic && header.mode <= kModePrint &&
-      header.argc > 0 && header.payload_size <= kMaxPayloadSize;
-  if (!ok) {
+       ReadFully(
+           conn, reinterpret_cast<char*>(&header) + n, sizeof(header) - n)) &&
+      IsValidRequestHeader(header);
+  if (!header_ok) {
     req->CloseFds();
     return false;
   }
-
   std::string payload(header.payload_size, '\0');
   if (!ReadFully(conn, payload.data(), payload.size()) ||
-      (!payload.empty() && payload.back() != '\0')) {
+      !ParseRequest(header, payload, req)) {
     req->CloseFds();
     return false;
   }
-
-  std::vector<std::string> strings;
-  for (size_t start = 0; start < payload.size();) {
-    size_t end = payload.find('\0', start);
-    strings.emplace_back(payload, start, end - start);
-    start = end + 1;
-  }
-  if (strings.size() != 1 + static_cast<size_t>(header.argc) + header.envc) {
-    req->CloseFds();
-    return false;
-  }
-
-  req->mode = header.mode;
-  req->umask = static_cast<mode_t>(header.umask & 0777);
-  req->cwd = std::move(strings[0]);
-  req->argv.assign(std::make_move_iterator(strings.begin() + 1),
-                   std::make_move_iterator(strings.begin() + 1 + header.argc));
-  req->env.assign(std::make_move_iterator(strings.begin() + 1 + header.argc),
-                  std::make_move_iterator(strings.end()));
   return true;
 }
+
+#if NODE_ZYGOTE_HAVE_TLS
+// Reads a request from a TLS connection before `deadline`.
+static bool ReadRequest(TlsConnection* conn, uint64_t deadline, Request* req) {
+  RequestHeader header;
+  if (!TlsReadFully(
+          conn, reinterpret_cast<char*>(&header), sizeof(header), deadline) ||
+      !IsValidRequestHeader(header)) {
+    return false;
+  }
+  std::string payload(header.payload_size, '\0');
+  return TlsReadFully(conn, payload.data(), payload.size(), deadline) &&
+         ParseRequest(header, payload, req);
+}
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
 // Lists threads other than the calling one that make fork() unsafe. Idle
 // libuv threadpool threads are tolerated: they hold no locks while the loop
@@ -652,7 +917,7 @@ static Request ServeUnix(int listen_fd) {
       Request req;
       if (setsockopt(
               conn, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
-          !ReadRequest(conn, &req, true)) {
+          !ReadRequest(conn, &req)) {
         // Nothing has run in this process yet; skip the zygote's exit hooks.
         _exit(kInvalidRequestExitCode);
       }
@@ -668,49 +933,17 @@ static Request ServeUnix(int listen_fd) {
   }
 }
 
-enum class AuthResult { kIncomplete, kAccepted, kRejected };
-
-// Reads as much of the AuthHeader and token as is available, never past them.
-static AuthResult ReadAuth(PendingConnection* conn, const std::string& token) {
-  for (;;) {
-    size_t wanted = sizeof(AuthHeader);
-    if (conn->received.size() >= sizeof(AuthHeader)) {
-      AuthHeader header;
-      memcpy(&header, conn->received.data(), sizeof(header));
-      if (header.magic != kAuthMagic || header.token_size != token.size()) {
-        return AuthResult::kRejected;
-      }
-      wanted += header.token_size;
-      if (conn->received.size() == wanted) {
-        return TokensEqual(conn->received.substr(sizeof(AuthHeader)), token)
-                   ? AuthResult::kAccepted
-                   : AuthResult::kRejected;
-      }
-    }
-    char buf[512];
-    const ssize_t n =
-        recv(conn->fd,
-             buf,
-             std::min(sizeof(buf), wanted - conn->received.size()),
-             MSG_DONTWAIT);
-    if (n > 0) {
-      conn->received.append(buf, n);
-      continue;
-    }
-    if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
-      return AuthResult::kIncomplete;
-    }
-    return AuthResult::kRejected;
-  }
-}
+#if NODE_ZYGOTE_HAVE_TLS
 
 // Copies data between the connection and the program's stdio pipes, applies
 // signal frames, and sends the program's wait status once it has exited.
-static void PumpRelay(
-    int conn, pid_t child, int stdin_fd, int stdout_fd, int stderr_fd) {
+static void PumpRelay(TlsConnection* conn,
+                      pid_t child,
+                      int stdin_fd,
+                      int stdout_fd,
+                      int stderr_fd) {
   const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, child, 0));
   CHECK_GE(pidfd, 0);
-  SetNonBlocking(conn, true);
   SetNonBlocking(stdin_fd, true);
   SetNonBlocking(stdout_fd, true);
   SetNonBlocking(stderr_fd, true);
@@ -729,6 +962,19 @@ static void PumpRelay(
     to_stdin.clear();
     stdin_end = true;
     if (kill(-child, SIGHUP) != 0) kill(child, SIGHUP);
+  };
+  const auto on_frame = [&](uint32_t type, const char* data, uint32_t size) {
+    if (type == kFrameStdin) {
+      if (!stdin_end) to_stdin.append(data, size);
+    } else if (type == kFrameStdinEnd) {
+      stdin_end = true;
+    } else if (type == kFrameSignal && size == sizeof(int32_t)) {
+      int32_t signo;
+      memcpy(&signo, data, sizeof(signo));
+      if (signo > 0 && signo < NSIG && kill(-child, signo) != 0) {
+        kill(child, signo);
+      }
+    }
   };
   // Returns true if data was read.
   const auto read_output = [&](int* fd, uint32_t type) {
@@ -750,56 +996,39 @@ static void PumpRelay(
       stdin_fd = -1;
     }
     const bool room = to_client.size() < kMaxBuffered;
-    int16_t conn_events = 0;
-    if (!client_gone) {
-      if (to_stdin.size() < kMaxBuffered) conn_events |= POLLIN;
-      if (!to_client.empty()) conn_events |= POLLOUT;
-    }
+    const bool want_read = !client_gone && to_stdin.size() < kMaxBuffered;
+    const bool want_write = !client_gone && !to_client.empty();
+    const int16_t conn_events = (want_read ? conn->read_events() : 0) |
+                                (want_write ? conn->write_events() : 0);
+    const bool buffered = want_read && conn->HasBufferedData();
     pollfd fds[] = {
-        {conn_events != 0 ? conn : -1, conn_events, 0},
+        {conn_events != 0 ? conn->fd() : -1, conn_events, 0},
         {stdin_fd >= 0 && !to_stdin.empty() ? stdin_fd : -1, POLLOUT, 0},
         {stdout_fd >= 0 && room ? stdout_fd : -1, POLLIN, 0},
         {stderr_fd >= 0 && room ? stderr_fd : -1, POLLIN, 0},
         {pidfd, POLLIN, 0},
     };
-    if (poll(fds, arraysize(fds), -1) < 0) {
+    if (poll(fds, arraysize(fds), buffered ? 0 : -1) < 0) {
       CHECK_EQ(errno, EINTR);
       continue;
     }
 
-    if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-      const ssize_t n = recv(conn, buffer.data(), buffer.size(), MSG_DONTWAIT);
-      if (n > 0) {
+    const bool conn_ready = buffered || fds[0].revents != 0;
+    if (want_read && conn_ready) {
+      while (!client_gone && to_stdin.size() < kMaxBuffered) {
+        const ssize_t n = conn->Read(buffer.data(), buffer.size());
+        if (n == TlsConnection::kWouldBlock) break;
+        if (n == TlsConnection::kClosed) {
+          hang_up();
+          break;
+        }
         from_client.append(buffer.data(), n);
-        const bool ok = ConsumeFrames(
-            &from_client, [&](uint32_t type, const char* data, uint32_t size) {
-              if (type == kFrameStdin) {
-                if (!stdin_end) to_stdin.append(data, size);
-              } else if (type == kFrameStdinEnd) {
-                stdin_end = true;
-              } else if (type == kFrameSignal && size == sizeof(int32_t)) {
-                int32_t signo;
-                memcpy(&signo, data, sizeof(signo));
-                if (signo > 0 && signo < NSIG && kill(-child, signo) != 0) {
-                  kill(child, signo);
-                }
-              }
-            });
-        if (!ok) hang_up();
-      } else if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
-        hang_up();
+        if (!ConsumeFrames(&from_client, on_frame)) hang_up();
       }
     }
-    if (!client_gone && (fds[0].revents & POLLOUT)) {
-      const ssize_t n = send(conn,
-                             to_client.data(),
-                             to_client.size(),
-                             MSG_NOSIGNAL | MSG_DONTWAIT);
-      if (n > 0) {
-        to_client.erase(0, n);
-      } else if (n < 0 && errno != EAGAIN && errno != EINTR) {
-        hang_up();
-      }
+    if (want_write && !client_gone && conn_ready &&
+        !conn->WriteSome(&to_client)) {
+      hang_up();
     }
     if (fds[1].revents & (POLLOUT | POLLERR | POLLHUP)) {
       const ssize_t n = write(stdin_fd, to_stdin.data(), to_stdin.size());
@@ -827,32 +1056,38 @@ static void PumpRelay(
       while (stderr_fd >= 0 && read_output(&stderr_fd, kFrameStderr)) {}
       if (!client_gone) {
         AppendInt32Frame(&to_client, kFrameExit, status);
-        FlushSocket(conn, &to_client, 5000);
+        TlsFlush(conn, &to_client, uv_hrtime() + 5000000000);
+        conn->Shutdown();
       }
       return;
     }
   }
 }
 
-// Runs in a relay process forked for an authenticated TCP connection. Reads
-// the request, forks the program child with pipes on its fds 0-2, and copies
-// data between the pipes and the connection until the program has exited.
-// Returns only in the program child; the relay itself exits.
-static Request RunRelay(int conn) {
+// Sends an exit frame with `status` and closes the connection. Best effort.
+static void SendExitFrame(TlsConnection* conn, int status) {
+  std::string reply;
+  AppendInt32Frame(&reply, kFrameExit, status);
+  TlsFlush(conn, &reply, uv_hrtime() + 1000000000);
+  conn->Shutdown();
+}
+
+// Runs in a relay process forked for a TCP connection whose TLS handshake has
+// completed. Reads the request, forks the program child with pipes on its fds
+// 0-2, and copies data between the pipes and the connection until the program
+// has exited. Returns only in the program child; the relay itself exits.
+static Request RunRelay(int fd, SSL* ssl) {
+  // OpenSSL writes to the socket with write(), not send(MSG_NOSIGNAL).
+  // Node.js ignores SIGPIPE already, unless an embedder disabled that.
+  const sighandler_t old_sigpipe = signal(SIGPIPE, SIG_IGN);
+  TlsConnection conn(ssl, fd);
   Request req;
-  SetNonBlocking(conn, false);
-  const timeval timeout{1, 0};
-  if (setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) !=
-          0 ||
-      !ReadRequest(conn, &req, false)) {
-    std::string reply;
-    AppendInt32Frame(
-        &reply, kFrameExit, W_EXITCODE(kInvalidRequestExitCode, 0));
-    FlushSocket(conn, &reply, 1000);
+  if (!ReadRequest(&conn, uv_hrtime() + kRequestTimeoutNs, &req)) {
+    SendExitFrame(&conn, W_EXITCODE(kInvalidRequestExitCode, 0));
     _exit(0);
   }
   const int one = 1;
-  setsockopt(conn, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
   int stdin_pipe[2];
   int stdout_pipe[2];
@@ -863,38 +1098,77 @@ static Request RunRelay(int conn) {
 
   const pid_t child = fork();
   if (child < 0) {
-    std::string reply;
-    AppendInt32Frame(&reply, kFrameExit, W_EXITCODE(127, 0));
-    FlushSocket(conn, &reply, 1000);
+    SendExitFrame(&conn, W_EXITCODE(127, 0));
     _exit(0);
   }
   if (child == 0) {
-    close(conn);
+    close(fd);
+    // The program has no use for the connection or the PSK. The SSL does not
+    // own `fd`, so freeing it sends nothing. This is hygiene, not isolation:
+    // the program runs as the zygote's user, can read the token from the
+    // client's environment, and OpenSSL does not wipe all key material that
+    // the zygote freed before forking.
+    SSL_free(ssl);
+    ForgetTlsKey();
+    signal(SIGPIPE, old_sigpipe);
     // The relay keeps fds 0-2 open, so the pipe fds are all > 2.
     CHECK_EQ(dup2(stdin_pipe[0], 0), 0);
     CHECK_EQ(dup2(stdout_pipe[1], 1), 1);
     CHECK_EQ(dup2(stderr_pipe[1], 2), 2);
-    for (int fd : {stdin_pipe[0],
-                   stdin_pipe[1],
-                   stdout_pipe[0],
-                   stdout_pipe[1],
-                   stderr_pipe[0],
-                   stderr_pipe[1]}) {
-      close(fd);
+    for (int pipe_fd : {stdin_pipe[0],
+                        stdin_pipe[1],
+                        stdout_pipe[0],
+                        stdout_pipe[1],
+                        stderr_pipe[0],
+                        stderr_pipe[1]}) {
+      close(pipe_fd);
     }
     return req;
   }
   close(stdin_pipe[0]);
   close(stdout_pipe[1]);
   close(stderr_pipe[1]);
-  PumpRelay(conn, child, stdin_pipe[1], stdout_pipe[0], stderr_pipe[0]);
+  PumpRelay(&conn, child, stdin_pipe[1], stdout_pipe[0], stderr_pipe[0]);
   _exit(0);
 }
 
-// Accept loop for a TCP socket. A connection must send the token within
-// kAuthTimeoutNs before the zygote forks a relay for it. Returns only in a
-// program child, with the relay's pipes installed on fds 0-2.
-static Request ServeTcp(int listen_fd, const std::string& token) {
+// A TCP connection whose TLS handshake has not completed yet.
+struct PendingConnection {
+  int fd;
+  uint64_t deadline;  // uv_hrtime()
+  SSL* ssl;
+  int16_t events;  // What the handshake waits for.
+};
+
+enum class HandshakeResult { kIncomplete, kAccepted, kRejected };
+
+static HandshakeResult ContinueHandshake(PendingConnection* conn) {
+  ERR_clear_error();
+  const int r = SSL_do_handshake(conn->ssl);
+  if (r == 1) {
+    // The zygote has no certificate, so a handshake can only complete with
+    // the PSK. Check anyway: the PSK is what authenticates the client.
+    return SSL_session_reused(conn->ssl) == 1 ? HandshakeResult::kAccepted
+                                              : HandshakeResult::kRejected;
+  }
+  switch (SSL_get_error(conn->ssl, r)) {
+    case SSL_ERROR_WANT_READ:
+      conn->events = POLLIN;
+      return HandshakeResult::kIncomplete;
+    case SSL_ERROR_WANT_WRITE:
+      conn->events = POLLOUT;
+      return HandshakeResult::kIncomplete;
+    default:
+      // Most likely a client with another token. There is nobody to tell.
+      ERR_clear_error();
+      return HandshakeResult::kRejected;
+  }
+}
+
+// Accept loop for a TCP socket. A connection must complete the TLS handshake
+// within kHandshakeTimeoutNs before the zygote forks a relay for it. Returns
+// only in a program child, with the relay's pipes installed on fds 0-2.
+static Request ServeTcp(int listen_fd, SSL_CTX* ctx) {
   std::vector<PendingConnection> pending;
   std::vector<Relay> relays;
   std::vector<pollfd> pollfds;
@@ -908,7 +1182,7 @@ static Request ServeTcp(int listen_fd, const std::string& token) {
     int timeout_ms = -1;
     const uint64_t now = uv_hrtime();
     for (const PendingConnection& conn : pending) {
-      pollfds.push_back({conn.fd, POLLIN, 0});
+      pollfds.push_back({conn.fd, conn.events, 0});
       const int remaining_ms =
           conn.deadline > now
               ? static_cast<int>((conn.deadline - now) / 1000000) + 1
@@ -932,34 +1206,38 @@ static Request ServeTcp(int listen_fd, const std::string& token) {
 
     const uint64_t after_poll = uv_hrtime();
     for (size_t i = pending.size(); i-- > 0;) {
-      AuthResult result = AuthResult::kIncomplete;
+      HandshakeResult result = HandshakeResult::kIncomplete;
       if (pollfds[1 + relay_count + i].revents != 0) {
-        result = ReadAuth(&pending[i], token);
+        result = ContinueHandshake(&pending[i]);
       }
-      if (result == AuthResult::kIncomplete &&
+      if (result == HandshakeResult::kIncomplete &&
           after_poll >= pending[i].deadline) {
-        result = AuthResult::kRejected;
+        result = HandshakeResult::kRejected;
       }
-      if (result == AuthResult::kIncomplete) continue;
-      const int fd = pending[i].fd;
+      if (result == HandshakeResult::kIncomplete) continue;
+      const PendingConnection conn = pending[i];
       pending.erase(pending.begin() + i);
-      if (result == AuthResult::kRejected) {
-        close(fd);
+      if (result == HandshakeResult::kRejected) {
+        SSL_free(conn.ssl);
+        close(conn.fd);
         continue;
       }
 
       const pid_t pid = fork();
-      if (pid < 0) {
-        close(fd);
-        continue;
-      }
       if (pid == 0) {
         close(listen_fd);
-        for (const PendingConnection& other : pending) close(other.fd);
+        for (const PendingConnection& other : pending) {
+          SSL_free(other.ssl);  // Sends nothing: the SSL does not own the fd.
+          close(other.fd);
+        }
         for (const Relay& relay : relays) close(relay.pidfd);
-        return RunRelay(fd);
+        return RunRelay(conn.fd, conn.ssl);
       }
-      close(fd);
+      // The relay owns the connection now. The SSL does not own the fd, so
+      // freeing it here sends nothing.
+      SSL_free(conn.ssl);
+      close(conn.fd);
+      if (pid < 0) continue;
       const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
       CHECK_GE(pidfd, 0);
       relays.push_back({pid, pidfd});
@@ -973,10 +1251,21 @@ static Request ServeTcp(int listen_fd, const std::string& token) {
         if (errno == EINTR || errno == ECONNABORTED) continue;
         break;  // EAGAIN: the backlog is drained.
       }
-      pending.push_back({fd, uv_hrtime() + kAuthTimeoutNs, {}});
+      SSL* ssl = SSL_new(ctx);
+      if (ssl == nullptr || SSL_set_fd(ssl, fd) != 1) {
+        ERR_clear_error();
+        SSL_free(ssl);
+        close(fd);
+        continue;
+      }
+      SSL_set_accept_state(ssl);
+      // The client speaks first.
+      pending.push_back({fd, uv_hrtime() + kHandshakeTimeoutNs, ssl, POLLIN});
     }
   }
 }
+
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
 // Runs the accept loop for a Unix domain socket path or a TCP `host:port`.
 // Returns (in a forked child only) an array [pid, cwd, argv, env, mode]
@@ -1009,6 +1298,29 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
         env, "zygote: cannot fork while the event loop has active requests");
   }
 
+#if NODE_ZYGOTE_HAVE_TLS
+  SslCtxPointer tls_ctx;
+  // Serve() only returns on errors and in program children; neither needs
+  // the key.
+  auto forget_key = OnScopeLeave([]() {
+    ForgetTlsKey();
+    ERR_clear_error();
+  });
+  if (tcp) {
+    tls_ctx = NewTlsContext(true);
+    if (!tls_ctx || !SetTlsKey(token)) {
+      return THROW_ERR_INVALID_STATE(
+          env, "zygote: cannot set up TLS: %s", TlsError());
+    }
+  }
+#else
+  if (tcp) {
+    return THROW_ERR_INVALID_STATE(
+        env,
+        "zygote: a TCP address requires a build with OpenSSL (not BoringSSL)");
+  }
+#endif  // NODE_ZYGOTE_HAVE_TLS
+
   std::string error;
   const int listen_fd =
       tcp ? ListenTcp(host, port, &error) : ListenUnix(address, &error);
@@ -1036,7 +1348,11 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
   MakeMappingsInheritable();
 
   // Only children that become programs get past this point.
-  Request req = tcp ? ServeTcp(listen_fd, token) : ServeUnix(listen_fd);
+#if NODE_ZYGOTE_HAVE_TLS
+  Request req = tcp ? ServeTcp(listen_fd, tls_ctx.get()) : ServeUnix(listen_fd);
+#else
+  Request req = ServeUnix(listen_fd);
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
   // New session: no controlling terminal and a process group that can be
   // signaled as a whole.
@@ -1087,6 +1403,7 @@ static void ForwardSignalToChild(int signo) {
   errno = saved_errno;
 }
 
+#if NODE_ZYGOTE_HAVE_TLS
 // TCP: signals are handed to the client's poll loop, which sends them as
 // frames.
 static int client_signal_pipe = -1;
@@ -1097,6 +1414,7 @@ static void WriteSignalToPipe(int signo) {
   USE(write(client_signal_pipe, &byte, 1));
   errno = saved_errno;
 }
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
 static void InstallSignalHandlers(void (*handler)(int)) {
   struct sigaction sa {};
@@ -1175,6 +1493,7 @@ static bool BuildRequest(const char* self,
   return true;
 }
 
+#if NODE_ZYGOTE_HAVE_TLS
 // Writes all of `data` to `fd`, waiting whenever it is full. Returns false if
 // the descriptor stopped accepting data.
 static bool WriteAll(int fd, const char* data, size_t size) {
@@ -1195,6 +1514,7 @@ static bool WriteAll(int fd, const char* data, size_t size) {
   }
   return true;
 }
+#endif  // NODE_ZYGOTE_HAVE_TLS
 
 static ExitCode RunUnixClient(const char* self,
                               const std::string& socket_path,
@@ -1332,6 +1652,21 @@ static ExitCode RunTcpClient(const char* self,
             address.c_str());
     return ExitCode::kInvalidCommandLineArgument;
   }
+#if !NODE_ZYGOTE_HAVE_TLS
+  fprintf(stderr,
+          "%s: --connect=%s requires a build with OpenSSL (not BoringSSL)\n",
+          self,
+          address.c_str());
+  return ExitCode::kInvalidCommandLineArgument;
+#else
+  // Node.js has not initialized OpenSSL yet, and the client does not need its
+  // configuration file.
+  if (OPENSSL_init_ssl(OPENSSL_INIT_NO_LOAD_CONFIG, nullptr) != 1) {
+    fprintf(stderr, "%s: cannot initialize OpenSSL\n", self);
+    return kClientFailure;
+  }
+  // OpenSSL writes to the socket with write(), not send(MSG_NOSIGNAL).
+  signal(SIGPIPE, SIG_IGN);
 
   addrinfo hints{};
   hints.ai_family = AF_UNSPEC;
@@ -1366,21 +1701,65 @@ static ExitCode RunTcpClient(const char* self,
   auto close_sock = OnScopeLeave([sock]() { close(sock); });
   const int one = 1;
   setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+  SetNonBlocking(sock, true);
 
-  std::string request;
-  if (!BuildRequest(self, mode, request_argv, &request)) {
+  SslCtxPointer ctx = NewTlsContext(false);
+  SslPointer ssl(ctx && SetTlsKey(std::string(token, token_size))
+                     ? SSL_new(ctx.get())
+                     : nullptr);
+  if (!ssl || SSL_set_fd(ssl.get(), sock) != 1) {
+    fprintf(stderr, "%s: cannot set up TLS: %s\n", self, TlsError().c_str());
     return kClientFailure;
   }
-  const AuthHeader auth{kAuthMagic, static_cast<uint32_t>(token_size)};
-  std::string to_server(reinterpret_cast<const char*>(&auth), sizeof(auth));
-  to_server.append(token, token_size);
-  to_server += request;
+  SSL_set_connect_state(ssl.get());
+  const uint64_t deadline = uv_hrtime() + kClientHandshakeTimeoutNs;
+  for (;;) {
+    ERR_clear_error();
+    const int r = SSL_do_handshake(ssl.get());
+    if (r == 1) break;
+    const int err = SSL_get_error(ssl.get(), r);
+    if ((err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) &&
+        WaitFor(
+            sock, err == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, deadline)) {
+      continue;
+    }
+    std::string reason;
+    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+      reason = TlsError();
+    } else if (uv_hrtime() >= deadline) {
+      reason = "timed out";
+    } else {
+      reason = std::string("poll(): ") + strerror(errno);
+    }
+    fprintf(stderr,
+            "%s: TLS handshake with %s failed (does NODE_ZYGOTE_TOKEN match "
+            "the zygote's?): %s\n",
+            self,
+            address.c_str(),
+            reason.c_str());
+    return kClientFailure;
+  }
+  // NewTlsContext() leaves no way to complete a handshake without the PSK,
+  // but make sure: only the PSK authenticates the zygote.
+  if (SSL_session_reused(ssl.get()) != 1) {
+    fprintf(stderr,
+            "%s: %s did not authenticate with NODE_ZYGOTE_TOKEN\n",
+            self,
+            address.c_str());
+    return kClientFailure;
+  }
+  ForgetTlsKey();
+  TlsConnection conn(ssl.get(), sock);
+
+  std::string to_server;
+  if (!BuildRequest(self, mode, request_argv, &to_server)) {
+    return kClientFailure;
+  }
 
   int signal_pipe[2];
   CHECK_EQ(pipe2(signal_pipe, O_CLOEXEC | O_NONBLOCK), 0);
   client_signal_pipe = signal_pipe[1];
   InstallSignalHandlers(WriteSignalToPipe);
-  SetNonBlocking(sock, true);
 
   const auto lost_connection = [&]() {
     fprintf(stderr, "%s: lost connection to the zygote at %s\n", self,
@@ -1394,14 +1773,28 @@ static ExitCode RunTcpClient(const char* self,
   bool stdout_open = true;
   bool stderr_open = true;
   std::optional<int32_t> exit_status;
+  const auto on_frame = [&](uint32_t type, const char* data, uint32_t size) {
+    if (type == kFrameStdout) {
+      if (stdout_open) stdout_open = WriteAll(1, data, size);
+    } else if (type == kFrameStderr) {
+      if (stderr_open) stderr_open = WriteAll(2, data, size);
+    } else if (type == kFrameExit && size == sizeof(int32_t)) {
+      int32_t status;
+      memcpy(&status, data, sizeof(status));
+      exit_status = status;
+    }
+  };
   for (;;) {
+    const bool want_write = !to_server.empty();
+    const int16_t conn_events =
+        conn.read_events() | (want_write ? conn.write_events() : 0);
+    const bool buffered = conn.HasBufferedData();
     pollfd fds[] = {
-        {sock, static_cast<int16_t>(POLLIN | (to_server.empty() ? 0 : POLLOUT)),
-         0},
+        {sock, conn_events, 0},
         {stdin_open && to_server.size() < kMaxBuffered ? 0 : -1, POLLIN, 0},
         {signal_pipe[0], POLLIN, 0},
     };
-    if (poll(fds, arraysize(fds), -1) < 0) {
+    if (poll(fds, arraysize(fds), buffered ? 0 : -1) < 0) {
       if (errno == EINTR) continue;
       return lost_connection();
     }
@@ -1422,41 +1815,22 @@ static ExitCode RunTcpClient(const char* self,
         stdin_open = false;
       }
     }
-    if (fds[0].revents & POLLOUT) {
-      const ssize_t n =
-          send(sock, to_server.data(), to_server.size(), MSG_NOSIGNAL);
-      if (n > 0) {
-        to_server.erase(0, n);
-      } else if (n < 0 && errno != EAGAIN && errno != EINTR) {
-        return lost_connection();
+
+    if (!buffered && fds[0].revents == 0) continue;
+    if (!conn.WriteSome(&to_server)) return lost_connection();
+    for (;;) {
+      const ssize_t n = conn.Read(buffer.data(), buffer.size());
+      if (n == TlsConnection::kWouldBlock) break;
+      if (n == TlsConnection::kClosed) return lost_connection();
+      from_server.append(buffer.data(), n);
+      const bool ok = ConsumeFrames(&from_server, on_frame);
+      if (exit_status.has_value()) {
+        return ExitCodeFromWaitStatus(*exit_status);
       }
-    }
-    if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
-      const ssize_t n = recv(sock, buffer.data(), buffer.size(), 0);
-      if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
-        return lost_connection();
-      }
-      if (n > 0) {
-        from_server.append(buffer.data(), n);
-        const bool ok = ConsumeFrames(
-            &from_server, [&](uint32_t type, const char* data, uint32_t size) {
-              if (type == kFrameStdout) {
-                if (stdout_open) stdout_open = WriteAll(1, data, size);
-              } else if (type == kFrameStderr) {
-                if (stderr_open) stderr_open = WriteAll(2, data, size);
-              } else if (type == kFrameExit && size == sizeof(int32_t)) {
-                int32_t status;
-                memcpy(&status, data, sizeof(status));
-                exit_status = status;
-              }
-            });
-        if (exit_status.has_value()) {
-          return ExitCodeFromWaitStatus(*exit_status);
-        }
-        if (!ok) return lost_connection();
-      }
+      if (!ok) return lost_connection();
     }
   }
+#endif  // NODE_ZYGOTE_HAVE_TLS
 }
 
 ExitCode RunClient(const std::string& address,

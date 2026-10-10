@@ -978,11 +978,13 @@ without `/` that ends in `:port`, with IPv6 hosts in brackets.
 * With a Unix domain socket, the process passes its stdio file descriptors,
   working directory, environment and umask to the server, and forwards signals
   to the forked child.
-* With `host:port`, the process first sends the token from the
-  `NODE_ZYGOTE_TOKEN` environment variable, in plain text. It sends its working
-  directory, environment and umask, copies its stdin to the child and the
-  child's stdout and stderr back, and forwards signals as messages. The child's
-  stdio are pipes, so `isTTY` is `false` in the child.
+* With `host:port`, the process connects with TLS 1.3, using a pre-shared key
+  derived from the `NODE_ZYGOTE_TOKEN` environment variable instead of
+  certificates. The handshake fails unless both sides have the same token. The
+  process then sends its working directory, environment and umask, copies its
+  stdin to the child and the child's stdout and stderr back, and forwards
+  signals as messages. The child's stdio are pipes, so `isTTY` is `false` in
+  the child. Requires a build with OpenSSL.
 
 ```bash
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
@@ -1818,8 +1820,11 @@ for [`--connect`][]. Modules loaded with [`--require`][] are preloaded once.
 Each dispatch forks a child that adopts the client's working directory,
 environment and arguments and runs the requested program. With `host:port`,
 the server requires the `NODE_ZYGOTE_TOKEN` environment variable (16 to 256
-characters) and only serves clients that send the same token. Implies
-`--disable-sigusr1`. Linux only.
+characters) and only serves clients that complete a TLS handshake keyed with
+the same token. The token must be random, such as 24 bytes from
+`/dev/urandom` encoded in base64: anyone who records a handshake can try to
+guess it offline. Anyone with the token can run code as the server's user.
+Implies `--disable-sigusr1`. Linux only.
 
 ### `--force-context-aware`
 
