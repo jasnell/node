@@ -611,14 +611,19 @@ Dispatch the entry point and its arguments, or the code given with
 \fB--eval\fR or \fB--print\fR and its arguments, to the fork server listening
 at \fBaddress\fR (see \fB--experimental-zygote\fR) instead of running it in this
 process. The process exits with the child's exit code or terminates with the
-child's signal. Other Node.js options are ignored. Linux only.
+child's signal. It exits with 125 if it cannot reach the server or the server
+cannot read its request, and with 127 if the server cannot start a child, which
+is indistinguishable from a child that exits with the same code. Other Node.js
+options are ignored, except that \fB--version\fR, \fB--help\fR and \fB--v8-options\fR are
+handled as usual. Linux only.
 \fBaddress\fR is a Unix domain socket path, or \fBhost:port\fR for TCP: a value
 without \fB/\fR that ends in \fB:port\fR, with IPv6 hosts in brackets.
 .Bl -bullet
 .It
 With a Unix domain socket, the process passes its stdio file descriptors,
 working directory, environment and umask to the server, and forwards signals
-to the forked child.
+to the forked child by process ID, so both must be in the same PID
+namespace. It refuses a socket that is served by another user.
 .It
 With \fBhost:port\fR, the process connects with TLS 1.3, using a pre-shared key
 derived from the \fBNODE_ZYGOTE_TOKEN\fR environment variable instead of
@@ -629,6 +634,9 @@ signals as messages. The child's stdio are pipes, so \fBisTTY\fR is \fBfalse\fR 
 the child. \fBNODE_ZYGOTE_TOKEN\fR is not passed on to the child. Requires a
 build with OpenSSL.
 .El
+If the process goes away, the child receives \fBSIGHUP\fR. Stopping the process,
+for example with Ctrl-Z, stops the child too, and continuing it continues the
+child.
 .Bd -literal
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
 node --connect=/tmp/app.sock app.js
@@ -981,23 +989,53 @@ Enable experimental support for the worker inspection with Chrome DevTools.
 .It Fl -experimental-zygote Ns = Ns Ar address
 Run as a fork server listening at \fBaddress\fR instead of running an entry point.
 \fBaddress\fR is a Unix domain socket path or \fBhost:port\fR, in the format described
-for \fB--connect\fR. Modules loaded with \fB--require\fR are preloaded once.
-Each dispatch forks a child that adopts the client's working directory,
-environment and arguments and runs the requested program. With \fBhost:port\fR,
-the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment variable (32 to 256
-characters) and only serves clients that complete a TLS handshake keyed with
-the same token. The token must be random, such as 24 bytes from
-\fB/dev/urandom\fR encoded in base64: anyone who records a handshake can try to
-guess it offline. Anyone with the token can run code as the server's user.
-Programs also run as the server's user and are not isolated from it or from
-each other: for example, memory they inherit can hold TLS secrets of earlier
-connections.
-Programs that need unpredictable values should use \fBcrypto.getRandomValues()\fR
-or the other \fBnode:crypto\fR functions rather than \fBMath.random()\fR: each child gets
-a newly seeded \fBMath.random()\fR, but a reference to \fBMath.random\fR that a preloaded
-module saved, and \fBMath.random()\fR in contexts created later (for example with
-\fBvm.createContext()\fR), return the same sequence in every child.
-Implies \fB--disable-sigusr1\fR. Linux only.
+for \fB--connect\fR. The server runs the modules given with \fB--require\fR and
+\fB--import\fR once, waits until its event loop is idle, and then forks a child
+for each client, which adopts the client's working directory, environment,
+umask and arguments and runs the requested program. A script, \fB--eval\fR,
+\fB--print\fR, \fB--test\fR, \fB--watch\fR, \fB--interactive\fR and \fB--check\fR cannot be
+used. \fBSIGHUP\fR, \fBSIGINT\fR and \fBSIGTERM\fR stop the server even if a preload
+listens for them; programs still get the preloads' listeners. Implies
+\fB--disable-sigusr1\fR. Linux 5.3 or later only.
+With \fBhost:port\fR, the server requires the \fBNODE_ZYGOTE_TOKEN\fR environment
+variable (32 to 256 characters) and only serves clients that complete a TLS
+handshake keyed with the same token. The token must be random, such as 24
+bytes from \fB/dev/urandom\fR encoded in base64: anyone who records a handshake can
+try to guess it offline. Anyone with the token can run code as the server's
+user.
+Programs run by a server differ from programs started directly:
+.Bl -bullet
+.It
+They run as the server's user and are not isolated from it or from each
+other: for example, memory they inherit can hold TLS secrets of earlier
+connections. They share the server's address space layout and hash seeds.
+.It
+They inherit everything the preloads set up. The server warns about handles
+that the preloads left open, such as servers or timers. Streams for the
+server's stdio that preloads kept write to the client's stdio instead.
+.It
+Node.js options, and environment variables that Node.js only reads at
+startup such as \fBNODE_OPTIONS\fR and \fBNODE_EXTRA_CA_CERTS\fR, apply as the server
+saw them. \fBNODE_PATH\fR and \fBNODE_DEBUG\fR are read again from the client's
+environment.
+.It
+\fBprocess.uptime()\fR counts from the fork, but \fBperformance.timeOrigin\fR and
+\fBperformance.now()\fR count from the server's start.
+.It
+Programs that need unpredictable values should use
+\fBcrypto.getRandomValues()\fR or the other \fBnode:crypto\fR functions rather
+than \fBMath.random()\fR: each child gets a newly seeded \fBMath.random()\fR, but a
+reference to \fBMath.random\fR that a preloaded module saved, and \fBMath.random()\fR
+in contexts created later (for example with \fBvm.createContext()\fR),
+return the same sequence in every child.
+.It
+Each child runs in a session of its own without a controlling terminal, so
+opening \fB/dev/tty\fR fails, for example for password prompts.
+.It
+If the process that forked the child exits, the child receives \fBSIGHUP\fR:
+the server for Unix domain socket clients, and for TCP clients the process
+that relays its connection, which outlives the server.
+.El
 .
 .It Fl -force-context-aware
 Disable loading native addons that are not context-aware.

@@ -970,14 +970,19 @@ Dispatch the entry point and its arguments, or the code given with
 [`--eval`][] or [`--print`][] and its arguments, to the fork server listening
 at `address` (see [`--experimental-zygote`][]) instead of running it in this
 process. The process exits with the child's exit code or terminates with the
-child's signal. Other Node.js options are ignored. Linux only.
+child's signal. It exits with 125 if it cannot reach the server or the server
+cannot read its request, and with 127 if the server cannot start a child, which
+is indistinguishable from a child that exits with the same code. Other Node.js
+options are ignored, except that `--version`, `--help` and `--v8-options` are
+handled as usual. Linux only.
 
 `address` is a Unix domain socket path, or `host:port` for TCP: a value
 without `/` that ends in `:port`, with IPv6 hosts in brackets.
 
 * With a Unix domain socket, the process passes its stdio file descriptors,
   working directory, environment and umask to the server, and forwards signals
-  to the forked child.
+  to the forked child by process ID, so both must be in the same PID
+  namespace. It refuses a socket that is served by another user.
 * With `host:port`, the process connects with TLS 1.3, using a pre-shared key
   derived from the `NODE_ZYGOTE_TOKEN` environment variable instead of
   certificates. The handshake fails unless both sides have the same token. The
@@ -986,6 +991,10 @@ without `/` that ends in `:port`, with IPv6 hosts in brackets.
   signals as messages. The child's stdio are pipes, so `isTTY` is `false` in
   the child. `NODE_ZYGOTE_TOKEN` is not passed on to the child. Requires a
   build with OpenSSL.
+
+If the process goes away, the child receives `SIGHUP`. Stopping the process,
+for example with Ctrl-Z, stops the child too, and continuing it continues the
+child.
 
 ```bash
 node --experimental-zygote=/tmp/app.sock --require ./preload.js &
@@ -1817,23 +1826,47 @@ added: REPLACEME
 
 Run as a fork server listening at `address` instead of running an entry point.
 `address` is a Unix domain socket path or `host:port`, in the format described
-for [`--connect`][]. Modules loaded with [`--require`][] are preloaded once.
-Each dispatch forks a child that adopts the client's working directory,
-environment and arguments and runs the requested program. With `host:port`,
-the server requires the `NODE_ZYGOTE_TOKEN` environment variable (32 to 256
-characters) and only serves clients that complete a TLS handshake keyed with
-the same token. The token must be random, such as 24 bytes from
-`/dev/urandom` encoded in base64: anyone who records a handshake can try to
-guess it offline. Anyone with the token can run code as the server's user.
-Programs also run as the server's user and are not isolated from it or from
-each other: for example, memory they inherit can hold TLS secrets of earlier
-connections.
-Programs that need unpredictable values should use [`crypto.getRandomValues()`][]
-or the other `node:crypto` functions rather than `Math.random()`: each child gets
-a newly seeded `Math.random()`, but a reference to `Math.random` that a preloaded
-module saved, and `Math.random()` in contexts created later (for example with
-[`vm.createContext()`][]), return the same sequence in every child.
-Implies `--disable-sigusr1`. Linux only.
+for [`--connect`][]. The server runs the modules given with [`--require`][] and
+[`--import`][] once, waits until its event loop is idle, and then forks a child
+for each client, which adopts the client's working directory, environment,
+umask and arguments and runs the requested program. A script, [`--eval`][],
+[`--print`][], `--test`, `--watch`, `--interactive` and `--check` cannot be
+used. `SIGHUP`, `SIGINT` and `SIGTERM` stop the server even if a preload
+listens for them; programs still get the preloads' listeners. Implies
+`--disable-sigusr1`. Linux 5.3 or later only.
+
+With `host:port`, the server requires the `NODE_ZYGOTE_TOKEN` environment
+variable (32 to 256 characters) and only serves clients that complete a TLS
+handshake keyed with the same token. The token must be random, such as 24
+bytes from `/dev/urandom` encoded in base64: anyone who records a handshake can
+try to guess it offline. Anyone with the token can run code as the server's
+user.
+
+Programs run by a server differ from programs started directly:
+
+* They run as the server's user and are not isolated from it or from each
+  other: for example, memory they inherit can hold TLS secrets of earlier
+  connections. They share the server's address space layout and hash seeds.
+* They inherit everything the preloads set up. The server warns about handles
+  that the preloads left open, such as servers or timers. Streams for the
+  server's stdio that preloads kept write to the client's stdio instead.
+* Node.js options, and environment variables that Node.js only reads at
+  startup such as `NODE_OPTIONS` and `NODE_EXTRA_CA_CERTS`, apply as the server
+  saw them. `NODE_PATH` and `NODE_DEBUG` are read again from the client's
+  environment.
+* `process.uptime()` counts from the fork, but `performance.timeOrigin` and
+  `performance.now()` count from the server's start.
+* Programs that need unpredictable values should use
+  [`crypto.getRandomValues()`][] or the other `node:crypto` functions rather
+  than `Math.random()`: each child gets a newly seeded `Math.random()`, but a
+  reference to `Math.random` that a preloaded module saved, and `Math.random()`
+  in contexts created later (for example with [`vm.createContext()`][]),
+  return the same sequence in every child.
+* Each child runs in a session of its own without a controlling terminal, so
+  opening `/dev/tty` fails, for example for password prompts.
+* If the process that forked the child exits, the child receives `SIGHUP`:
+  the server for Unix domain socket clients, and for TCP clients the process
+  that relays its connection, which outlives the server.
 
 ### `--force-context-aware`
 
