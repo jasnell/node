@@ -455,6 +455,57 @@ static void MakeMappingsInheritable() {
   fclose(maps);
 }
 
+// Makes `addr` free for bind(): removes it if it is a socket that nobody
+// listens on any more, such as the one left behind by a zygote that was
+// killed. Refuses to touch anything else, including symbolic links and sockets
+// that are still in use. Returns false and sets `*error` if `addr` cannot be
+// used.
+static bool RemoveStaleSocket(const sockaddr_un& addr, std::string* error) {
+  const char* path = addr.sun_path;
+  struct stat st;
+  if (lstat(path, &st) != 0) {
+    if (errno == ENOENT) return true;
+    *error = std::string("lstat(") + path + "): " + strerror(errno);
+    return false;
+  }
+  if (!S_ISSOCK(st.st_mode)) {
+    *error = std::string(path) + " exists and is not a socket";
+    return false;
+  }
+
+  // A socket is stale if connecting to it is refused. Non-blocking, so that a
+  // live server with a full backlog reports EAGAIN instead of blocking us.
+  // A live zygote forks a child for the probe, which exits as soon as it
+  // reads EOF instead of a request.
+  const int probe =
+      socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+  if (probe < 0) {
+    *error = std::string("socket(): ") + strerror(errno);
+    return false;
+  }
+  int r;
+  do {
+    r = connect(probe, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr));
+  } while (r != 0 && errno == EINTR);
+  const int connect_errno = r == 0 ? 0 : errno;
+  close(probe);
+  if (connect_errno != ECONNREFUSED) {
+    *error =
+        connect_errno == 0 || connect_errno == EAGAIN
+            ? std::string("another process is listening on ") + path
+            : std::string("connect(") + path + "): " + strerror(connect_errno);
+    return false;
+  }
+  // Something could replace the socket between lstat() and unlink(). That
+  // needs write access to the directory, and in a sticky one such as /tmp it
+  // needs to be the socket's owner, i.e. the user running this zygote.
+  if (unlink(path) != 0 && errno != ENOENT) {
+    *error = std::string("unlink(") + path + "): " + strerror(errno);
+    return false;
+  }
+  return true;
+}
+
 static int ListenUnix(const std::string& path, std::string* error) {
   sockaddr_un addr{};
   addr.sun_family = AF_UNIX;
@@ -463,13 +514,13 @@ static int ListenUnix(const std::string& path, std::string* error) {
     return -1;
   }
   memcpy(addr.sun_path, path.c_str(), path.size() + 1);
+  if (!RemoveStaleSocket(addr, error)) return -1;
   // Non-blocking, so that the accept loop can drain the backlog.
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (fd < 0) {
     *error = std::string("socket(): ") + strerror(errno);
     return -1;
   }
-  unlink(path.c_str());  // Remove a stale socket from a previous zygote.
   // Only the owner may connect; accepted peers are checked again below.
   const mode_t old_umask = umask(0177);
   const int r = bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
