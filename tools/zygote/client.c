@@ -87,6 +87,15 @@ int main(int argc, char** argv) {
             argv[1], strerror(errno));
     return EXIT_CLIENT_ERROR;
   }
+  // Only hand our environment and stdio to a zygote run by this user.
+  struct ucred cred;
+  socklen_t cred_len = sizeof(cred);
+  if (getsockopt(sock, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0 ||
+      cred.uid != geteuid()) {
+    fprintf(stderr, "zygote-client: refusing to use %s: not served by uid %u\n",
+            argv[1], (unsigned)geteuid());
+    return EXIT_CLIENT_ERROR;
+  }
 
   char cwd[PATH_MAX];
   if (getcwd(cwd, sizeof(cwd)) == NULL) {

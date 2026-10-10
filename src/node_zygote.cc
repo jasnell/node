@@ -1223,6 +1223,30 @@ static ExitCode RunUnixClient(const char* self,
     return kClientFailure;
   }
 
+  // The request hands over our environment and stdio, so make sure the server
+  // runs as this user first. In a shared directory such as /tmp, another user
+  // could have bound a socket at this path. The zygote checks the same thing
+  // in the other direction.
+  ucred cred{};
+  socklen_t cred_len = sizeof(cred);
+  if (getsockopt(sock, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0) {
+    fprintf(stderr,
+            "%s: cannot identify the server at %s: %s\n",
+            self,
+            socket_path.c_str(),
+            strerror(errno));
+    return kClientFailure;
+  }
+  if (cred.uid != geteuid()) {
+    fprintf(stderr,
+            "%s: refusing to use %s: it is served by uid %u, not uid %u\n",
+            self,
+            socket_path.c_str(),
+            static_cast<unsigned>(cred.uid),
+            static_cast<unsigned>(geteuid()));
+    return kClientFailure;
+  }
+
   std::string message;
   if (!BuildRequest(self, mode, request_argv, &message)) {
     return kClientFailure;
