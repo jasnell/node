@@ -1450,6 +1450,12 @@ constexpr int kForwardedSignals[] = {
 static volatile sig_atomic_t client_child_pid = 0;
 static volatile sig_atomic_t client_pending_signal = 0;
 
+static void SignalChild(pid_t pid, int signo) {
+  // The child calls setsid() right after fork(); until it does, its process
+  // group does not exist.
+  if (kill(-pid, signo) != 0) kill(pid, signo);
+}
+
 static void ForwardSignalToChild(int signo) {
   const pid_t pid = client_child_pid;
   if (pid <= 0) {
@@ -1457,9 +1463,41 @@ static void ForwardSignalToChild(int signo) {
     return;
   }
   const int saved_errno = errno;
-  // The child calls setsid() right after fork(); until it does, its process
-  // group does not exist.
-  if (kill(-pid, signo) != 0) kill(pid, signo);
+  SignalChild(pid, signo);
+  errno = saved_errno;
+}
+
+// Job control. The child runs in a session of its own, and the kernel
+// discards SIGTSTP sent to such an orphaned process group. So on SIGTSTP
+// (Ctrl-Z) the client stops the child with SIGSTOP, stops itself as SIGTSTP
+// would have, and continues the child once it is continued itself (`fg`,
+// `bg`). If the client is in an orphaned process group as well, it does not
+// stop, and the child continues right away.
+
+// Stops this process as an unhandled SIGTSTP would, until SIGCONT.
+// Async-signal-safe.
+static void StopSelf() {
+  struct sigaction default_action {};
+  struct sigaction handler {};
+  default_action.sa_handler = SIG_DFL;
+  sigemptyset(&default_action.sa_mask);
+  sigaction(SIGTSTP, &default_action, &handler);
+  sigset_t tstp;
+  sigset_t old_mask;
+  sigemptyset(&tstp);
+  sigaddset(&tstp, SIGTSTP);
+  pthread_sigmask(SIG_UNBLOCK, &tstp, &old_mask);
+  kill(getpid(), SIGTSTP);  // Returns once continued.
+  pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
+  sigaction(SIGTSTP, &handler, nullptr);
+}
+
+static void SuspendWithChild(int) {
+  const int saved_errno = errno;
+  const pid_t pid = client_child_pid;
+  if (pid > 0) SignalChild(pid, SIGSTOP);
+  StopSelf();
+  if (pid > 0) SignalChild(pid, SIGCONT);
   errno = saved_errno;
 }
 
@@ -1476,7 +1514,8 @@ static void WriteSignalToPipe(int signo) {
 }
 #endif  // NODE_ZYGOTE_HAVE_TLS
 
-static void InstallSignalHandlers(void (*handler)(int)) {
+static void InstallSignalHandlers(void (*handler)(int),
+                                  void (*tstp_handler)(int)) {
   struct sigaction sa {};
   sa.sa_handler = handler;
   sa.sa_flags = SA_RESTART;
@@ -1484,6 +1523,8 @@ static void InstallSignalHandlers(void (*handler)(int)) {
   for (int signo : kForwardedSignals) {
     CHECK_EQ(sigaction(signo, &sa, nullptr), 0);
   }
+  sa.sa_handler = tstp_handler;
+  CHECK_EQ(sigaction(SIGTSTP, &sa, nullptr), 0);
   // PlatformInit() leaves SIGUSR1 blocked.
   sigset_t usr1;
   sigemptyset(&usr1);
@@ -1636,7 +1677,7 @@ static ExitCode RunUnixClient(const char* self,
 
   // From here on, signals are forwarded to the child, or recorded until its
   // pid is known.
-  InstallSignalHandlers(ForwardSignalToChild);
+  InstallSignalHandlers(ForwardSignalToChild, SuspendWithChild);
 
   // The first chunk carries fds 0-2 as ancillary data.
   const int fds[3] = {0, 1, 2};
@@ -1825,7 +1866,7 @@ static ExitCode RunTcpClient(const char* self,
   int signal_pipe[2];
   CHECK_EQ(pipe2(signal_pipe, O_CLOEXEC | O_NONBLOCK), 0);
   client_signal_pipe = signal_pipe[1];
-  InstallSignalHandlers(WriteSignalToPipe);
+  InstallSignalHandlers(WriteSignalToPipe, WriteSignalToPipe);
 
   const auto lost_connection = [&]() {
     fprintf(stderr, "%s: lost connection to the zygote at %s\n", self,
@@ -1839,6 +1880,9 @@ static ExitCode RunTcpClient(const char* self,
   bool stdout_open = true;
   bool stderr_open = true;
   std::optional<int32_t> exit_status;
+  // Set on SIGTSTP once the SIGSTOP frame is queued: the client stops itself
+  // once the frame has been sent (see SuspendWithChild()).
+  bool suspend = false;
   const auto on_frame = [&](uint32_t type, const char* data, uint32_t size) {
     if (type == kFrameStdout) {
       if (stdout_open) stdout_open = WriteAll(1, data, size);
@@ -1867,7 +1911,12 @@ static ExitCode RunTcpClient(const char* self,
       unsigned char signals[64];
       const ssize_t n = read(signal_pipe[0], signals, sizeof(signals));
       for (ssize_t i = 0; i < n; i++) {
-        AppendInt32Frame(&to_server, kFrameSignal, signals[i]);
+        if (signals[i] == SIGTSTP) {
+          AppendInt32Frame(&to_server, kFrameSignal, SIGSTOP);
+          suspend = true;
+        } else {
+          AppendInt32Frame(&to_server, kFrameSignal, signals[i]);
+        }
       }
     }
     if (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
@@ -1878,6 +1927,13 @@ static ExitCode RunTcpClient(const char* self,
         AppendFrame(&to_server, kFrameStdinEnd, nullptr, 0);
         stdin_open = false;
       }
+    }
+
+    if (suspend && conn.WriteSome(&to_server) && to_server.empty()) {
+      suspend = false;
+      StopSelf();
+      AppendInt32Frame(&to_server, kFrameSignal, SIGCONT);
+      continue;
     }
 
     if (!buffered && fds[0].revents == 0) continue;
