@@ -936,6 +936,18 @@ static int ListenTcp(const std::string& host,
   return fd;
 }
 
+// Returns a pidfd for the forked child `pid`. If the kernel cannot provide one
+// (out of file descriptors), kills and reaps the child and returns -1. Serve()
+// checks that pidfd_open() is supported at all.
+static int PidfdForChild(pid_t pid) {
+  const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
+  if (pidfd >= 0) return pidfd;
+  kill(pid, SIGKILL);
+  while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
+  }
+  return -1;
+}
+
 // Accept loop for a Unix domain socket. Returns only in a forked child, with
 // the client's stdio installed on fds 0-2.
 static Request ServeUnix(int listen_fd) {
@@ -1007,9 +1019,13 @@ static Request ServeUnix(int listen_fd) {
       }
 
       if (pid > 0) {
+        const int pidfd = PidfdForChild(pid);
+        if (pidfd < 0) {
+          SendReply(conn, kReplyExit, W_EXITCODE(127, 0));
+          close(conn);
+          continue;
+        }
         SendReply(conn, kReplyPid, pid);
-        const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
-        CHECK_GE(pidfd, 0);
         children.push_back({pid, conn, pidfd, false});
         continue;
       }
@@ -1046,11 +1062,10 @@ static Request ServeUnix(int listen_fd) {
 // signal frames, and sends the program's wait status once it has exited.
 static void PumpRelay(TlsConnection* conn,
                       pid_t child,
+                      int pidfd,
                       int stdin_fd,
                       int stdout_fd,
                       int stderr_fd) {
-  const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, child, 0));
-  CHECK_GE(pidfd, 0);
   SetNonBlocking(stdin_fd, true);
   SetNonBlocking(stdout_fd, true);
   SetNonBlocking(stderr_fd, true);
@@ -1232,7 +1247,12 @@ static Request RunRelay(int fd, SSL* ssl) {
   close(stdin_pipe[0]);
   close(stdout_pipe[1]);
   close(stderr_pipe[1]);
-  PumpRelay(&conn, child, stdin_pipe[1], stdout_pipe[0], stderr_pipe[0]);
+  const int pidfd = PidfdForChild(child);
+  if (pidfd < 0) {
+    SendExitFrame(&conn, W_EXITCODE(127, 0));
+    _exit(0);
+  }
+  PumpRelay(&conn, child, pidfd, stdin_pipe[1], stdout_pipe[0], stderr_pipe[0]);
   _exit(0);
 }
 
@@ -1344,8 +1364,8 @@ static Request ServeTcp(int listen_fd, SSL_CTX* ctx) {
       SSL_free(conn.ssl);
       close(conn.fd);
       if (pid < 0) continue;
-      const int pidfd = static_cast<int>(syscall(SYS_pidfd_open, pid, 0));
-      CHECK_GE(pidfd, 0);
+      const int pidfd = PidfdForChild(pid);
+      if (pidfd < 0) continue;  // The client sees the connection close.
       relays.push_back({pid, pidfd});
     }
 
@@ -1408,6 +1428,18 @@ static void Serve(const FunctionCallbackInfo<Value>& args) {
         "zygote: a TCP address requires NODE_ZYGOTE_TOKEN with 32 to 256 "
         "characters");
   }
+
+  // The zygote tracks its children with pidfds.
+  const int pidfd_probe =
+      static_cast<int>(syscall(SYS_pidfd_open, getpid(), 0));
+  if (pidfd_probe < 0) {
+    return THROW_ERR_INVALID_STATE(
+        env,
+        "zygote: pidfd_open() is not available (Linux 5.3 or later is "
+        "required): %s",
+        strerror(errno));
+  }
+  close(pidfd_probe);
 
   if (env->event_loop()->active_reqs.count != 0) {
     return THROW_ERR_INVALID_STATE(
