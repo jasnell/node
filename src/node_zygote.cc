@@ -71,6 +71,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -936,6 +937,14 @@ static int ListenTcp(const std::string& host,
   return fd;
 }
 
+// Called in a program right after fork(). The program gets SIGHUP, as from a
+// terminal hangup, once `parent`, the zygote or the relay that forked it,
+// exits: nobody can report the program's exit to its client any more.
+static void HangUpWhenParentExits(pid_t parent) {
+  prctl(PR_SET_PDEATHSIG, SIGHUP);
+  if (getppid() != parent) raise(SIGHUP);  // Already gone.
+}
+
 // Returns a pidfd for the forked child `pid`. If the kernel cannot provide one
 // (out of file descriptors), kills and reaps the child and returns -1. Serve()
 // checks that pidfd_open() is supported at all.
@@ -1011,6 +1020,7 @@ static Request ServeUnix(int listen_fd) {
         continue;
       }
 
+      const pid_t zygote = getpid();
       const pid_t pid = fork();
       if (pid < 0) {
         SendReply(conn, kReplyExit, W_EXITCODE(127, 0));
@@ -1031,6 +1041,7 @@ static Request ServeUnix(int listen_fd) {
       }
 
       // Child.
+      HangUpWhenParentExits(zygote);
       close(listen_fd);
       for (const Child& child : children) {
         close(child.conn_fd);
@@ -1217,12 +1228,14 @@ static Request RunRelay(int fd, SSL* ssl) {
   CHECK_EQ(pipe2(stdout_pipe, O_CLOEXEC), 0);
   CHECK_EQ(pipe2(stderr_pipe, O_CLOEXEC), 0);
 
+  const pid_t relay = getpid();
   const pid_t child = fork();
   if (child < 0) {
     SendExitFrame(&conn, W_EXITCODE(127, 0));
     _exit(0);
   }
   if (child == 0) {
+    HangUpWhenParentExits(relay);
     close(fd);
     // The program has no use for the connection. The SSL does not own `fd`,
     // so freeing it sends nothing. This is hygiene, not isolation: the program
