@@ -45,6 +45,7 @@
 
 #include "node_zygote.h"
 #include "env-inl.h"
+#include "handle_wrap.h"
 #include "node_errors.h"
 #include "node_external_reference.h"
 #include "node_internals.h"
@@ -107,6 +108,7 @@ using v8::Int32;
 using v8::Integer;
 using v8::Isolate;
 using v8::Local;
+using v8::LocalVector;
 using v8::Object;
 using v8::Value;
 
@@ -131,6 +133,26 @@ static void FillRandom(const FunctionCallbackInfo<Value>& args) {
     const double value = static_cast<double>(bits[i] >> 11) * 0x1.0p-53;
     memcpy(data + i * sizeof(value), &value, sizeof(value));
   }
+}
+
+// Returns the names of the libuv handles that are open in this process (all
+// of them unref'd once the loop is idle), except those that the zygote deals
+// with itself: stdio, and signal handlers. Every program inherits them, e.g.
+// a listening socket that every program would then accept connections on.
+static void GetInheritedHandles(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  LocalVector<Value> names(env->isolate());
+  for (HandleWrap* wrap : *env->handle_wrap_queue()) {
+    if (wrap->persistent().IsEmpty() || !HandleWrap::IsAlive(wrap)) continue;
+    uv_handle_t* handle = wrap->GetHandle();
+    if (uv_is_closing(handle)) continue;
+    if (handle->type == UV_TTY || handle->type == UV_SIGNAL) continue;
+    uv_os_fd_t fd;
+    if (uv_fileno(handle, &fd) == 0 && fd >= 0 && fd <= 2) continue;
+    names.push_back(OneByteString(env->isolate(), wrap->MemoryInfoName()));
+  }
+  args.GetReturnValue().Set(
+      Array::New(env->isolate(), names.data(), names.size()));
 }
 
 // replaceFd(from, to): makes descriptor `to` refer to what `from` does,
@@ -2148,12 +2170,14 @@ static void Initialize(Local<Object> target,
   SetMethod(context, target, "serve", Serve);
   SetMethod(context, target, "fillRandom", FillRandom);
   SetMethod(context, target, "replaceFd", ReplaceFd);
+  SetMethod(context, target, "getInheritedHandles", GetInheritedHandles);
 }
 
 static void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(Serve);
   registry->Register(FillRandom);
   registry->Register(ReplaceFd);
+  registry->Register(GetInheritedHandles);
 }
 
 }  // namespace zygote
