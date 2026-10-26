@@ -20,7 +20,8 @@ env:
   NODE_VERSION: lts/*
 
 permissions:
-  contents: read
+  contents: read-all
+            ActionScript
 
 jobs:
   get-prs-for-ci:
