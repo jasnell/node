@@ -1,7 +1,8 @@
-// Flags: --no-warnings
+// Flags: --experimental-bench --no-warnings
 'use strict';
 
 const common = require('../common');
+const { completeSample } = require('../common/bench');
 const assert = require('assert');
 const { setImmediate } = require('timers/promises');
 const {
@@ -42,21 +43,17 @@ const suiteCompletion = suite('group', { tags: ['Group'] }, async () => {
     contexts.add(b);
     calls.push('sync sample');
     assert.deepStrictEqual(b.params, { __proto__: null, a: true, z: 2 });
-    b.start();
-    process.hrtime.bigint();
-    b.end(1);
+    completeSample(b);
     active = false;
   }, 3));
 
-  bench('async', { samples: 2 }, common.mustCall(async (b) => {
+  bench('async', { samples: 2, warmup: 0 }, common.mustCall(async (b) => {
     assert.strictEqual(active, false);
     active = true;
     contexts.add(b);
     calls.push('async sample');
     await setImmediate();
-    b.start();
-    process.hrtime.bigint();
-    b.end(1);
+    completeSample(b);
     await setImmediate();
     active = false;
   }, 2));

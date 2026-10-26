@@ -138,7 +138,8 @@ added:
   - v18.17.0
 -->
 
-* `signals` {AbortSignal\[]} The `AbortSignal`s of which to compose a new `AbortSignal`.
+* `signals` {Iterable} An iterable of {AbortSignal}s from which to compose a new
+  {AbortSignal}.
 
 Returns a new `AbortSignal` which will be aborted if any of the provided
 signals are aborted. Its [`abortSignal.reason`][] will be set to whichever
@@ -1318,7 +1319,7 @@ A browser-compatible implementation of {WebSocket}.
 ## Class: `Worker`
 
 <!-- YAML
-added: REPLACEME
+added: v26.9.0
 -->
 
 > Stability: 1 - Experimental. Enable this API with the
@@ -1373,6 +1374,16 @@ accepted and how failures are reported:
 * For `blob:` URLs, the script must be held in memory, so blobs backed by a file,
   such as those returned by [`fs.openAsBlob()`][], cannot be used.
 
+[Type stripping][type stripping] only applies to module workers loaded from
+`file:` URLs. The `type` option, not the file extension, decides how an entry is
+run, so a `.cts` entry is still evaluated as an ES module.
+
+Package resolution within a Web Worker, including the entry point, its
+dependencies, `import()`, `require()`, and `import.meta.resolve()`, applies
+the `"worker"` [package condition][] in addition to the usual conditions.
+Threads created through [`node:worker_threads`][] from within a Web Worker do
+not apply it.
+
 ### Differences from the HTML Standard
 
 Besides script loading, mentioned above:
@@ -1397,6 +1408,7 @@ Besides script loading, mentioned above:
   `unhandledrejection`, since Node.js exposes the equivalent does not
   implement the `PromiseRejectionEvent` interface or the per-rejection
   `preventDefault()` behavior required by the HTML Standard.
+* Module workers loaded from `file:` URLs support [type stripping][].
 
 ### Web Workers and `node:worker_threads`
 
@@ -1539,6 +1551,8 @@ A browser-compatible implementation of [`WritableStreamDefaultWriter`][].
 [browser `LockManager`]: https://developer.mozilla.org/en-US/docs/Web/API/LockManager
 [buffer section]: buffer.md
 [built-in objects]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects
+[package condition]: packages.md#conditional-exports
 [timers]: timers.md
+[type stripping]: typescript.md#type-stripping
 [webassembly-mdn]: https://developer.mozilla.org/en-US/docs/WebAssembly
 [webassembly-org]: https://webassembly.org

@@ -1,7 +1,8 @@
-// Flags: --no-warnings
+// Flags: --experimental-bench --no-warnings
 'use strict';
 
 const common = require('../common');
+const { completeSample } = require('../common/bench');
 const assert = require('assert');
 const { bench, run, suite } = require('node:bench');
 
@@ -10,14 +11,12 @@ const calls = [];
 function complete(name) {
   return (b) => {
     calls.push(name);
-    b.start();
-    process.hrtime.bigint();
-    b.end(1);
+    completeSample(b);
   };
 }
 
 suite('selected', { only: true }, () => {
-  bench('included', { samples: 1 }, complete('included'));
+  bench('included', { samples: 1, warmup: 0 }, complete('included'));
   bench.skip('explicitly skipped', { samples: 1 },
              common.mustNotCall());
   bench('pattern filtered', { samples: 1 },

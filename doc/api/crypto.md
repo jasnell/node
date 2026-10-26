@@ -160,8 +160,6 @@ and is the fastest serialized import format.
 
 #### Raw key formats
 
-> Stability: 1.1 - Active development
-
 The `'raw-public'`, `'raw-private'`, and `'raw-seed'` key formats allow
 importing and exporting raw key material without any encoding wrapper.
 See [`keyObject.export()`][], [`crypto.createPublicKey()`][], and
@@ -2546,7 +2544,9 @@ or `'private'` for private (asymmetric) keys.
 ## Class: `Mac`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 * Extends: {stream.Transform}
@@ -2591,7 +2591,9 @@ console.log(mac.final('hex'));
 ### `mac.final([outputEncoding])`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 * `outputEncoding` {string} The [encoding][] of the return value.
@@ -2611,7 +2613,9 @@ including when finalization fails. Later calls to `mac.update()` or
 ### `mac.update(data[, inputEncoding])`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 * `data` {string|Buffer|TypedArray|DataView}
@@ -3034,8 +3038,7 @@ changes:
 Checks whether the certificate matches the given email address.
 
 If the `'subject'` option is undefined or set to `'default'`, the certificate
-subject is only considered if the subject alternative name extension either does
-not exist or does not contain any email addresses.
+subject is considered according to OpenSSL's default behavior.
 
 If the `'subject'` option is set to `'always'` and if the subject alternative
 name extension either does not exist or does not contain a matching email
@@ -3079,9 +3082,7 @@ comparisons are case-insensitive, the returned subject name might also differ
 from the given `name` in capitalization.
 
 If the `'subject'` option is undefined or set to `'default'`, the certificate
-subject is only considered if the subject alternative name extension either does
-not exist or does not contain any DNS names. This behavior is consistent with
-[RFC 2818][] ("HTTP Over TLS").
+subject is considered according to OpenSSL's default behavior.
 
 If the `'subject'` option is set to `'always'` and if the subject alternative
 name extension either does not exist or does not contain a matching DNS name,
@@ -3668,15 +3669,19 @@ operations. The specific constants currently defined are described in
 added: v0.1.94
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/63188
+    description: Passing a CryptoKey as `key` is no longer supported.
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65484
     description: Additional ciphers available through OpenSSL providers (e.g.
                  SM4-GCM, SM4-CCM, SM4-XTS, CBC-CTS, and AES key-wrap variants)
                  are now supported. The `ctsMode` and `xtsStandard` options
                  were added.
-  - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/63188
-    description: Passing a CryptoKey as `key` is no longer supported.
-  - version: v26.8.0
+  - version:
+    - v26.8.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/63411
     description: Ciphers in SIV and GCM-SIV modes are now supported.
   - version: v26.0.0
@@ -3746,8 +3751,8 @@ defaults to 16 bytes. `SIV` and `GCM-SIV` only support 16-byte authentication
 tags.
 
 The `ctsMode` and `xtsStandard` options configure parameters exposed by OpenSSL
-providers. They are available only with OpenSSL 3.0 or later and a provider
-that supports the corresponding parameter. `ctsMode` applies only to CBC-CTS
+providers. They are not available with BoringSSL and require a provider that
+supports the corresponding parameter. `ctsMode` applies only to CBC-CTS
 ciphers, and `xtsStandard` applies only to `sm4-xts`. Supplying either option
 for an available cipher implementation that does not support it throws an
 `ERR_CRYPTO_UNSUPPORTED_OPERATION` error. See [CBC-CTS mode][] and [XTS mode][]
@@ -3780,15 +3785,19 @@ and can be transmitted with the ciphertext.
 added: v0.1.94
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/63188
+    description: Passing a CryptoKey as `key` is no longer supported.
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65484
     description: Additional ciphers available through OpenSSL providers (e.g.
                  SM4-GCM, SM4-CCM, SM4-XTS, CBC-CTS, and AES key-wrap variants)
                  are now supported. The `ctsMode` and `xtsStandard` options
                  were added.
-  - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/63188
-    description: Passing a CryptoKey as `key` is no longer supported.
-  - version: v26.8.0
+  - version:
+    - v26.8.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/63411
     description: Ciphers in SIV and GCM-SIV modes are now supported.
   - version: v26.0.0
@@ -3851,8 +3860,8 @@ set if a different length is used. For `SIV` and `GCM-SIV`, the `authTagLength`
 option defaults to 16 bytes and only 16-byte authentication tags are supported.
 
 The `ctsMode` and `xtsStandard` options configure parameters exposed by OpenSSL
-providers. They are available only with OpenSSL 3.0 or later and a provider
-that supports the corresponding parameter. `ctsMode` applies only to CBC-CTS
+providers. They are not available with BoringSSL and require a provider that
+supports the corresponding parameter. `ctsMode` applies only to CBC-CTS
 ciphers, and `xtsStandard` applies only to `sm4-xts`. Supplying either option
 for an available cipher implementation that does not support it throws an
 `ERR_CRYPTO_UNSUPPORTED_OPERATION` error. See [CBC-CTS mode][] and [XTS mode][]
@@ -3961,14 +3970,16 @@ and description of each available elliptic curve.
 added: v0.1.92
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/64000
+    description: The `outputLength` option is now required for XOF
+                 hash functions without default output lengths.
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65484
     description: Hash algorithms exposed by OpenSSL providers are now
                  supported. The `functionName` and `customization` options
                  were added for cSHAKE hash functions.
-  - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/64000
-    description: The `outputLength` option is now required for XOF
-                 hash functions without default output lengths.
   - version: v12.8.0
     pr-url: https://github.com/nodejs/node/pull/28805
     description: The `outputLength` option was added for XOF hash functions.
@@ -4164,7 +4175,9 @@ input.on('readable', () => {
 ### `crypto.createMac(algorithm, key[, options])`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 > Stability: 1.2 - Release candidate
@@ -4225,7 +4238,9 @@ require options or a key with provider-specific properties.
 <!-- YAML
 added: v11.6.0
 changes:
-  - version: v26.7.0
+  - version:
+     - v26.7.0
+     - v24.21.0
     pr-url: https://github.com/nodejs/node/pull/63949
     description: The key can also be a URL referencing an object for an
                  OpenSSL STORE loader. The `properties` option was added.
@@ -4493,7 +4508,7 @@ Key decapsulation using a KEM algorithm with a private key.
 
 Supported key types and their KEM algorithms are:
 
-* `'rsa'`[^openssl30] RSA Secret Value Encapsulation
+* `'rsa'`[^noboringssl] RSA Secret Value Encapsulation
 * `'ec'`[^openssl32] DHKEM(P-256, HKDF-SHA256), DHKEM(P-384, HKDF-SHA256), DHKEM(P-521, HKDF-SHA256)
 * `'x25519'`[^openssl32] DHKEM(X25519, HKDF-SHA256)
 * `'x448'`[^openssl32] DHKEM(X448, HKDF-SHA512)
@@ -4565,7 +4580,7 @@ Key encapsulation using a KEM algorithm with a public key.
 
 Supported key types and their KEM algorithms are:
 
-* `'rsa'`[^openssl30] RSA Secret Value Encapsulation
+* `'rsa'`[^noboringssl] RSA Secret Value Encapsulation
 * `'ec'`[^openssl32] DHKEM(P-256, HKDF-SHA256), DHKEM(P-384, HKDF-SHA256), DHKEM(P-521, HKDF-SHA256)
 * `'x25519'`[^openssl32] DHKEM(X25519, HKDF-SHA256)
 * `'x448'`[^openssl32] DHKEM(X448, HKDF-SHA512)
@@ -4577,18 +4592,6 @@ If `key` is not a [`KeyObject`][], this function behaves as if `key` had been
 passed to [`crypto.createPublicKey()`][].
 
 If the `callback` function is provided this function uses libuv's threadpool.
-
-### `crypto.fips`
-
-<!-- YAML
-added: v6.0.0
-deprecated: v10.0.0
--->
-
-> Stability: 0 - Deprecated
-
-Deprecated property for checking and controlling [FIPS mode][]. Use
-[`crypto.getFips()`][] and [`crypto.setFips()`][] instead.
 
 ### `crypto.generateKey(type, options, callback)`
 
@@ -5192,18 +5195,19 @@ added: v10.0.0
 * Returns: {number} `1` if FIPS mode is enabled, `0` otherwise. A future
   semver-major release may change the return type of this API to a {boolean}.
 
-With OpenSSL 3, this reports whether the default property query includes
-`fips=yes`. It does not establish that a FIPS provider is loaded or validated.
-It can return `1` even when a requested cryptographic implementation cannot be
-fetched because no loaded provider supplies a match for `fips=yes`. See [FIPS
-mode][].
+This reports whether the default property query includes `fips=yes`. It does not
+establish that a FIPS provider is loaded or validated. It can return `1` even
+when a requested cryptographic implementation cannot be fetched because no
+loaded provider supplies a match for `fips=yes`. See [FIPS mode][].
 
 ### `crypto.getHashes()`
 
 <!-- YAML
 added: v0.9.3
 changes:
-  - version: REPLACEME
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65484
     description: Names and aliases exposed by loaded OpenSSL providers that
                  match the default property query are now included.
@@ -5214,10 +5218,9 @@ changes:
 
 This is the authoritative Node.js list of hash algorithms available to
 [`crypto.createHash()`][] and [`crypto.hash()`][] in the current process. With
-OpenSSL 3 or later, the list depends on the loaded providers and the default
-property query in effect when the list is first generated. Some listed
-algorithms can require API-specific options, such as `outputLength` for XOF
-hash functions.
+OpenSSL, the list depends on the loaded providers and the default property query
+in effect when the list is first generated. Some listed algorithms can require
+API-specific options, such as `outputLength` for XOF hash functions.
 
 A listed hash algorithm is not necessarily supported by APIs that combine a
 digest with another cryptographic operation, such as HMAC, key derivation, or
@@ -5242,7 +5245,9 @@ console.log(getHashes()); // ['DSA', 'DSA-SHA', 'DSA-SHA1', ...]
 ### `crypto.getMacs()`
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 > Stability: 1.2 - Release candidate
@@ -5294,14 +5299,16 @@ added:
  - v20.12.0
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/64000
+    description: The `outputLength` option is now required for XOF
+                 hash functions without default output lengths.
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65484
     description: Hash algorithms exposed by OpenSSL providers are now
                  supported. The `functionName` and `customization` options
                  were added for cSHAKE hash functions.
-  - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/64000
-    description: The `outputLength` option is now required for XOF
-                 hash functions without default output lengths.
   - version:
      - v25.5.0
      - v24.13.1
@@ -5516,6 +5523,41 @@ const derivedKey = hkdfSync('sha512', 'key', 'salt', 'info', 64);
 console.log(Buffer.from(derivedKey).toString('hex'));  // '24156e2...5391653'
 ```
 
+### `crypto.parsePKCS12(bundle[, options])`
+
+<!-- YAML
+added:
+  - v26.10.0
+  - v24.22.0
+-->
+
+* `bundle` {ArrayBuffer|Buffer|TypedArray|DataView} A DER-encoded PKCS#12
+  (`.p12` or `.pfx`) bundle.
+* `options` {Object}
+  * `passphrase` {string|ArrayBuffer|Buffer|TypedArray|DataView} The passphrase
+    protecting the bundle. Omitting this option is equivalent to passing `''`.
+* Returns: {Object}
+  * `privateKey` {KeyObject|null} The first private key in the bundle, or
+    `null` if none is present.
+  * `certificate` {X509Certificate|null} The certificate matching `privateKey`,
+    or `null` if no matching certificate is present.
+  * `additionalCertificates` {X509Certificate\[]} All other certificates in
+    the bundle. If there is no private key, this contains all certificates.
+    May be empty.
+
+Parses a PKCS#12 bundle, commonly stored with a `.p12` or `.pfx` extension,
+and returns its private key and certificates.
+
+```mjs
+import { parsePKCS12 } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+const { privateKey, certificate, additionalCertificates } = parsePKCS12(
+  readFileSync('bundle.p12'),
+  { passphrase: 'secret' },
+);
+```
+
 ### `crypto.pbkdf2(password, salt, iterations, keylen, digest, callback)`
 
 <!-- YAML
@@ -5687,7 +5729,9 @@ changes:
   - version: REPLACEME
     pr-url: https://github.com/nodejs/node/pull/63188
     description: Passing a CryptoKey as `privateKey` is no longer supported.
-  - version: v26.8.0
+  - version:
+    - v26.8.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65073
     description: The `mgf1Hash` option was added.
   - version:
@@ -5848,7 +5892,9 @@ changes:
   - version: REPLACEME
     pr-url: https://github.com/nodejs/node/pull/63188
     description: Passing a CryptoKey as `key` is no longer supported.
-  - version: v26.8.0
+  - version:
+    - v26.8.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65073
     description: The `mgf1Hash` option was added.
   - version: v15.0.0
@@ -6555,48 +6601,6 @@ added: v15.6.0
   * `utilization` {number} The calculated ratio of `used` to `total`
     allocated bytes.
 
-### `crypto.setEngine(engine[, flags])`
-
-<!-- YAML
-added: v0.11.11
-changes:
-  - version: REPLACEME
-    pr-url: https://github.com/nodejs/node/pull/63966
-    description: Runtime deprecation.
-  - version:
-    - v22.4.0
-    - v20.16.0
-    pr-url: https://github.com/nodejs/node/pull/53329
-    description: Custom engine support in OpenSSL 3 is deprecated.
--->
-
-> Stability: 0 - Deprecated
-
-* `engine` {string}
-* `flags` {crypto.constants} **Default:** `crypto.constants.ENGINE_METHOD_ALL`
-
-Load and set the `engine` for some or all OpenSSL functions (selected by flags).
-Use of this API is deprecated because custom engine support has been deprecated
-since OpenSSL 3.
-
-`engine` could be either an id or a path to the engine's shared library.
-
-The optional `flags` argument uses `ENGINE_METHOD_ALL` by default. The `flags`
-is a bit field taking one of or a mix of the following flags (defined in
-`crypto.constants`):
-
-* `crypto.constants.ENGINE_METHOD_RSA`
-* `crypto.constants.ENGINE_METHOD_DSA`
-* `crypto.constants.ENGINE_METHOD_DH`
-* `crypto.constants.ENGINE_METHOD_RAND`
-* `crypto.constants.ENGINE_METHOD_EC`
-* `crypto.constants.ENGINE_METHOD_CIPHERS`
-* `crypto.constants.ENGINE_METHOD_DIGESTS`
-* `crypto.constants.ENGINE_METHOD_PKEY_METHS`
-* `crypto.constants.ENGINE_METHOD_PKEY_ASN1_METHS`
-* `crypto.constants.ENGINE_METHOD_ALL`
-* `crypto.constants.ENGINE_METHOD_NONE`
-
 ### `crypto.setFips(bool)`
 
 <!-- YAML
@@ -6605,11 +6609,10 @@ added: v10.0.0
 
 * `bool` {boolean} `true` to enable FIPS mode, `false` to disable it.
 
-Changes [FIPS mode][]. With OpenSSL 3, this only adds or removes `fips=yes` in
-the default property query. It does not install, load, initialize, or validate
-a FIPS provider. For a usable FIPS configuration, install the provider and
-configure OpenSSL to load it when Node.js starts, as described in [FIPS
-mode][].
+Changes [FIPS mode][]. This only adds or removes `fips=yes` in the default
+property query. It does not install, load, initialize, or validate a FIPS
+provider. For a usable FIPS configuration, install the provider and configure
+OpenSSL to load it when Node.js starts, as described in [FIPS mode][].
 
 If no loaded provider supplies a requested cryptographic implementation
 matching `fips=yes`, the call can still succeed and `crypto.getFips()` can still
@@ -6628,8 +6631,7 @@ flags additionally require a configured provider named `fips` to initialize and
 pass its self-test; Node.js fails to start otherwise.
 
 Throws an error if OpenSSL cannot change the state. FIPS mode cannot be
-disabled when Node.js was started with `--force-fips`. With OpenSSL 1.1.1,
-enabling FIPS mode requires a FIPS-capable OpenSSL build.
+disabled when Node.js was started with `--force-fips`.
 
 ### `crypto.sign(algorithm, data, key[, callback])`
 
@@ -7096,7 +7098,7 @@ variant:
   input.
 
 Encryption and decryption must use the same variant. The option is available
-only with CBC-CTS provider ciphers on OpenSSL 3.0 or later.
+only with CBC-CTS provider ciphers and is not available with BoringSSL.
 
 Applications which use this mode must adhere to these restrictions:
 
@@ -7132,8 +7134,8 @@ For `sm4-xts`, the `xtsStandard` option to [`crypto.createCipheriv()`][] or
 [`crypto.createDecipheriv()`][] selects either the default `'GB'` variant from
 GB/T 17964-2021 or the `'IEEE'` variant from IEEE Std 1619-2007. Encryption and
 decryption must use the same variant. The option is available only for
-`sm4-xts`; it does not apply to AES-XTS ciphers. OpenSSL's default provider
-supports `sm4-xts` in OpenSSL 3.2 or later.
+`sm4-xts`; it does not apply to AES-XTS ciphers. `sm4-xts` requires OpenSSL 3.2
+or later and availability from the default provider.
 
 ### AES key wrap modes
 
@@ -7155,7 +7157,7 @@ restrictions:
 
 ### SIV and GCM-SIV modes
 
-`SIV`[^openssl30] and `GCM-SIV`[^openssl32] are supported [AEAD algorithms][]
+`SIV`[^noboringssl] and `GCM-SIV`[^openssl32] are supported [AEAD algorithms][]
 when supported by OpenSSL. Applications which use these modes must adhere to
 certain restrictions when using the cipher API:
 
@@ -7192,13 +7194,11 @@ provider and only applies when it is deployed according to its security policy.
 Vendor-provided Node.js or OpenSSL builds can require a different configuration;
 follow the vendor's documentation for those builds.
 
-With OpenSSL 1.1.1, Node.js must be built against a FIPS-capable OpenSSL library.
+FIPS support uses the provider model described in the [OpenSSL FIPS module
+guide][]. Using FIPS-approved implementations requires:
 
-With OpenSSL 3, FIPS support uses the provider model described in the
-[OpenSSL FIPS module guide][]. Using FIPS-approved implementations requires:
-
-* A correctly installed OpenSSL 3 FIPS provider.
-* An OpenSSL 3 [FIPS module configuration file][].
+* A correctly installed OpenSSL FIPS provider.
+* An OpenSSL [FIPS module configuration file][].
 * The FIPS provider to be loaded into the OpenSSL library context used by
   Node.js, normally by activating it in an OpenSSL configuration file when
   Node.js starts.
@@ -7207,7 +7207,7 @@ With OpenSSL 3, FIPS support uses the provider model described in the
   OpenSSL configuration, [`--enable-fips`][], or [`--force-fips`][], or for
   subsequent fetches by `crypto.setFips(true)`.
 
-An example OpenSSL 3 configuration file looks like this:
+An example OpenSSL configuration file looks like this:
 
 ```text
 nodejs_conf = nodejs_init
@@ -7272,8 +7272,8 @@ By default, Node.js reads the `nodejs_conf` section instead of OpenSSL's usual
 or build Node.js with `./configure --openssl-conf-name=<name>` to change the
 default section name.
 
-On OpenSSL 3, the configuration above enables the `fips=yes` property query at
-startup. The following controls are also available:
+The configuration above enables the `fips=yes` property query at startup. The
+following controls are also available:
 
 * [`--enable-fips`][] and [`--force-fips`][] enable the property query and
   additionally require the configured provider named `fips` to initialize and
@@ -7281,22 +7281,19 @@ startup. The following controls are also available:
   prevents FIPS mode from being disabled from script code. With
   `--force-fips=strict`, Node.js also rejects non-approved operations reported
   through the OpenSSL FIPS indicator callback.
-* [`crypto.setFips()`][] changes the FIPS/property-query state. On OpenSSL 3, it
-  does not install, load, initialize, or validate a provider. Implementations
-  fetched before the call are not changed.
-* [`crypto.getFips()`][] reports the FIPS/property-query state. On OpenSSL 3, a
-  return value of `1` does not prove that a FIPS provider is loaded or validated.
+* [`crypto.setFips()`][] changes the FIPS/property-query state. It does not
+  install, load, initialize, or validate a provider. Implementations fetched
+  before the call are not changed.
+* [`crypto.getFips()`][] reports the FIPS/property-query state. A return value of
+  `1` does not prove that a FIPS provider is loaded or validated.
 * With [`--enable-fips-indicator-events`][], the
   [`'crypto.fips.indicator'`][] diagnostics channel reports non-approved
-  operations permitted by an OpenSSL 3.4 or later FIPS provider configured for
+  operations permitted by an OpenSSL FIPS provider configured for
   backwards compatibility.
 
-With OpenSSL 1.1.1, these controls use the library's FIPS mode support and
-require a FIPS-capable OpenSSL build.
-
-Only algorithms available under the active FIPS settings can be used. With
-OpenSSL 3, if no loaded provider supplies a requested cryptographic
-implementation matching `fips=yes`, fetching it fails, typically with
+Only algorithms available under the active FIPS settings can be used. If no
+loaded provider supplies a requested cryptographic implementation matching
+`fips=yes`, fetching it fails, typically with
 `ERR_OSSL_EVP_UNSUPPORTED`. The same error can occur for algorithms that
 Node.js supports when FIPS mode is disabled but that are unavailable under the
 active FIPS settings.
@@ -7430,59 +7427,6 @@ See the [list of SSL OP Flags][] for details.
   </tr>
 </table>
 
-### OpenSSL engine constants
-
-<table>
-  <tr>
-    <th>Constant</th>
-    <th>Description</th>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_RSA</code></td>
-    <td>Limit engine usage to RSA</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_DSA</code></td>
-    <td>Limit engine usage to DSA</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_DH</code></td>
-    <td>Limit engine usage to DH</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_RAND</code></td>
-    <td>Limit engine usage to RAND</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_EC</code></td>
-    <td>Limit engine usage to EC</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_CIPHERS</code></td>
-    <td>Limit engine usage to CIPHERS</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_DIGESTS</code></td>
-    <td>Limit engine usage to DIGESTS</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_PKEY_METHS</code></td>
-    <td>Limit engine usage to PKEY_METHS</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_PKEY_ASN1_METHS</code></td>
-    <td>Limit engine usage to PKEY_ASN1_METHS</td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_ALL</code></td>
-    <td></td>
-  </tr>
-  <tr>
-    <td><code>ENGINE_METHOD_NONE</code></td>
-    <td></td>
-  </tr>
-</table>
-
 ### Other OpenSSL constants
 
 <table>
@@ -7577,7 +7521,7 @@ See the [list of SSL OP Flags][] for details.
   </tr>
 </table>
 
-[^openssl30]: Requires OpenSSL >= 3.0
+[^noboringssl]: Not available when Node.js is built against BoringSSL
 
 [^openssl32]: Requires OpenSSL >= 3.2
 
@@ -7605,7 +7549,6 @@ See the [list of SSL OP Flags][] for details.
 [Permission Model]: permissions.md#permission-model
 [RFC 1421]: https://www.rfc-editor.org/rfc/rfc1421.txt
 [RFC 2409]: https://www.rfc-editor.org/rfc/rfc2409.txt
-[RFC 2818]: https://www.rfc-editor.org/rfc/rfc2818.txt
 [RFC 3526]: https://www.rfc-editor.org/rfc/rfc3526.txt
 [RFC 3610]: https://www.rfc-editor.org/rfc/rfc3610.txt
 [RFC 4055]: https://www.rfc-editor.org/rfc/rfc4055.txt
@@ -7625,7 +7568,7 @@ See the [list of SSL OP Flags][] for details.
 [`--force-fips`]: cli.md#--force-fips
 [`--openssl-config`]: cli.md#--openssl-configfile
 [`--openssl-shared-config`]: cli.md#--openssl-shared-config
-[`BN_is_prime_ex`]: https://www.openssl.org/docs/man1.1.1/man3/BN_is_prime_ex.html
+[`BN_is_prime_ex`]: https://www.openssl.org/docs/man3.0/man3/BN_is_prime_ex.html
 [`Buffer`]: buffer.md
 [`DH_generate_key()`]: https://www.openssl.org/docs/man3.0/man3/DH_generate_key.html
 [`DiffieHellmanGroup`]: #class-diffiehellmangroup

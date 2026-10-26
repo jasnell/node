@@ -16,17 +16,17 @@ namespace {
 std::string WildcardIfDir(const std::string& res) noexcept {
   uv_fs_t req;
   int rc = uv_fs_stat(nullptr, &req, res.c_str(), nullptr);
-  if (rc == 0) {
-    const uv_stat_t* const s = static_cast<const uv_stat_t*>(req.ptr);
-    if ((s->st_mode & S_IFMT) == S_IFDIR) {
-      // add wildcard when directory
-      if (res.back() == node::kPathSeparator) {
-        return res + "*";
-      }
-      return res + node::kPathSeparator + "*";
-    }
-  }
+  const bool is_dir =
+      rc == 0 &&
+      (static_cast<const uv_stat_t*>(req.ptr)->st_mode & S_IFMT) == S_IFDIR;
   uv_fs_req_cleanup(&req);
+  if (is_dir) {
+    // add wildcard when directory
+    if (res.back() == node::kPathSeparator) {
+      return res + "*";
+    }
+    return res + node::kPathSeparator + "*";
+  }
   return res;
 }
 
@@ -120,6 +120,7 @@ namespace permission {
 void FSPermission::Apply(Environment* env,
                          std::span<const std::string> allow,
                          PermissionScope scope) {
+  RwLock::ScopedWriteLock lock(lock_);
   for (const std::string& res : allow) {
     if (res == "*") {
       if (scope == PermissionScope::kFileSystemRead) {
@@ -138,6 +139,7 @@ void FSPermission::Apply(Environment* env,
 void FSPermission::Drop(Environment* env,
                         PermissionScope scope,
                         std::string_view param) {
+  RwLock::ScopedWriteLock lock(lock_);
   if (param.empty()) {
     // Drop all access for this scope
     if (scope == PermissionScope::kFileSystemRead ||
@@ -216,15 +218,25 @@ void FSPermission::RebuildTree(PermissionScope scope) {
 
 void FSPermission::GrantAccess(PermissionScope perm, const std::string& res) {
   const std::string path = WildcardIfDir(res);
-  if (perm == PermissionScope::kFileSystemRead &&
-      !granted_in_fs_.Lookup(path)) {
-    granted_in_fs_.Insert(path);
-    granted_paths_in_.push_back(path);
+  // Track every explicit grant, even when already covered by another one,
+  // so that it still applies if the covering grant is dropped later.
+  if (perm == PermissionScope::kFileSystemRead) {
+    if (std::find(granted_paths_in_.begin(), granted_paths_in_.end(), path) ==
+        granted_paths_in_.end()) {
+      granted_paths_in_.push_back(path);
+    }
+    if (!granted_in_fs_.Lookup(path)) {
+      granted_in_fs_.Insert(path);
+    }
     deny_all_in_ = false;
-  } else if (perm == PermissionScope::kFileSystemWrite &&
-             !granted_out_fs_.Lookup(path)) {
-    granted_out_fs_.Insert(path);
-    granted_paths_out_.push_back(path);
+  } else if (perm == PermissionScope::kFileSystemWrite) {
+    if (std::find(granted_paths_out_.begin(), granted_paths_out_.end(), path) ==
+        granted_paths_out_.end()) {
+      granted_paths_out_.push_back(path);
+    }
+    if (!granted_out_fs_.Lookup(path)) {
+      granted_out_fs_.Insert(path);
+    }
     deny_all_out_ = false;
   }
 }
@@ -232,6 +244,7 @@ void FSPermission::GrantAccess(PermissionScope perm, const std::string& res) {
 bool FSPermission::is_granted(Environment* env,
                               PermissionScope perm,
                               std::string_view param = "") const {
+  RwLock::ScopedReadLock lock(lock_);
   switch (perm) {
     case PermissionScope::kFileSystem:
       return allow_all_in_ && allow_all_out_;

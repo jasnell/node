@@ -788,6 +788,9 @@ It's possible to specify the expected total size of the uncompressed input via
 doesn't match at the end of the input, compression will fail with the code
 `ZSTD_error_srcSize_wrong`.
 
+[`zlib.zstdCompress()`][] defaults `opts.pledgedSrcSize` to the byte length of
+its input.
+
 #### Decompressor options
 
 These advanced options are available for controlling decompression:
@@ -2158,7 +2161,8 @@ added: v0.5.8
 -->
 
 * `kind` **Default:** `zlib.constants.Z_FULL_FLUSH` for zlib-based streams,
-  `zlib.constants.BROTLI_OPERATION_FLUSH` for Brotli-based streams.
+  `zlib.constants.BROTLI_OPERATION_FLUSH` for Brotli-based streams, and
+  `zlib.constants.ZSTD_e_flush` for Zstd-based streams.
 * `callback` {Function}
 
 Flush pending data. Don't call this frivolously, premature flushes negatively
@@ -2188,10 +2192,38 @@ Only applicable to deflate algorithm.
 
 <!-- YAML
 added: v0.7.0
+changes:
+  - version: v26.11.0
+    pr-url: https://github.com/nodejs/node/pull/66157
+    description: Brotli streams preserve parameters and dictionary on reset.
 -->
 
-Reset the compressor/decompressor to factory defaults. Only applicable to
-the inflate and deflate algorithms.
+For inflate and deflate streams, reset the compressor/decompressor to factory
+defaults.
+
+For Brotli streams, start a new compression or decompression session while
+preserving the configured parameters and dictionary.
+
+For Zstd streams, cancel the current frame and start a new session while
+preserving the configured parameters and dictionary. If `pledgedSrcSize` was
+configured for a Zstd compressor, it applies again to the next frame.
+
+Resetting a gzip stream after it has emitted output for an incomplete member
+causes the stream to error with `ERR_ZLIB_INCOMPLETE_FRAME`. Resetting at
+that point would discard the member state while the bytes already written out
+remain at the start of the output stream, leaving it undecodable. Call
+`.end()`, or start over with a new gzip stream, instead.
+zlib-wrapped deflate may still `reset()` after a flush; callers that reuse
+the compressor discard the first output. Raw deflate has no wrapper header,
+so `reset()` after a flush still concatenates.
+
+Calling `reset()` while a write is in progress throws an `Error`.
+
+Resetting an incomplete Zstd compression frame after it has emitted output
+causes the stream to error with `ERR_ZLIB_INCOMPLETE_FRAME`. Resetting at
+that point would discard the frame state while the bytes already written
+out remain at the start of the output stream, leaving it undecodable. Call
+`.end()`, or start over with a new stream, instead.
 
 ## Class: `ZstdOptions`
 
@@ -2223,6 +2255,9 @@ Each Zstd-based class takes an `options` object. All options are optional.
 * `finishFlush` {integer} **Default:** `zlib.constants.ZSTD_e_end`
 * `chunkSize` {integer} **Default:** `16 * 1024`
 * `params` {Object} Key-value object containing indexed [Zstd parameters][].
+* `pledgedSrcSize` {number} Expected total size of the uncompressed input. It
+  must be a non-negative safe integer and must match the input size when
+  compression finishes. Only applicable to Zstd compressors.
 * `maxOutputLength` {integer} Limits output size when using
   [convenience methods][]. **Default:** [`buffer.kMaxLength`][]
 * `info` {boolean} If `true`, returns an object with `buffer` and `engine`. **Default:** `false`
@@ -2230,7 +2265,7 @@ Each Zstd-based class takes an `options` object. All options are optional.
   to improve compression efficiency when compressing or decompressing data that
   shares common patterns with the dictionary.
 * `rejectGarbageAfterEnd` {boolean} If `true`, decompression fails when
-  input remains after the first complete compressed stream. **Default:** `false`
+  input remains after a complete sequence of Zstd frames. **Default:** `false`
 
 For example:
 
@@ -2266,7 +2301,8 @@ added:
   - v22.15.0
 -->
 
-Decompress data using the Zstd algorithm.
+Decompress data using the Zstd algorithm. Concatenated Zstd and skippable frames
+are decoded as a single stream.
 
 ## `zlib.constants`
 
@@ -2337,6 +2373,49 @@ crc = zlib.crc32('world', crc);  // 4192936109
 
 crc = zlib.crc32(Buffer.from('hello', 'utf16le'));  // 1427272415
 crc = zlib.crc32(Buffer.from('world', 'utf16le'), crc);  // 4150509955
+```
+
+## `zlib.crc32c(data[, value])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `data` {string|Buffer|TypedArray|DataView} When `data` is a string,
+  it will be encoded as UTF-8 before being used for computation.
+* `value` {integer} An optional starting value. It must be a 32-bit unsigned
+  integer. **Default:** `0`
+* Returns: {integer} A 32-bit unsigned integer containing the checksum.
+
+Computes a 32-bit [Cyclic Redundancy Check][] checksum of `data` using the
+Castagnoli polynomial (CRC-32C, [RFC 3720][] section 12.1). If `value` is
+specified, it is used as the starting value of the checksum, otherwise, 0 is
+used as the starting value. Passing the result of a previous call as `value`
+continues the checksum, as with [`zlib.crc32()`][].
+
+CRC-32C is a different checksum from the CRC-32 computed by
+[`zlib.crc32()`][]; the two produce different results for the same input.
+CRC-32C is used by protocols and formats such as iSCSI, SCTP, ext4, Btrfs,
+and the Snappy framing format, and has better error detection properties than
+CRC-32.
+
+The CRC algorithm is designed to compute checksums and to detect error
+in data transmission. It's not suitable for cryptographic authentication.
+
+Strings are encoded as UTF-8, in the same way as [`zlib.crc32()`][].
+
+```mjs
+import zlib from 'node:zlib';
+
+let crc = zlib.crc32c('hello');  // 2591144780
+crc = zlib.crc32c('world', crc);  // 1456190592
+```
+
+```cjs
+const zlib = require('node:zlib');
+
+let crc = zlib.crc32c('hello');  // 2591144780
+crc = zlib.crc32c('world', crc);  // 1456190592
 ```
 
 ## `zlib.createBrotliCompress([options])`
@@ -3039,6 +3118,11 @@ Decompress a chunk of data with [`Unzip`][].
 added:
   - v23.8.0
   - v22.15.0
+changes:
+  - version: v26.11.0
+    pr-url: https://github.com/nodejs/node/pull/66358
+    description: The `pledgedSrcSize` option defaults to the byte length of
+                 `buffer`.
 -->
 
 * `buffer` {Buffer|TypedArray|DataView|ArrayBuffer|string}
@@ -3061,6 +3145,8 @@ added:
 Compress a chunk of data with [`ZstdCompress`][].
 
 ### `zlib.zstdDecompress(buffer[, options], callback)`
+
+> Stability: 1 - Experimental
 
 <!-- YAML
 added:
@@ -3339,6 +3425,7 @@ Create a Zstandard decompression transform.
 [Brotli parameters]: #brotli-constants
 [Cyclic redundancy check]: https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 [Memory usage tuning]: #memory-usage-tuning
+[RFC 3720]: https://www.rfc-editor.org/rfc/rfc3720.html
 [RFC 7932]: https://www.rfc-editor.org/rfc/rfc7932.html
 [Streams API]: stream.md
 [Zstd compressor options]: #compressor-options-1
@@ -3408,9 +3495,11 @@ Create a Zstandard decompression transform.
 [`zlib.ZipEntry.createSymlink()`]: #static-method-zlibzipentrycreatesymlinkfilename-target-options
 [`zlib.ZipEntry.createSync()`]: #static-method-zlibzipentrycreatesyncfilename-data-options
 [`zlib.ZipFile.open()`]: #static-method-zlibzipfileopenfilename-options
+[`zlib.crc32()`]: #zlibcrc32data-value
 [`zlib.createZipArchive()`]: #zlibcreateziparchiveentries-options
 [`zlib.createZipArchiveSync()`]: #zlibcreateziparchivesyncentries-options
 [`zlib.getMaxZipContentSize()`]: #zlibgetmaxzipcontentsize
+[`zlib.zstdCompress()`]: #zlibzstdcompressbuffer-options-callback
 [convenience methods]: #convenience-methods
 [zlib documentation]: https://zlib.net/manual.html#Constants
 [zlib.createGzip example]: #zlib

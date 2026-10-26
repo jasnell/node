@@ -160,6 +160,8 @@ in this example, there are two run attempts, with two tests defined in `test.js`
 the first test succeeded on the first attempt, and the second test succeeded on the second attempt.
 
 When the `--test-rerun-failures` option is used, the test runner will only run tests that have not yet passed.
+A `todo` test that fails counts as not yet passed and is rerun, even though its failure does not
+cause the test run to fail.
 
 ```bash
 node --test-rerun-failures /path/to/state/file
@@ -352,6 +354,14 @@ it.todo('should do the thing', { expectFailure: true }, () => {
 ```
 
 ## `only` tests
+
+To prevent exclusive tests from accidentally excluding tests in CI, use
+[`--test-forbid-only`][] or the `forbidOnly` option of [`run()`][]. When enabled,
+declaring a test or suite with `only: true` or calling `testContext.runOnly(true)`
+fails the run. This includes the `.only()` shorthands and applies with either
+isolation mode, even when `--test-only` is also enabled. Name filtering, TODO
+markers, and expected failures cannot suppress detected violations. Declarations
+inside callbacks that are never executed are not checked.
 
 If Node.js is started with the [`--test-only`][] command-line option, or test
 isolation is disabled, it is possible to skip all tests except for a selected
@@ -650,9 +660,13 @@ test('a test that creates asynchronous activity', (t) => {
 added:
   - v19.2.0
   - v18.13.0
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66708
+    description: Watch mode is now stable.
 -->
 
-> Stability: 1 - Experimental
+> Stability: 2 - Stable
 
 The Node.js test runner supports running in watch mode by passing the `--watch` flag:
 
@@ -885,10 +899,9 @@ test runner functionality:
 * `--experimental-test-tag-filter` - Filter expressions are validated by the parent
   process and re-emitted to child processes
 * `--watch` - Watch mode is handled at the parent level
-* `--experimental-default-config-file` - Config file loading is handled by the parent
 * `--test-reporter` - Reporting is managed by the parent process
 * `--test-reporter-destination` - Output destinations are controlled by the parent
-* `--experimental-config-file` - Config file paths are managed by the parent
+* `--config-file` - Config file paths are managed by the parent
 * `--test-randomize` - Randomization is managed by the parent process and
   propagated to child processes
 * `--test-random-seed` - Randomization seed is managed by the parent process and
@@ -1705,6 +1718,9 @@ added:
   - v18.9.0
   - v16.19.0
 changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66578
+    description: Added the `forbidOnly` option.
   - version:
      - v26.2.0
      - v24.19.0
@@ -1761,6 +1777,9 @@ changes:
   * `forceExit` {boolean} Configures the test runner to exit the process once
     all known tests have finished executing even if the event loop would
     otherwise remain active. **Default:** `false`.
+  * `forbidOnly` {boolean} Fail the run when a test or suite is declared with
+    `only: true` or `testContext.runOnly(true)` is called. See [`only` tests](#only-tests).
+    **Default:** the value of [`--test-forbid-only`][].
   * `globPatterns` {Array} An array containing the list of glob patterns to
     match test files. This option cannot be used together with `files`.
     **Default:** Same as [running tests from the command line][].
@@ -2462,6 +2481,89 @@ test('changes a mock behavior once', (t) => {
   fn.mock.mockImplementationOnce(addTwo);
   assert.strictEqual(fn(), 3);
   assert.strictEqual(fn(), 4);
+});
+```
+
+### `ctx.mockRejectedValue(reason)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `reason` {any} The value the returned promise rejects with.
+
+Changes the mock's implementation to a function that returns a promise rejected
+with `reason`. This is shorthand for
+`ctx.mockImplementation(() => Promise.reject(reason))`.
+
+```js
+test('mocks a rejected value', async (t) => {
+  const fn = t.mock.fn();
+
+  fn.mock.mockRejectedValue(new Error('boom'));
+  await assert.rejects(fn(), { message: 'boom' });
+});
+```
+
+### `ctx.mockResolvedValue(value)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `value` {any} The value the returned promise resolves with.
+
+Changes the mock's implementation to a function that returns a promise resolved
+with `value`. This is shorthand for
+`ctx.mockImplementation(() => Promise.resolve(value))`.
+
+```js
+test('mocks a resolved value', async (t) => {
+  const fn = t.mock.fn();
+
+  fn.mock.mockResolvedValue(42);
+  assert.strictEqual(await fn(), 42);
+});
+```
+
+### `ctx.mockReturnValue(value)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `value` {any} The value returned by the mock.
+
+Changes the mock's implementation to a function that returns `value`. This is
+shorthand for `ctx.mockImplementation(() => value)`.
+
+```js
+test('mocks a return value', (t) => {
+  const fn = t.mock.fn();
+
+  fn.mock.mockReturnValue(42);
+  assert.strictEqual(fn(), 42);
+  assert.strictEqual(fn(), 42);
+});
+```
+
+### `ctx.mockThrownValue(value)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `value` {any} The value thrown by the mock.
+
+Changes the mock's implementation to a function that throws `value`. This is
+shorthand for `ctx.mockImplementation(() => { throw value; })`.
+
+```js
+test('mocks a thrown value', (t) => {
+  const fn = t.mock.fn();
+
+  fn.mock.mockThrownValue(new Error('boom'));
+  assert.throws(fn, { message: 'boom' });
 });
 ```
 
@@ -4360,6 +4462,46 @@ test('test', (t) => {
 });
 ```
 
+#### `context.assert.callCount(fn, times[, message])`
+
+<!-- YAML
+added: v26.12.0
+-->
+
+* `fn` {Function} A mock function created by the test runner's mocking API.
+* `times` {integer} The expected number of calls.
+* `message` {string} Optional error message.
+
+Asserts that the mock function `fn` has been called exactly `times` times.
+
+```js
+test('mock was called twice', (t) => {
+  const fn = t.mock.fn();
+  fn();
+  fn();
+  t.assert.callCount(fn, 2);
+});
+```
+
+#### `context.assert.called(fn[, message])`
+
+<!-- YAML
+added: v26.12.0
+-->
+
+* `fn` {Function} A mock function created by the test runner's mocking API.
+* `message` {string} Optional error message.
+
+Asserts that the mock function `fn` has been called at least once.
+
+```js
+test('mock was called', (t) => {
+  const fn = t.mock.fn();
+  fn();
+  t.assert.called(fn);
+});
+```
+
 #### `context.assert.fileSnapshot(value, path[, options])`
 
 <!-- YAML
@@ -4398,6 +4540,52 @@ This function differs from `context.assert.snapshot()` in the following ways:
 
 These differences allow snapshot files to better support features such as syntax
 highlighting.
+
+#### `context.assert.lastCalledWith(fn[, ...args])`
+
+<!-- YAML
+added: v26.12.0
+-->
+
+* `fn` {Function} A mock function created by the test runner's mocking API.
+* `...args` {any} The expected arguments.
+
+Asserts that the most recent call to the mock function `fn` received arguments
+deeply and strictly equal to `args`, using the same comparison as
+[`assert.deepStrictEqual()`][].
+
+```js
+test('mock was last called with arguments', (t) => {
+  const fn = t.mock.fn();
+  fn(1);
+  fn(2);
+  t.assert.lastCalledWith(fn, 2);
+});
+```
+
+#### `context.assert.nthCalledWith(fn, n[, ...args])`
+
+<!-- YAML
+added: v26.12.0
+-->
+
+* `fn` {Function} A mock function created by the test runner's mocking API.
+* `n` {integer} The 1-based index of the call to check.
+* `...args` {any} The expected arguments.
+
+Asserts that the `n`th call to the mock function `fn` received arguments
+deeply and strictly equal to `args`, using the same comparison as
+[`assert.deepStrictEqual()`][]. `n` starts at `1`, so
+`t.assert.nthCalledWith(fn, 1)` checks `fn.mock.calls[0]`.
+
+```js
+test('mock was called with arguments on the second call', (t) => {
+  const fn = t.mock.fn();
+  fn(1);
+  fn(2);
+  t.assert.nthCalledWith(fn, 2, 2);
+});
+```
 
 #### `context.assert.snapshot(value[, options])`
 
@@ -4575,7 +4763,9 @@ The unique identifier of the worker running the current test file. This value is
 derived from the `NODE_TEST_WORKER_ID` environment variable. When running tests
 with `--test-isolation=process` (the default), each test file runs in a separate
 child process and is assigned a worker ID from 1 to N, where N is the number of
-concurrent workers. When running with `--test-isolation=none`, all tests run in
+concurrent workers. A worker ID is never shared by two test files running at the
+same time. Once a test file finishes, its worker ID is reused by the next test
+file that starts. When running with `--test-isolation=none`, all tests run in
 the same process and the worker ID is always 1. This value is `undefined` when
 not running in a test context.
 
@@ -5018,6 +5208,7 @@ test.describe('my suite', (suite) => {
 [`--test-concurrency`]: cli.md#--test-concurrency
 [`--test-coverage-exclude`]: cli.md#--test-coverage-exclude
 [`--test-coverage-include`]: cli.md#--test-coverage-include
+[`--test-forbid-only`]: cli.md#--test-forbid-only
 [`--test-name-pattern`]: cli.md#--test-name-pattern
 [`--test-only`]: cli.md#--test-only
 [`--test-reporter-destination`]: cli.md#--test-reporter-destination
@@ -5035,6 +5226,7 @@ test.describe('my suite', (suite) => {
 [`SuiteContext`]: #class-suitecontext
 [`TestContext`]: #class-testcontext
 [`TracingChannel`]: diagnostics_channel.md#class-tracingchannel
+[`assert.deepStrictEqual()`]: assert.md#assertdeepstrictequalactual-expected-message
 [`assert.throws`]: assert.md#assertthrowsfn-error-message
 [`context.diagnostic`]: #contextdiagnosticmessage
 [`context.log`]: #contextlogmessage-data
@@ -5049,7 +5241,7 @@ test.describe('my suite', (suite) => {
 [`suite()`]: #suitename-options-fn
 [`test()`]: #testname-options-fn
 [code coverage]: #collecting-code-coverage
-[configuration files]: cli.md#--experimental-config-filepath---experimental-config-file
+[configuration files]: cli.md#--config-filepath---config-file
 [describe options]: #describename-options-fn
 [it options]: #testname-options-fn
 [module customization hooks]: module.md#customization-hooks

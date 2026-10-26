@@ -2062,15 +2062,23 @@ Since it's not possible to build Node.js without libuv, this value is always `tr
 
 <!-- YAML
 added: v22.5.0
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66482
+    description: Returns a function that removes the registration.
+  - version: v26.12.0
+    pr-url: https://github.com/nodejs/node/pull/66436
+    description: Marked as release candidate.
 -->
 
-> Stability: 1.1 - Active Development
+> Stability: 1.2 - Release candidate
 
 * `ref` {Object | Function} The reference to the resource that is being tracked.
 * `callback` {Function} The callback function to be called when the resource
   is finalized.
   * `ref` {Object | Function} The reference to the resource that is being tracked.
   * `event` {string} The event that triggered the finalization. Defaults to 'exit'.
+* Returns: {Function} A function that removes this registration when called.
 
 This function registers a callback to be called when the process emits the `exit`
 event if the `ref` object was not garbage collected. If the object `ref` was garbage collected
@@ -2167,13 +2175,31 @@ but if it is not, `dispose` will be called when `process.exit` is called.
 Be careful and avoid relying on this feature for the disposal of critical resources,
 as it is not guaranteed that the callback will be called under all circumstances.
 
+The returned function removes only this registration, leaving other
+registrations for the same `ref` in place. Calling it more than once has no
+effect. It does not hold a strong reference to `ref`.
+
+```js
+const unregister = finalization.register(myDisposableObject, onFinalize);
+
+// Later, once the resource has been released manually:
+unregister();
+```
+
 ## `process.finalization.registerBeforeExit(ref, callback)`
 
 <!-- YAML
 added: v22.5.0
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66482
+    description: Returns a function that removes the registration.
+  - version: v26.12.0
+    pr-url: https://github.com/nodejs/node/pull/66436
+    description: Marked as release candidate.
 -->
 
-> Stability: 1.1 - Active Development
+> Stability: 1.2 - Release candidate
 
 * `ref` {Object | Function} The reference
   to the resource that is being tracked.
@@ -2181,6 +2207,7 @@ added: v22.5.0
   is finalized.
   * `ref` {Object | Function} The reference to the resource that is being tracked.
   * `event` {string} The event that triggered the finalization. Defaults to 'beforeExit'.
+* Returns: {Function} A function that removes this registration when called.
 
 This function behaves exactly like the `register`, except that the callback will be called
 when the process emits the `beforeExit` event if `ref` object was not garbage collected.
@@ -2192,9 +2219,13 @@ this means that there is a possibility that the callback will not be called unde
 
 <!-- YAML
 added: v22.5.0
+changes:
+  - version: v26.12.0
+    pr-url: https://github.com/nodejs/node/pull/66436
+    description: Marked as release candidate.
 -->
 
-> Stability: 1.1 - Active Development
+> Stability: 1.2 - Release candidate
 
 * `ref` {Object | Function} The reference
   to the resource that was registered previously.
@@ -3140,10 +3171,14 @@ for the current process. Additional documentation is available in the
 
 <!-- YAML
 added: v20.0.0
+changes:
+  - version: v26.12.0
+    pr-url: https://github.com/nodejs/node/pull/65492
+    description: The `reference` argument can be a `URL` or a `Uint8Array`.
 -->
 
 * `scope` {string}
-* `reference` {string}
+* `reference` {string|URL|Uint8Array}
 * Returns: {boolean}
 
 Verifies that the process is able to access the given scope and reference.
@@ -3157,14 +3192,23 @@ permission status, but denied operations will not throw `ERR_ACCESS_DENIED`.
 The reference has a meaning based on the provided scope. For example,
 the reference when the scope is File System means files and folders.
 
+For File System scopes, a `URL` reference must use the `file:` protocol and is
+converted to a path, while a `Uint8Array` reference is treated as the raw bytes
+of a path. Other scopes ignore the reference.
+
 The available scopes are:
 
 * `fs` - All File System
 * `fs.read` - File System read operations
 * `fs.write` - File System write operations
 * `child` - Child process spawning operations
+* `env` - Environment variables
 * `openssl.store` - Loading keys through OpenSSL STORE loaders
 * `worker` - Worker thread spawning operation
+* `net` - Network operations
+* `inspector` - Inspector operations
+* `wasi` - WASI operations
+* `addon` - Native addon operations
 * `ffi` - Foreign function interface operations
 
 ```js
@@ -3180,12 +3224,16 @@ process.permission.has('fs.read');
 added:
  - v26.3.0
  - v24.20.0
+changes:
+  - version: v26.12.0
+    pr-url: https://github.com/nodejs/node/pull/65492
+    description: The `reference` argument can be a `URL` or a `Uint8Array`.
 -->
 
 > Stability: 1.1 - Active Development
 
 * `scope` {string}
-* `reference` {string}
+* `reference` {string|URL|Uint8Array}
 
 Drops the specified permission from the current process. This operation is
 **irreversible** — once a permission is dropped, it cannot be restored through
@@ -3220,12 +3268,15 @@ The available scopes are the same as [`process.permission.has()`][]:
 * `fs.read` - File System read operations
 * `fs.write` - File System write operations
 * `child` - Child process spawning operations
+* `env` - Environment variables. Dropping a variable removes it from the
+  environment. A reference ending with `*` is not accepted
 * `openssl.store` - Loading keys through OpenSSL STORE loaders
 * `worker` - Worker thread spawning operation
 * `net` - Network operations
 * `inspector` - Inspector operations
 * `wasi` - WASI operations
 * `addon` - Native addon operations
+* `ffi` - Foreign function interface operations
 
 ```js
 const fs = require('node:fs');
@@ -3331,9 +3382,11 @@ console.log(`The parent process is pid ${ppid}`);
 added:
   - v23.6.0
   - v22.14.0
+changes:
+  - version: v26.11.0
+    pr-url: https://github.com/nodejs/node/pull/66213
+    description: This API is no longer experimental.
 -->
-
-> Stability: 1 - Experimental
 
 * `maybeRefable` {any} An object that may be "refable".
 
@@ -4435,9 +4488,11 @@ In [`Worker`][] threads, `process.umask(mask)` will throw an exception.
 added:
   - v23.6.0
   - v22.14.0
+changes:
+  - version: v26.11.0
+    pr-url: https://github.com/nodejs/node/pull/66213
+    description: This API is no longer experimental.
 -->
-
-> Stability: 1 - Experimental
 
 * `maybeRefable` {any} An object that may be "unref'd".
 
@@ -4601,6 +4656,8 @@ cases:
 * `14` **Snapshot Failure**: Node.js was started to build a V8 startup
   snapshot and it failed because certain requirements of the state of
   the application were not met.
+* `124` **Process Timeout**: The process was still running when the duration
+  set with [`--process-timeout`][] elapsed.
 * `>128` **Signal Exits**: If Node.js receives a fatal signal such as
   `SIGKILL` or `SIGHUP`, then its exit code will be `128` plus the
   value of the signal code. This is a standard POSIX practice, since
@@ -4629,6 +4686,7 @@ cases:
 [`--no-deprecation`]: cli.md#--no-deprecation
 [`--permission-audit`]: cli.md#--permission-audit
 [`--permission`]: cli.md#--permission
+[`--process-timeout`]: cli.md#--process-timeoutduration
 [`--unhandled-rejections`]: cli.md#--unhandled-rejectionsmode
 [`Buffer`]: buffer.md
 [`ChildProcess.disconnect()`]: child_process.md#subprocessdisconnect

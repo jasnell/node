@@ -1,8 +1,8 @@
-#if HAVE_OPENSSL && HAVE_QUIC
 #include "guard.h"
 #ifndef OPENSSL_NO_QUIC
 #include <async_wrap-inl.h>
 #include <base_object-inl.h>
+#include <crypto/crypto_context.h>
 #include <crypto/crypto_tls_certificates.h>
 #include <crypto/crypto_util.h>
 #include <debug_utils-inl.h>
@@ -578,6 +578,10 @@ SSLCtxPointer TLSContext::Initialize(Environment* env) {
     }
   }
 
+  // QUIC builds its SSL_CTX here instead of through SecureContext, so the
+  // chain verification hook shared with TLS has to be installed explicitly.
+  crypto::InstallCertVerifyCallback(ctx.get());
+
   if (options_.keylog) {
     SSL_CTX_set_keylog_callback(ctx.get(), OnKeylog);
   }
@@ -1074,4 +1078,3 @@ void TLSSession::MemoryInfo(MemoryTracker* tracker) const {
 }  // namespace quic
 }  // namespace node
 #endif  // OPENSSL_NO_QUIC
-#endif  // HAVE_OPENSSL && HAVE_QUIC

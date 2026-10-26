@@ -1,12 +1,14 @@
+// Flags: --disable-warning=ExperimentalWarning
 'use strict';
 
 const common = require('../common');
 const { spawnSyncAndAssert } = require('../common/child_process');
 
 const experimentalBuiltins = [
+  ['bench', '--experimental-bench', true],
+  ['bench/reporters', '--experimental-bench', true],
   ['dtls', '--experimental-dtls', common.hasDtls],
   ['quic', '--experimental-quic', common.hasQuic],
-  ['vfs', '--experimental-vfs', true],
 ].filter(([, , available]) => available);
 
 for (const [id, flag] of experimentalBuiltins) {
@@ -22,6 +24,24 @@ for (const [id, flag] of experimentalBuiltins) {
   ], { status: 0 });
 }
 
+const schemelessExperimentalBuiltins = [
+  ['stream/iter', '--experimental-stream-iter'],
+  ['zlib/iter', '--experimental-stream-iter'],
+];
+
+for (const [id, flag] of schemelessExperimentalBuiltins) {
+  const nodeBuiltin = `node:${id}`;
+
+  spawnSyncAndAssert(process.execPath, [
+    '-e', `const assert = require('node:assert'); const { builtinModules } = require('node:module'); assert(!builtinModules.includes('${id}')); assert(!builtinModules.includes('${nodeBuiltin}')); assert.throws(() => require('${id}'), { code: 'MODULE_NOT_FOUND' }); assert.throws(() => require('${nodeBuiltin}'), { code: 'ERR_UNKNOWN_BUILTIN_MODULE' });`,
+  ], { status: 0 });
+
+  spawnSyncAndAssert(process.execPath, [
+    flag,
+    '-e', `const assert = require('node:assert'); const { builtinModules } = require('node:module'); assert(builtinModules.includes('${id}')); assert(!builtinModules.includes('${nodeBuiltin}')); require('${id}'); require('${nodeBuiltin}');`,
+  ], { status: 0 });
+}
+
 // node:ffi is enabled by default in builds with FFI support and can be
 // disabled with --no-experimental-ffi.
 if (common.hasFFI) {
@@ -31,7 +51,14 @@ if (common.hasFFI) {
   ], { status: 0 });
 }
 
-const schemeOnlyBuiltins = ['node:test', 'node:sea'];
+// node:vfs is enabled by default and can be disabled with
+// --no-experimental-vfs.
+spawnSyncAndAssert(process.execPath, [
+  '--no-experimental-vfs',
+  '-e', `const m = require('node:module'); if (m.builtinModules.includes('node:vfs')) process.exit(1); try { require('node:vfs'); } catch (e) { if (e.code === 'ERR_UNKNOWN_BUILTIN_MODULE') process.exit(0); } process.exit(1);`,
+], { status: 0 });
+
+const schemeOnlyBuiltins = ['node:test', 'node:sea', 'node:vfs'];
 if (common.hasFFI) {
   schemeOnlyBuiltins.push('node:ffi');
 }

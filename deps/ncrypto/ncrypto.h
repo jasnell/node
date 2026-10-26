@@ -12,6 +12,7 @@
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -22,14 +23,14 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
-#if defined(NCRYPTO_ENGINE_COMPAT) && NCRYPTO_ENGINE_COMPAT &&                 \
-    !defined(OPENSSL_NO_ENGINE)
-#include <openssl/engine.h>
-#endif  // NCRYPTO_ENGINE_COMPAT && !OPENSSL_NO_ENGINE
-
 #ifndef OPENSSL_VERSION_PREREQ
 #define OPENSSL_VERSION_PREREQ(maj, min)                                       \
   (OPENSSL_VERSION_NUMBER >= (((maj) << 28) | ((min) << 20)))
+#endif
+
+// BoringSSL reports itself as OpenSSL 1.1.1, so it has to be excluded here.
+#if !defined(OPENSSL_IS_BORINGSSL) && !OPENSSL_VERSION_PREREQ(3, 0)
+#error "OpenSSL 1.x is no longer supported, v3.0.0 or later is required."
 #endif
 
 // BoringSSL declares the EVP_*_do_all* APIs, but their implementation may
@@ -45,48 +46,28 @@
 #endif
 
 // Backend split:
-// - OpenSSL >= 3 uses provider APIs and hides deprecated low-level objects.
-// - BoringSSL has its own API-compatible branch.
-// - OpenSSL < 3 remains the legacy fallback branch.
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(3, 0)
-#define NCRYPTO_USE_OPENSSL3_PROVIDER 1
-#else
-#define NCRYPTO_USE_OPENSSL3_PROVIDER 0
-#endif
-
+// - OpenSSL uses provider APIs and hides deprecated low-level objects.
+// - BoringSSL has its own API-compatible branch and keeps using the legacy
+//   low-level key types.
 #ifdef OPENSSL_IS_BORINGSSL
 #define NCRYPTO_USE_BORINGSSL 1
+#define NCRYPTO_USE_OPENSSL_PROVIDER 0
 #else
 #define NCRYPTO_USE_BORINGSSL 0
+#define NCRYPTO_USE_OPENSSL_PROVIDER 1
 #endif
 
-#if !NCRYPTO_USE_OPENSSL3_PROVIDER && !NCRYPTO_USE_BORINGSSL
-#define NCRYPTO_USE_LEGACY_OPENSSL 1
-#else
-#define NCRYPTO_USE_LEGACY_OPENSSL 0
-#endif
+#define NCRYPTO_USE_LEGACY_KEY_TYPES NCRYPTO_USE_BORINGSSL
 
-#if NCRYPTO_USE_BORINGSSL || NCRYPTO_USE_LEGACY_OPENSSL
-#define NCRYPTO_USE_LEGACY_KEY_TYPES 1
-#else
-#define NCRYPTO_USE_LEGACY_KEY_TYPES 0
-#endif
-
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
 #include <openssl/core_names.h>
 #include <openssl/encoder.h>
 #include <openssl/param_build.h>
 #endif
 
-// The FIPS-related functions are only available
-// when the OpenSSL itself was compiled with FIPS support.
-#if defined(OPENSSL_FIPS) && !OPENSSL_VERSION_PREREQ(3, 0)
-#include <openssl/fips.h>
-#endif  // OPENSSL_FIPS
-
-#if OPENSSL_VERSION_PREREQ(3, 0)
+#if !defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_AES_OCB 1
-#else
+#elif defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_AES_OCB 0
 #endif
 
@@ -96,21 +77,17 @@
 #define OPENSSL_WITH_ARGON2 0
 #endif
 
-#if OPENSSL_VERSION_PREREQ(3, 0) || defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_KEM 1
-#else
-#define OPENSSL_WITH_KEM 0
-#endif
 
-#if OPENSSL_VERSION_PREREQ(3, 0)
+#if !defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_EVP_MAC 1
-#else
+#elif defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_EVP_MAC 0
 #endif
 
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(3, 0)
+#if !defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_AES_SIV 1
-#else
+#elif defined(OPENSSL_IS_BORINGSSL)
 #define OPENSSL_WITH_AES_SIV 0
 #endif
 
@@ -120,56 +97,9 @@
 #define OPENSSL_WITH_AES_GCM_SIV 0
 #endif
 
-#if defined(OPENSSL_IS_BORINGSSL) || OPENSSL_VERSION_PREREQ(3, 2)
-#define OPENSSL_WITH_SIGNATURE_CONTEXT_STRING 1
-#else
-#define OPENSSL_WITH_SIGNATURE_CONTEXT_STRING 0
-#endif
-
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(3, 2)
-#define OPENSSL_WITH_OPENSSL_DHKEM 1
-#else
-#define OPENSSL_WITH_OPENSSL_DHKEM 0
-#endif
-
-#if OPENSSL_WITH_KEM && !defined(OPENSSL_IS_BORINGSSL) &&                      \
-    !OPENSSL_VERSION_PREREQ(3, 5)
-#define OPENSSL_WITH_KEM_OPERATION_PARAM 1
-#else
-#define OPENSSL_WITH_KEM_OPERATION_PARAM 0
-#endif
-
-// Post-quantum cryptography support. Keep these explicit so code can
-// distinguish provider API shape from the available algorithm set.
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(3, 5)
-#define OPENSSL_WITH_OPENSSL_PQC 1
-#else
-#define OPENSSL_WITH_OPENSSL_PQC 0
-#endif
-
-#ifdef OPENSSL_IS_BORINGSSL
-#define OPENSSL_WITH_BORINGSSL_PQC 1
-#else
-#define OPENSSL_WITH_BORINGSSL_PQC 0
-#endif
-
-#define OPENSSL_WITH_PQC                                                       \
-  (OPENSSL_WITH_OPENSSL_PQC || OPENSSL_WITH_BORINGSSL_PQC)
-#define OPENSSL_WITH_PQC_ML_KEM_512 OPENSSL_WITH_OPENSSL_PQC
-#define OPENSSL_WITH_PQC_SLH_DSA OPENSSL_WITH_OPENSSL_PQC
-
-#if OPENSSL_WITH_OPENSSL_PQC
-#define EVP_PKEY_ML_KEM_512 NID_ML_KEM_512
-#define EVP_PKEY_ML_KEM_768 NID_ML_KEM_768
-#define EVP_PKEY_ML_KEM_1024 NID_ML_KEM_1024
-#elif OPENSSL_WITH_BORINGSSL_PQC
-#define EVP_PKEY_ML_KEM_768 NID_ML_KEM_768
-#define EVP_PKEY_ML_KEM_1024 NID_ML_KEM_1024
-#endif
-
-#if OPENSSL_VERSION_PREREQ(3, 0)
+#if !defined(OPENSSL_IS_BORINGSSL)
 #define OSSL3_CONST const
-#else
+#elif defined(OPENSSL_IS_BORINGSSL)
 #define OSSL3_CONST
 #endif
 
@@ -366,6 +296,7 @@ class DataPointer;
 class DHPointer;
 class ECKeyPointer;
 class EVPKeyPointer;
+class KeyAlgorithm;
 class MacCache;
 class EVPMacCtxPointer;
 class EVPMacPointer;
@@ -404,7 +335,7 @@ class Digest final {
   Digest(const Digest& other);
   Digest& operator=(const Digest& other);
   inline Digest& operator=(const EVP_MD* md) {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
     fetched_md_.reset();
 #endif
     md_ = md;
@@ -429,7 +360,7 @@ class Digest final {
 
  private:
   const EVP_MD* md_ = nullptr;
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   explicit Digest(DeleteFnPtr<EVP_MD, EVP_MD_free> md);
   DeleteFnPtr<EVP_MD, EVP_MD_free> fetched_md_;
 #endif
@@ -462,14 +393,14 @@ class DigestCache final {
 
   Result lookup(const char* name, uint64_t generation) const;
   inline Result lookup(int32_t id, uint64_t generation) const {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
     if (generation_ != generation || id == -1) return {};
     const uint32_t unsigned_id = static_cast<uint32_t>(id);
     if (unsigned_id < first_id_) return {};
     const size_t index = unsigned_id - first_id_;
     if (index >= digests_.size()) return {};
     return {digests_[index].get(), id};
-#else
+#elif NCRYPTO_USE_BORINGSSL
     static_cast<void>(id);
     static_cast<void>(generation);
     return {};
@@ -481,7 +412,7 @@ class DigestCache final {
 
  private:
   uint64_t generation_ = 0;
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   using EVPMDPointer = DeleteFnPtr<EVP_MD, EVP_MD_free>;
 
   // IDs are not reused across generations because JavaScript caches them
@@ -507,14 +438,14 @@ class CipherCache final {
   NCRYPTO_DISALLOW_COPY_AND_MOVE(CipherCache)
 
   const EVP_CIPHER* lookup(const char* name, uint64_t generation);
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   const EVP_CIPHER* insert(const char* name,
                            DeleteFnPtr<EVP_CIPHER, EVP_CIPHER_free>&& cipher,
                            uint64_t generation);
 #endif
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   using EVPCipherPointer = DeleteFnPtr<EVP_CIPHER, EVP_CIPHER_free>;
 
   uint64_t generation_ = 0;
@@ -548,7 +479,7 @@ class Cipher final {
   Cipher(const Cipher& other);
   Cipher& operator=(const Cipher& other);
   inline Cipher& operator=(const EVP_CIPHER* cipher) {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
     fetched_cipher_.reset();
 #endif
     cipher_ = cipher;
@@ -587,6 +518,7 @@ class Cipher final {
                  unsigned char* iv) const;
 
   static const Cipher FromName(const char* name, CipherCache* cache = nullptr);
+  static const Cipher FromNameForKeyEncoding(const char* name);
   static const Cipher FromNid(int nid, CipherCache* cache = nullptr);
   static const Cipher FromCtx(const CipherCtxPointer& ctx);
 
@@ -643,7 +575,7 @@ class Cipher final {
 
  private:
   const EVP_CIPHER* cipher_ = nullptr;
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   explicit Cipher(DeleteFnPtr<EVP_CIPHER, EVP_CIPHER_free> cipher);
   DeleteFnPtr<EVP_CIPHER, EVP_CIPHER_free> fetched_cipher_;
 #endif
@@ -655,18 +587,18 @@ class Cipher final {
 class Dsa final {
  public:
   Dsa();
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   explicit Dsa(const EVP_PKEY* pkey);
-#else
+#elif NCRYPTO_USE_BORINGSSL
   Dsa(OSSL3_CONST DSA* dsa);
 #endif
   NCRYPTO_DISALLOW_COPY_AND_MOVE(Dsa)
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   inline operator bool() const {
     return dsa_;
   }
-#else
+#elif NCRYPTO_USE_BORINGSSL
   inline operator bool() const { return dsa_ != nullptr; }
 #endif
 #if NCRYPTO_USE_LEGACY_KEY_TYPES
@@ -679,11 +611,11 @@ class Dsa final {
   size_t getDivisorLength() const;
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   bool dsa_ = false;
   DeleteFnPtr<BIGNUM, BN_free> p_;
   DeleteFnPtr<BIGNUM, BN_free> q_;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   OSSL3_CONST DSA* dsa_;
 #endif
 };
@@ -694,18 +626,20 @@ class Dsa final {
 class Rsa final {
  public:
   Rsa();
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
-  explicit Rsa(const EVP_PKEY* pkey);
-#else
+  enum class Selection { Public, Private };
+  static Rsa PublicOnly(const EVPKeyPointer& key);
+#if NCRYPTO_USE_OPENSSL_PROVIDER
+  explicit Rsa(const EVP_PKEY* pkey, Selection selection = Selection::Private);
+#elif NCRYPTO_USE_BORINGSSL
   Rsa(OSSL3_CONST RSA* rsa);
 #endif
   NCRYPTO_DISALLOW_COPY_AND_MOVE(Rsa)
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   inline operator bool() const {
     return rsa_;
   }
-#else
+#elif NCRYPTO_USE_BORINGSSL
   inline operator bool() const { return rsa_ != nullptr; }
 #endif
 #if NCRYPTO_USE_LEGACY_KEY_TYPES
@@ -724,6 +658,23 @@ class Rsa final {
     const BIGNUM* dq;
     const BIGNUM* qi;
   };
+  struct OtherPrimeInfo {
+    const BIGNUM* r;
+    const BIGNUM* d;
+    const BIGNUM* t;
+  };
+  struct OtherPrimeInfoPointer {
+    OtherPrimeInfoPointer() = default;
+    OtherPrimeInfoPointer(BignumPointer&& r,
+                          BignumPointer&& d,
+                          BignumPointer&& t);
+
+    DeleteFnPtr<BIGNUM, BN_clear_free> r;
+    DeleteFnPtr<BIGNUM, BN_clear_free> d;
+    DeleteFnPtr<BIGNUM, BN_clear_free> t;
+  };
+  using OtherPrimeInfos = std::vector<OtherPrimeInfo>;
+  using OtherPrimeInfoPointers = std::vector<OtherPrimeInfoPointer>;
   struct PssParams {
     std::string_view digest = "sha1";
     std::optional<std::string_view> mgf1_digest = "sha1";
@@ -732,6 +683,9 @@ class Rsa final {
 
   const PublicKey getPublicKey() const;
   const PrivateKey getPrivateKey() const;
+  const OtherPrimeInfos getOtherPrimeInfos() const;
+  // Check that n is the product of all private-key prime factors.
+  bool checkPrimeProduct() const;
   const std::optional<PssParams> getPssParams() const;
 
   bool setPublicKey(BignumPointer&& n, BignumPointer&& e);
@@ -740,7 +694,8 @@ class Rsa final {
                      BignumPointer&& p,
                      BignumPointer&& dp,
                      BignumPointer&& dq,
-                     BignumPointer&& qi);
+                     BignumPointer&& qi,
+                     OtherPrimeInfoPointers&& other_prime_infos = {});
 
   using CipherParams = Cipher::CipherParams;
 
@@ -754,7 +709,7 @@ class Rsa final {
                              const Buffer<const void> in);
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   bool rsa_ = false;
   bool rsa_pss_ = false;
   DeleteFnPtr<BIGNUM, BN_free> n_;
@@ -765,8 +720,9 @@ class Rsa final {
   DeleteFnPtr<BIGNUM, BN_clear_free> dp_;
   DeleteFnPtr<BIGNUM, BN_clear_free> dq_;
   DeleteFnPtr<BIGNUM, BN_clear_free> qi_;
+  OtherPrimeInfoPointers other_prime_infos_;
   std::optional<PssParams> pss_params_;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   OSSL3_CONST RSA* rsa_;
 #endif
 };
@@ -774,9 +730,9 @@ class Rsa final {
 class Ec final {
  public:
   Ec();
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   explicit Ec(const EVP_PKEY* pkey);
-#else
+#elif NCRYPTO_USE_BORINGSSL
   Ec(OSSL3_CONST EC_KEY* key);
 #endif
   NCRYPTO_DISALLOW_COPY_AND_MOVE(Ec)
@@ -792,16 +748,29 @@ class Ec final {
 #endif
 
   static int GetCurveIdFromName(const char* name);
+  static int GetCurveId(const EVPKeyPointer& key);
+  static std::optional<std::string> GetCurveName(const EVPKeyPointer& key);
+  static bool CheckCurveName(const char* name);
+  static DataPointer TryExportPublic(const EVPKeyPointer& key,
+                                     point_conversion_form_t form);
+  static DataPointer ExportPrivate(const EVPKeyPointer& key);
+  static BIOPointer ExportPrivatePkcs8(const EVPKeyPointer& key);
+  static bool GetKeyComponents(const EVPKeyPointer& key,
+                               BignumPointer* x,
+                               BignumPointer* y,
+                               BignumPointer* priv,
+                               int* degree);
+  static const KeyAlgorithm* GetNamedKeyAlgorithm(const char* name);
 
   using GetCurveCallback = std::function<bool(const char*)>;
   static bool GetCurves(GetCurveCallback callback);
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   DeleteFnPtr<EC_GROUP, EC_GROUP_free> ec_;
   DeleteFnPtr<EC_POINT, EC_POINT_free> pub_;
   point_conversion_form_t form_ = POINT_CONVERSION_UNCOMPRESSED;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   OSSL3_CONST EC_KEY* ec_ = nullptr;
 #endif
 };
@@ -924,10 +893,37 @@ class BIOPointer final {
 
   static int Write(BIOPointer* bio, std::string_view message);
 
+  // Writes the complete message and returns false if any bytes were not
+  // written.
+  static bool WriteAll(const BIOPointer& bio, std::string_view message);
+
+  // Returns the number of bytes written, or a negative value on error.
   template <typename... Args>
-  static void Printf(BIOPointer* bio, const char* format, Args... args) {
-    if (bio == nullptr || !*bio) return;
-    BIO_printf(bio->get(), format, std::forward<Args...>(args...));
+  static int Printf(BIOPointer* bio, const char* format, Args... args) {
+    if (bio == nullptr || !*bio) return -1;
+    return BIO_printf(bio->get(), format, std::forward<Args>(args)...);
+  }
+
+  // Formats and writes the complete message, returning false if formatting
+  // fails or any bytes were not written.
+  template <typename... Args>
+  static bool PrintfAll(const BIOPointer& bio,
+                        const char* format,
+                        Args... args) {
+    if (!bio) return false;
+
+    BIOPointer formatted = NewMem();
+    if (!formatted) return false;
+    int length =
+        BIO_printf(formatted.get(), format, std::forward<Args>(args)...);
+    if (length < 0) return false;
+
+    BUF_MEM* mem = formatted;
+    if (mem == nullptr || mem->length != static_cast<size_t>(length)) {
+      return false;
+    }
+    if (length == 0) return true;
+    return WriteAll(bio, std::string_view(mem->data, mem->length));
   }
 
  private:
@@ -1065,6 +1061,77 @@ class CipherCtxPointer final {
   DeleteFnPtr<EVP_CIPHER_CTX, EVP_CIPHER_CTX_free> ctx_;
 };
 
+// Known key algorithms are identified by provider names, never synthetic NIDs.
+// Descriptors have static lifetime; availability is queried from the backend.
+class KeyAlgorithm final {
+ public:
+  static const KeyAlgorithm RSA;
+  static const KeyAlgorithm RSA_PSS;
+  static const KeyAlgorithm DSA;
+  static const KeyAlgorithm DH;
+  static const KeyAlgorithm EC;
+  static const KeyAlgorithm ED25519;
+  static const KeyAlgorithm ED448;
+  static const KeyAlgorithm X25519;
+  static const KeyAlgorithm X448;
+  static const KeyAlgorithm SM2;
+  static const KeyAlgorithm ML_DSA_44;
+  static const KeyAlgorithm ML_DSA_65;
+  static const KeyAlgorithm ML_DSA_87;
+  static const KeyAlgorithm ML_KEM_512;
+  static const KeyAlgorithm ML_KEM_768;
+  static const KeyAlgorithm ML_KEM_1024;
+  static const KeyAlgorithm SLH_DSA_SHA2_128F;
+  static const KeyAlgorithm SLH_DSA_SHA2_128S;
+  static const KeyAlgorithm SLH_DSA_SHA2_192F;
+  static const KeyAlgorithm SLH_DSA_SHA2_192S;
+  static const KeyAlgorithm SLH_DSA_SHA2_256F;
+  static const KeyAlgorithm SLH_DSA_SHA2_256S;
+  static const KeyAlgorithm SLH_DSA_SHAKE_128F;
+  static const KeyAlgorithm SLH_DSA_SHAKE_128S;
+  static const KeyAlgorithm SLH_DSA_SHAKE_192F;
+  static const KeyAlgorithm SLH_DSA_SHAKE_192S;
+  static const KeyAlgorithm SLH_DSA_SHAKE_256F;
+  static const KeyAlgorithm SLH_DSA_SHAKE_256S;
+
+  // Look up a canonical name case-insensitively, including unavailable
+  // algorithms.
+  static const KeyAlgorithm* FromName(const char* name);
+
+  const char* name() const { return name_; }
+  const char* keyTypeName() const {
+    return key_type_name_[0] == '\0' ? nullptr : key_type_name_.data();
+  }
+  bool isRsa() const;
+  bool isAvailable() const;
+  bool isPqc() const;
+  bool isOkp() const;
+  bool isOneShot() const;
+  bool supportsRawPublic() const;
+  bool supportsRawPrivate() const;
+  size_t seedSize() const;
+
+ private:
+  enum class Family { Other, EdDSA, XDH, MLDSA, MLKEM, SLHDSA };
+  static constexpr size_t kMaxKeyTypeNameLength = 32;
+  template <size_t N>
+  constexpr KeyAlgorithm(const char (&name)[N],
+                         Family family,
+                         bool has_key_type = true)
+      : name_(name), family_(family) {
+    static_assert(N <= kMaxKeyTypeNameLength);
+    if (has_key_type) {
+      for (size_t i = 0; i < N; i++) {
+        key_type_name_[i] =
+            name[i] >= 'A' && name[i] <= 'Z' ? name[i] + ('a' - 'A') : name[i];
+      }
+    }
+  }
+  const char* name_;
+  std::array<char, kMaxKeyTypeNameLength> key_type_name_{};
+  Family family_;
+};
+
 class EVPKeyCtxPointer final {
  public:
   EVPKeyCtxPointer();
@@ -1089,6 +1156,7 @@ class EVPKeyCtxPointer final {
   bool setDhParameters(int prime_size, uint32_t generator);
   bool setDsaParameters(uint32_t bits, std::optional<int> q_bits);
   bool setEcParameters(int curve, int encoding);
+  bool setEcParameters(const char* group_name, int encoding);
 
   bool setRsaOaepMd(const Digest& md);
   bool setRsaMgf1Md(const Digest& md);
@@ -1127,7 +1195,8 @@ class EVPKeyCtxPointer final {
   int initForSign();
 
   static EVPKeyCtxPointer New(const EVPKeyPointer& key);
-  static EVPKeyCtxPointer NewFromID(int id);
+  static EVPKeyCtxPointer NewFromName(const char* name);
+  static EVPKeyCtxPointer NewFromAlgorithm(const KeyAlgorithm& algorithm);
 
  private:
   DeleteFnPtr<EVP_PKEY_CTX, EVP_PKEY_CTX_free> ctx_;
@@ -1136,18 +1205,16 @@ class EVPKeyCtxPointer final {
 class EVPKeyPointer final {
  public:
   static EVPKeyPointer New();
-  static EVPKeyPointer NewRawPublic(int id,
+  static EVPKeyPointer NewRawPublic(const KeyAlgorithm& algorithm,
                                     const Buffer<const unsigned char>& data);
-  static EVPKeyPointer NewRawPrivate(int id,
+  static EVPKeyPointer NewRawPrivate(const KeyAlgorithm& algorithm,
                                      const Buffer<const unsigned char>& data);
-#if OPENSSL_WITH_PQC
-  static EVPKeyPointer NewRawSeed(int id,
+  static EVPKeyPointer NewRawSeed(const KeyAlgorithm& algorithm,
                                   const Buffer<const unsigned char>& data);
-#endif
   static EVPKeyPointer NewDH(DHPointer&& dh);
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   static EVPKeyPointer NewRSA(const Rsa& rsa);
-#else
+#elif NCRYPTO_USE_BORINGSSL
   static EVPKeyPointer NewRSA(RSAPointer&& rsa);
 #endif
 
@@ -1191,7 +1258,7 @@ class EVPKeyPointer final {
   using PublicKeyEncodingConfig = AsymmetricKeyEncodingConfig;
 
   struct PrivateKeyEncodingConfig : public AsymmetricKeyEncodingConfig {
-    const EVP_CIPHER* cipher = nullptr;
+    Cipher cipher;
     std::optional<DataPointer> passphrase = std::nullopt;
     PrivateKeyEncodingConfig() = default;
     PrivateKeyEncodingConfig(bool output_key_object,
@@ -1248,11 +1315,19 @@ class EVPKeyPointer final {
   void reset(EVP_PKEY* pkey = nullptr);
   EVP_PKEY* release();
 
-  static int id(const EVP_PKEY* key);
-  static int base_id(const EVP_PKEY* key);
-
-  int id() const;
-  int base_id() const;
+  static bool isA(const EVP_PKEY* key, const char* name);
+  bool isA(const char* name) const;
+  static bool isA(const EVP_PKEY* key, const KeyAlgorithm& algorithm);
+  bool isA(const KeyAlgorithm& algorithm) const;
+  // Resolve a known algorithm without caching key or provider state.
+  const KeyAlgorithm* getAlgorithm() const;
+  // Stable public key-type name, or nullptr for an unsupported key type.
+  const char* getKeyTypeName() const;
+  bool supportsRawPublic() const;
+  bool supportsRawPrivate() const;
+  bool supportsContextString() const;
+  bool hasSmallOrderEdDsaPoint(
+      const Buffer<const unsigned char>& signature) const;
   int bits() const;
   size_t size() const;
 
@@ -1262,9 +1337,22 @@ class EVPKeyPointer final {
   DataPointer rawPrivateKey() const;
   BIOPointer derPublicKey() const;
 
-#if OPENSSL_WITH_PQC
-  DataPointer rawSeed() const;
-#endif
+  enum class RawExportError { UNSUPPORTED_KEY_TYPE, MISSING_SEED, FAILED };
+  Result<DataPointer, RawExportError> rawSeed() const;
+
+  struct RawJwkData {
+    const KeyAlgorithm* algorithm = nullptr;
+    DataPointer public_key;
+    DataPointer private_key;
+  };
+  // Raw JWK material for OKP and AKP keys. Private bytes use the JWK
+  // representation (a seed for ML-DSA/ML-KEM, a raw private key otherwise).
+  Result<RawJwkData, RawExportError> exportRawJwk(bool include_private) const;
+  static EVPKeyPointer NewRawJwk(
+      const KeyAlgorithm& algorithm,
+      const Buffer<const unsigned char>& public_key,
+      const std::optional<Buffer<const unsigned char>>& private_key =
+          std::nullopt);
 
   Result<BIOPointer, bool> writePrivateKey(
       const PrivateKeyEncodingConfig& config) const;
@@ -1280,9 +1368,10 @@ class EVPKeyPointer final {
   operator Rsa() const;
   operator Dsa() const;
 
+  static bool isRsaVariant(const EVP_PKEY* key);
   bool isRsaVariant() const;
-  bool isOneShotVariant() const;
   bool isSigVariant() const;
+  bool mayBeSM2() const;
   bool validateDsaParameters() const;
 
  private:
@@ -1310,10 +1399,10 @@ class DHPointer final {
   static DHPointer New(size_t bits, unsigned int generator);
 
   DHPointer() = default;
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   explicit DHPointer(EVPKeyPointer&& key, const char* group_name = nullptr);
   DHPointer(BignumPointer&& p, BignumPointer&& g, const char* group_name);
-#else
+#elif NCRYPTO_USE_BORINGSSL
   explicit DHPointer(DH* dh);
 #endif
   DHPointer(DHPointer&& other) noexcept;
@@ -1321,14 +1410,14 @@ class DHPointer final {
   NCRYPTO_DISALLOW_COPY(DHPointer)
   ~DHPointer();
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   inline bool operator==(std::nullptr_t) noexcept {
     return !operator bool();
   }
   inline operator bool() const {
     return dh_ != nullptr || (p_ && g_);
   }
-#else
+#elif NCRYPTO_USE_BORINGSSL
   inline bool operator==(std::nullptr_t) noexcept { return dh_ == nullptr; }
   inline operator bool() const { return dh_ != nullptr; }
 #endif
@@ -1390,14 +1479,14 @@ class DHPointer final {
                                const EVPKeyPointer& theirKey);
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   DeleteFnPtr<EVP_PKEY, EVP_PKEY_free> dh_;
   BignumPointer p_;
   BignumPointer g_;
   BignumPointer pub_key_;
   BignumPointer pvt_key_;
   const char* group_name_ = nullptr;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   DeleteFnPtr<DH, DH_free> dh_;
 #endif
 };
@@ -1487,6 +1576,13 @@ class SSLPointer final {
 
 class X509Name final {
  public:
+  // A missing Entry means the name entry could not be inspected. A missing
+  // value marks an AttributeValue that the legacy UTF-8 view cannot represent.
+  struct Entry {
+    std::string key;
+    std::optional<std::string> value;
+  };
+
   X509Name();
   explicit X509Name(const X509_NAME* name);
   NCRYPTO_DISALLOW_COPY_AND_MOVE(X509Name)
@@ -1507,7 +1603,7 @@ class X509Name final {
     operator bool() const;
     bool operator==(const Iterator& other) const;
     bool operator!=(const Iterator& other) const;
-    std::pair<std::string, std::string> operator*() const;
+    std::optional<Entry> operator*() const;
 
    private:
     const X509Name& name_;
@@ -1546,15 +1642,15 @@ class X509View final {
   const X509Name getSubjectName() const;
   const X509Name getIssuerName() const;
   BIOPointer getSubject() const;
-  BIOPointer getSubjectAltName() const;
+  BIOPointer getSubjectAltName(bool* has_extension = nullptr) const;
   BIOPointer getIssuer() const;
   BIOPointer getInfoAccess() const;
   BIOPointer getValidFrom() const;
   BIOPointer getValidTo() const;
   std::optional<std::string_view> getSignatureAlgorithm() const;
   std::optional<std::string> getSignatureAlgorithmOID() const;
-  int64_t getValidFromTime() const;
-  int64_t getValidToTime() const;
+  std::optional<int64_t> getValidFromTime() const;
+  std::optional<int64_t> getValidToTime() const;
   DataPointer getSerialNumber() const;
   Result<EVPKeyPointer, int> getPublicKey() const;
   StackOfASN1 getKeyUsage() const;
@@ -1578,7 +1674,7 @@ class X509View final {
                        int flags,
                        DataPointer* peerName = nullptr) const;
   CheckMatch checkEmail(std::string_view email, int flags) const;
-  CheckMatch checkIp(std::string_view ip, int flags) const;
+  CheckMatch checkIp(const Buffer<const unsigned char>& ip, int flags) const;
 
   using UsageCallback = std::function<void(const char*)>;
   bool enumUsages(UsageCallback callback) const;
@@ -1718,14 +1814,14 @@ class ECKeyPointer final {
   NCRYPTO_DISALLOW_COPY(ECKeyPointer)
   ~ECKeyPointer();
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   inline bool operator==(std::nullptr_t) noexcept {
     return group_ == nullptr;
   }
   inline operator bool() const {
     return group_ != nullptr;
   }
-#else
+#elif NCRYPTO_USE_BORINGSSL
   inline bool operator==(std::nullptr_t) noexcept { return key_ == nullptr; }
   inline operator bool() const { return key_ != nullptr; }
 #endif
@@ -1744,6 +1840,7 @@ class ECKeyPointer final {
   bool setPublicKeyRaw(const BignumPointer& x, const BignumPointer& y);
   bool generate();
   bool checkKey() const;
+  bool checkPrivateKey() const;
   DataPointer computeSecret(const ECPointPointer& peer) const;
 
   const EC_GROUP* getGroup() const;
@@ -1762,11 +1859,11 @@ class ECKeyPointer final {
 #endif
 
  private:
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   DeleteFnPtr<EC_GROUP, EC_GROUP_free> group_;
   DeleteFnPtr<EC_POINT, EC_POINT_free> pub_;
   DeleteFnPtr<BIGNUM, BN_clear_free> priv_;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   DeleteFnPtr<EC_KEY, EC_KEY_free> key_;
 #endif
 };
@@ -1836,7 +1933,7 @@ class EVPMDCtxPointer final {
   DeleteFnPtr<EVP_MD_CTX, EVP_MD_CTX_free> ctx_;
 };
 
-#if !OPENSSL_WITH_EVP_MAC
+#if NCRYPTO_USE_BORINGSSL
 class HMACCtxPointer final {
  public:
   HMACCtxPointer();
@@ -1863,7 +1960,7 @@ class HMACCtxPointer final {
  private:
   DeleteFnPtr<HMAC_CTX, HMAC_CTX_free> ctx_;
 };
-#endif  // !OPENSSL_WITH_EVP_MAC
+#endif  // NCRYPTO_USE_BORINGSSL
 
 #if OPENSSL_WITH_EVP_MAC
 class EVPMacPointer final {
@@ -1999,7 +2096,7 @@ class HMACCtxPointer final {
 };
 #endif  // OPENSSL_WITH_EVP_MAC
 
-#if !OPENSSL_WITH_EVP_MAC
+#if NCRYPTO_USE_BORINGSSL
 class MacCache final {
  public:
   MacCache() = default;
@@ -2007,47 +2104,13 @@ class MacCache final {
 };
 #endif
 
-#ifndef OPENSSL_NO_ENGINE
-class EnginePointer final {
- public:
-  EnginePointer() = default;
-
-  explicit EnginePointer(void* engine_, bool finish_on_exit = false);
-  EnginePointer(EnginePointer&& other) noexcept;
-  EnginePointer& operator=(EnginePointer&& other) noexcept;
-  NCRYPTO_DISALLOW_COPY(EnginePointer)
-  ~EnginePointer();
-
-  inline operator bool() const { return engine != nullptr; }
-  inline void setFinishOnExit() { finish_on_exit = true; }
-
-  void reset(void* engine_ = nullptr, bool finish_on_exit_ = false);
-
-  bool setAsDefault(uint32_t flags, CryptoErrorList* errors = nullptr);
-  bool init(bool finish_on_exit = false);
-  EVPKeyPointer loadPrivateKey(const char* key_name);
-  bool setClientCertEngine(SSL_CTX* ctx);
-
-  void* release();
-
-  // Retrieve an OpenSSL Engine instance by name. If the name does not
-  // identify a valid named engine, the returned EnginePointer will be
-  // empty.
-  static EnginePointer getEngineByName(const char* name,
-                                       CryptoErrorList* errors = nullptr);
-
-  // Call once when initializing OpenSSL at startup for the process.
-  static void initEnginesOnce();
-
- private:
-  void* engine = nullptr;
-  bool finish_on_exit = false;
-};
-#endif  // !OPENSSL_NO_ENGINE
-
 // ============================================================================
 // FIPS
 bool isFipsEnabled();
+
+// Configure seed-preserving PQC private-key encoding when the backend supports
+// it.
+void ConfigurePqcEncoding();
 
 bool setFipsEnabled(bool enabled, CryptoErrorList* errors);
 
@@ -2085,8 +2148,29 @@ Buffer<char> ExportChallenge(const char* input, size_t length);
 // ============================================================================
 // KDF
 
+#if NCRYPTO_USE_OPENSSL_PROVIDER
+class KDF final {
+ public:
+  KDF() = default;
+  KDF(KDF&&) noexcept = default;
+  KDF& operator=(KDF&&) noexcept = default;
+  NCRYPTO_DISALLOW_COPY(KDF)
+
+  inline operator bool() const { return kdf_ != nullptr; }
+
+  static KDF Fetch(const char* algorithm, OSSL_LIB_CTX* libctx = nullptr);
+
+  // Each derivation uses a fresh context. A null output can be used for
+  // parameter validation by KDFs that support it, such as scrypt.
+  bool derive(const Buffer<unsigned char>& out, const OSSL_PARAM* params) const;
+
+ private:
+  explicit KDF(EVP_KDF* kdf);
+  DeleteFnPtr<EVP_KDF, EVP_KDF_free> kdf_;
+};
+#endif
+
 const EVP_MD* getDigestByName(const char* name);
-const EVP_CIPHER* getCipherByName(const char* name);
 
 // Verify that the specified HKDF output length is valid for the given digest.
 // The maximum length for HKDF output for a given digest is 255 times the
@@ -2160,7 +2244,7 @@ class KEM final {
                                  const Buffer<const void>& ciphertext);
 
  private:
-#if OPENSSL_WITH_KEM_OPERATION_PARAM
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   static bool SetOperationParameter(EVP_PKEY_CTX* ctx,
                                     const EVPKeyPointer& key);
 #endif

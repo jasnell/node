@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2024-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -58,7 +58,7 @@ int ossl_FIPS_IND_get_settable(const OSSL_FIPS_IND *ind, int id)
 int ossl_FIPS_IND_on_unapproved(OSSL_FIPS_IND *ind, int id,
     OSSL_LIB_CTX *libctx,
     const char *algname, const char *opname,
-    OSSL_FIPS_IND_CHECK_CB *config_check_fn)
+    enum fips_config_id config_id)
 {
     /* Set to unapproved. Once unapproved mode is set this will not be reset */
     ind->approved = 0;
@@ -69,19 +69,16 @@ int ossl_FIPS_IND_on_unapproved(OSSL_FIPS_IND *ind, int id,
      * assumed to be strict.
      */
     if (ossl_FIPS_IND_get_settable(ind, id) == OSSL_FIPS_IND_STATE_TOLERANT
-        || (config_check_fn != NULL
-            && config_check_fn(libctx) == OSSL_FIPS_IND_STATE_TOLERANT)) {
+        || (ossl_fips_config(libctx, config_id) == OSSL_FIPS_IND_STATE_TOLERANT)) {
         return ossl_FIPS_IND_callback(libctx, algname, opname);
     }
     /* Strict mode gets here: This returns an error */
     return 0;
 }
 
-int ossl_FIPS_IND_set_ctx_param(OSSL_FIPS_IND *ind, int id,
-    const OSSL_PARAM params[], const char *name)
+int ossl_FIPS_IND_set_ctx_param(OSSL_FIPS_IND *ind, int id, const OSSL_PARAM *p)
 {
     int in = 0;
-    const OSSL_PARAM *p = OSSL_PARAM_locate_const(params, name);
 
     if (p != NULL) {
         if (!OSSL_PARAM_get_int(p, &in))
@@ -91,11 +88,34 @@ int ossl_FIPS_IND_set_ctx_param(OSSL_FIPS_IND *ind, int id,
     return 1;
 }
 
-int ossl_FIPS_IND_get_ctx_param(const OSSL_FIPS_IND *ind, OSSL_PARAM params[])
+int ossl_FIPS_IND_set_ctx_param_locate(OSSL_FIPS_IND *ind, int id,
+    const OSSL_PARAM params[],
+    const char *name)
+{
+    const OSSL_PARAM *p = OSSL_PARAM_locate_const(params, name);
+
+    return ossl_FIPS_IND_set_ctx_param(ind, id, p);
+}
+
+int ossl_FIPS_IND_get_ctx_param(const OSSL_FIPS_IND *ind, OSSL_PARAM *p)
+{
+    return p == NULL || OSSL_PARAM_set_int(p, ind->approved);
+}
+
+int ossl_FIPS_IND_get_ctx_param_conditional(const OSSL_FIPS_IND *ind,
+    OSSL_PARAM *p, int condition)
+{
+    return p == NULL
+        || OSSL_PARAM_set_int(p,
+            condition && (ind == NULL || ind->approved));
+}
+
+int ossl_FIPS_IND_get_ctx_param_locate(const OSSL_FIPS_IND *ind,
+    OSSL_PARAM params[])
 {
     OSSL_PARAM *p = OSSL_PARAM_locate(params, OSSL_ALG_PARAM_FIPS_APPROVED_INDICATOR);
 
-    return p == NULL || OSSL_PARAM_set_int(p, ind->approved);
+    return p == NULL || ossl_FIPS_IND_get_ctx_param(ind, p);
 }
 
 /*

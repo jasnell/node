@@ -16,8 +16,6 @@
       'includes': ['config/archs/BSD-x86/asm/openssl.gypi'],
     }, 'target_arch=="ia32" and OS=="linux"', {
       'includes': ['config/archs/linux-elf/asm/openssl.gypi'],
-    }, 'target_arch=="ia32" and OS=="mac"', {
-      'includes': ['config/archs/darwin-i386-cc/asm/openssl.gypi'],
     }, 'target_arch=="ia32" and OS=="solaris"', {
       'includes': ['config/archs/solaris-x86-gcc/asm/openssl.gypi'],
     }, 'target_arch=="ia32" and OS=="win"', {
@@ -76,6 +74,9 @@
     }, {
       # Other architectures don't use assembly
       'includes': ['config/archs/linux-x86_64/asm/openssl.gypi'],
+    }],
+    [ 'clang==1 and OS!="win"', {
+      'cflags': [ '-Wno-unused-command-line-argument' ],
     }],
   ],
 }

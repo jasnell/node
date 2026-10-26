@@ -80,6 +80,8 @@ export declare namespace Client {
     maxResponseSize?: number;
     /** WebSocket-specific options */
     webSocket?: Client.WebSocketOptions;
+    /** EventSource-specific options */
+    eventSource?: Client.EventSourceOptions;
     /** Enables a family autodetection algorithm that loosely implements section 5 of RFC 8305. */
     autoSelectFamily?: boolean;
     /** The amount of time in milliseconds to wait for a connection attempt to finish before trying the next address when using the `autoSelectFamily` option. */
@@ -90,7 +92,7 @@ export declare namespace Client {
      */
     allowH2?: boolean;
     /**
-     * @description Dictates the maximum number of concurrent streams for a single H2 session. It can be overridden by a SETTINGS remote frame.
+     * @description Dictates the maximum number of concurrent streams for a single H2 session. The server's SETTINGS_MAX_CONCURRENT_STREAMS can lower it, but not raise it.
      * @default 100
      * @deprecated Use h2Options.maxConcurrentStreams instead
      */
@@ -117,6 +119,8 @@ export declare namespace Client {
      * @description HTTP/2 configuration options
      */
     h2Options?: Client.H2Options;
+    /** @experimental Enables the experimental Milo HTTP/1 parser for this client. Defaults to the `UNDICI_USE_MILO` environment variable. */
+    useMilo?: boolean;
   }
   export interface SocketInfo {
     localAddress?: string
@@ -155,7 +159,7 @@ export declare namespace Client {
      */
     pingInterval?: number;
     /**
-     * @description Dictates the maximum number of concurrent streams for a single H2 session. It can be overridden by a SETTINGS remote frame.
+     * @description Dictates the maximum number of concurrent streams for a single H2 session. The server's SETTINGS_MAX_CONCURRENT_STREAMS can lower it, but not raise it.
      * @default 100
     */
     maxConcurrentStreams?: number;
@@ -168,6 +172,18 @@ export declare namespace Client {
      * @description SETTINGS frame object. Default to 'node:http2' defaults
      */
     settings?: Omit<SessionOptions['settings'], 'enablePush' | 'maxConcurrentStreams' | 'enableConnectProtocol'>
+  }
+  export interface EventSourceOptions {
+    /**
+     * Maximum total bytes of data and metadata field values retained for a
+     * pending EventSource event. Each unfinished line is separately bounded
+     * to this value plus seven syntax bytes. The number of data lines per
+     * event and buffered input chunks are each limited to
+     * min(131072, max(1024, floor(maxEventSize / 128))).
+     * Set to 0 to disable these limits.
+     * @default buffer.kStringMaxLength
+     */
+    maxEventSize?: number;
   }
 }
 

@@ -19,7 +19,7 @@
 #include <mutex>
 #include "math.h"
 
-#if OPENSSL_VERSION_MAJOR >= 3
+#ifndef OPENSSL_IS_BORINGSSL
 #include "openssl/provider.h"
 #endif
 
@@ -38,16 +38,11 @@ using ncrypto::BignumPointer;
 using ncrypto::BIOPointer;
 using ncrypto::CryptoErrorList;
 using ncrypto::DataPointer;
-#ifndef OPENSSL_NO_ENGINE
-using ncrypto::EnginePointer;
-#endif  // !OPENSSL_NO_ENGINE
 using ncrypto::SSLPointer;
 using v8::Array;
 using v8::ArrayBuffer;
 using v8::ArrayBufferView;
 using v8::BackingStore;
-using v8::BackingStoreInitializationMode;
-using v8::BackingStoreOnFailureMode;
 using v8::BigInt;
 using v8::Context;
 using v8::DictionaryTemplate;
@@ -453,7 +448,7 @@ std::optional<std::string> ProcessFipsOptions() {
   const bool force_fips = per_process::cli_options->force_fips_crypto;
   if (!enable_fips && !force_fips) return std::nullopt;
 
-#if OPENSSL_VERSION_MAJOR >= 3
+#ifndef OPENSSL_IS_BORINGSSL
   // Whether FIPS-approved implementations are reachable is decided by the
   // OpenSSL configuration, not by Node.js. Refuse to start rather than
   // restrict the default property query to a provider that is not there,
@@ -507,15 +502,6 @@ void InitCryptoOnce() {
   OPENSSL_INIT_SETTINGS* settings = OPENSSL_INIT_new();
   CHECK_NOT_NULL(settings);
 
-#if OPENSSL_VERSION_MAJOR < 3
-  // --openssl-config=...
-  if (!per_process::cli_options->openssl_config.empty()) {
-    const char* conf = per_process::cli_options->openssl_config.c_str();
-    OPENSSL_INIT_set_config_filename(settings, conf);
-  }
-#endif
-
-#if OPENSSL_VERSION_MAJOR >= 3
   // --openssl-legacy-provider
   if (per_process::cli_options->openssl_legacy_provider) {
     OSSL_PROVIDER* legacy_provider = OSSL_PROVIDER_load(nullptr, "legacy");
@@ -523,27 +509,11 @@ void InitCryptoOnce() {
       fprintf(stderr, "Unable to load legacy provider.\n");
     }
   }
-#endif
 
   OPENSSL_init_ssl(0, settings);
   InstallFipsIndicatorCallback();
 
-#if OPENSSL_WITH_OPENSSL_PQC
-  // Configure all loaded providers to prefer seed-only format for ML-KEM and
-  // ML-DSA private keys in PKCS#8 export, falling back to priv-only when a
-  // seed is not available. The provider encoder reads these parameters at
-  // encoding time via ossl_prov_ctx_get_param().
-  OSSL_PROVIDER_do_all(
-      nullptr,
-      [](OSSL_PROVIDER* provider, void*) -> int {
-        OSSL_PROVIDER_add_conf_parameter(
-            provider, "ml-kem.output_formats", "seed-only,priv-only");
-        OSSL_PROVIDER_add_conf_parameter(
-            provider, "ml-dsa.output_formats", "seed-only,priv-only");
-        return 1;
-      },
-      nullptr);
-#endif
+  ncrypto::ConfigurePqcEncoding();
   OPENSSL_INIT_free(settings);
   settings = nullptr;
 
@@ -571,10 +541,6 @@ void InitCryptoOnce() {
   // Turn off compression. Saves memory and protects against CRIME attacks.
   // No-op with OPENSSL_NO_COMP builds of OpenSSL.
   sk_SSL_COMP_zero(SSL_COMP_get_compression_methods());
-
-#ifndef OPENSSL_NO_ENGINE
-  EnginePointer::initEnginesOnce();
-#endif  // !OPENSSL_NO_ENGINE
 }
 
 void GetFipsCrypto(const FunctionCallbackInfo<Value>& args) {
@@ -802,36 +768,18 @@ std::unique_ptr<BackingStore> ByteSource::ReleaseToBackingStore(
   // It's ok for allocated_data_ to be nullptr but
   // only if size_ is zero.
   CHECK_IMPLIES(size_ > 0, allocated_data_ != nullptr);
-#ifdef V8_ENABLE_SANDBOX
-  // If the v8 sandbox is enabled, then all array buffers must be allocated
-  // via the isolate. External buffers are not allowed. So, instead of wrapping
-  // the allocated data we'll copy it instead.
-
-  // TODO(@jasnell): It would be nice to use an abstracted utility to do this
-  // branch instead of duplicating the V8_ENABLE_SANDBOX check each time.
-  std::unique_ptr<BackingStore> ptr = ArrayBuffer::NewBackingStore(
+  std::unique_ptr<BackingStore> ptr = AdoptIntoBackingStore(
       env->isolate(),
-      size(),
-      BackingStoreInitializationMode::kUninitialized,
-      BackingStoreOnFailureMode::kReturnNull);
-  if (!ptr) {
-    THROW_ERR_MEMORY_ALLOCATION_FAILED(env);
-    return nullptr;
-  }
-  memcpy(ptr->Data(), allocated_data_, size());
-  OPENSSL_clear_free(allocated_data_, size_);
-#else
-  std::unique_ptr<BackingStore> ptr = ArrayBuffer::NewBackingStore(
       allocated_data_,
       size(),
-      [](void* data, size_t length, void* deleter_data) {
-        OPENSSL_clear_free(deleter_data, length);
-      }, allocated_data_);
-#endif  // V8_ENABLE_SANDBOX
-  CHECK(ptr);
+      [](void* data, size_t length, void*) {
+        OPENSSL_clear_free(data, length);
+      },
+      nullptr);
   allocated_data_ = nullptr;
   data_ = nullptr;
   size_ = 0;
+  if (!ptr) THROW_ERR_MEMORY_ALLOCATION_FAILED(env);
   return ptr;
 }
 
@@ -934,9 +882,9 @@ Maybe<void> Decorate(Environment* env,
   if (err == 0) return JustVoid();         // No decoration necessary.
 
   const char* ls = ERR_lib_error_string(err);
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   const char* fs = nullptr;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   const char* fs = ERR_func_error_string(err);
 #endif
   const char* rs = ERR_reason_error_string(err);
@@ -1075,28 +1023,6 @@ void ThrowCryptoError(Environment* env,
   env->isolate()->ThrowException(exception);
 }
 
-#ifndef OPENSSL_NO_ENGINE
-void SetEngine(const FunctionCallbackInfo<Value>& args) {
-  Environment* env = Environment::GetCurrent(args);
-  if (env->permission()->enabled()) [[unlikely]] {
-    return THROW_ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED(
-        env,
-        "Programmatic selection of OpenSSL engines is unsupported while the "
-        "experimental permission model is enabled");
-  }
-
-  CHECK(args.Length() >= 2 && args[0]->IsString());
-  uint32_t flags;
-  if (!args[1]->Uint32Value(env->context()).To(&flags)) return;
-
-  const node::Utf8Value engine_id(env->isolate(), args[0]);
-  // If the engine name is not known, calling setAsDefault on the
-  // empty engine pointer will be non-op that always returns false.
-  args.GetReturnValue().Set(
-      EnginePointer::getEngineByName(*engine_id).setAsDefault(flags));
-}
-#endif  // !OPENSSL_NO_ENGINE
-
 MaybeLocal<Value> EncodeBignum(Environment* env, const BIGNUM* bn, int size) {
   EscapableHandleScope scope(env->isolate());
   auto buf = BignumPointer::EncodePadded(bn, size);
@@ -1193,17 +1119,6 @@ namespace {
 // initialized, SecureBuffer will automatically use it.
 void SecureBuffer(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-#ifdef V8_ENABLE_SANDBOX
-  // The v8 sandbox is enabled, so we cannot use the secure heap because
-  // the sandbox requires that all array buffers be allocated via the isolate.
-  // That is fundamentally incompatible with the secure heap which allocates
-  // in openssl's secure heap area. Instead we'll just throw an error here.
-  //
-  // That said, we really shouldn't get here in the first place since the
-  // option to enable the secure heap is only available when the sandbox
-  // is disabled.
-  UNREACHABLE();
-#else
   CHECK(args[0]->IsUint32());
   uint32_t len = args[0].As<Uint32>()->Value();
 
@@ -1213,7 +1128,10 @@ void SecureBuffer(const FunctionCallbackInfo<Value>& args) {
   }
   auto released = data.release();
 
-  std::shared_ptr<BackingStore> store = ArrayBuffer::NewBackingStore(
+  // Under V8_ENABLE_SANDBOX this ends up as a plain copy, which is fine:
+  // --secure-heap is unavailable there, so SecureAlloc() is OPENSSL_malloc().
+  std::shared_ptr<BackingStore> store = AdoptIntoBackingStore(
+      env->isolate(),
       released.data,
       released.len,
       [](void* data, size_t len, void* deleter_data) {
@@ -1227,10 +1145,12 @@ void SecureBuffer(const FunctionCallbackInfo<Value>& args) {
             true);
       },
       nullptr);
+  if (!store) {
+    return THROW_ERR_MEMORY_ALLOCATION_FAILED(env);
+  }
 
   Local<ArrayBuffer> buffer = ArrayBuffer::New(env->isolate(), store);
   args.GetReturnValue().Set(Uint8Array::New(buffer, 0, len));
-#endif  // V8_ENABLE_SANDBOX
 }
 
 void SecureHeapUsed(const FunctionCallbackInfo<Value>& args) {
@@ -1242,10 +1162,6 @@ void SecureHeapUsed(const FunctionCallbackInfo<Value>& args) {
 namespace Util {
 void Initialize(Environment* env, Local<Object> target) {
   Local<Context> context = env->context();
-#ifndef OPENSSL_NO_ENGINE
-  SetMethod(context, target, "setEngine", SetEngine);
-#endif  // !OPENSSL_NO_ENGINE
-
   SetMethodNoSideEffect(context, target, "getFipsCrypto", GetFipsCrypto);
   SetMethodNoSideEffect(
       context, target, "getFipsCryptoGeneration", GetFipsCryptoGeneration);
@@ -1265,10 +1181,6 @@ void Initialize(Environment* env, Local<Object> target) {
       context, target, "getOpenSSLSecLevelCrypto", GetOpenSSLSecLevelCrypto);
 }
 void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
-#ifndef OPENSSL_NO_ENGINE
-  registry->Register(SetEngine);
-#endif  // !OPENSSL_NO_ENGINE
-
   registry->Register(GetFipsCrypto);
   registry->Register(GetFipsCryptoGeneration);
   registry->Register(SetupFipsIndicatorChannel);

@@ -9,10 +9,10 @@
 #include "nbytes.h"
 #include "nghttp2/nghttp2ver.h"
 #include "node.h"
+#include "quic/guard.h"
 #include "simdjson.h"
 #include "simdutf.h"
 #if HAVE_SQLITE
-#include "quic/guard.h"
 #include "sqlite3.h"
 #endif  // HAVE_SQLITE
 #if HAVE_FFI
@@ -42,7 +42,7 @@
 #ifndef OPENSSL_NO_QUIC
 #include <ngtcp2/version.h>
 #include <nghttp3/version.h>
-#endif
+#endif  // OPENSSL_NO_QUIC
 
 #ifdef NODE_HAVE_I18N_SUPPORT
 #include <unicode/timezone.h>
@@ -68,7 +68,7 @@ static constexpr size_t search(const char* s, char c, size_t n = 0) {
 
 static inline std::string GetOpenSSLVersion() {
   // sample openssl version string format
-  // for reference: "OpenSSL 1.1.0i 14 Aug 2018"
+  // for reference: "OpenSSL 3.5.7 9 Jun 2026"
   const char* version = OpenSSL_version(OPENSSL_VERSION);
   const size_t first_space = search(version, ' ');
 
@@ -165,7 +165,7 @@ Metadata::Versions::Versions() {
 #ifndef OPENSSL_NO_QUIC
   ngtcp2 = NGTCP2_VERSION;
   nghttp3 = NGHTTP3_VERSION;
-#endif
+#endif  // OPENSSL_NO_QUIC
 
   simdjson = SIMDJSON_VERSION;
   simdutf = SIMDUTF_VERSION;

@@ -1,4 +1,3 @@
-#if HAVE_OPENSSL && HAVE_QUIC
 #include "guard.h"
 #ifndef OPENSSL_NO_QUIC
 #include <env-inl.h>
@@ -8,9 +7,11 @@
 #include <openssl/ssl.h>
 #include <string_bytes.h>
 #include <v8.h>
+#include <algorithm>
 #include "bindingdata.h"
 #include "data.h"
 #include "defs.h"
+#include "simdutf.h"
 #include "util.h"
 
 namespace node {
@@ -33,6 +34,7 @@ using v8::Undefined;
 using v8::Value;
 
 namespace quic {
+// NOLINTNEXTLINE(runtime/thread_local)
 thread_local int DebugIndentScope::indent_ = 0;
 
 Path::Path(const SocketAddress& local, const SocketAddress& remote) {
@@ -218,6 +220,9 @@ void Store::MemoryInfo(MemoryTracker* tracker) const {
 // ============================================================================
 
 namespace {
+
+constexpr size_t kMaxConnectionCloseReasonLength = 256;
+
 constexpr std::string_view TypeName(QuicError::Type type) {
   switch (type) {
     case QuicError::Type::APPLICATION:
@@ -330,6 +335,18 @@ QuicError::operator const ngtcp2_ccerr&() const {
 
 QuicError::operator const ngtcp2_ccerr*() const {
   return ptr_;
+}
+
+ngtcp2_ccerr QuicError::ToNgtcp2ConnectionCloseError() const {
+  ngtcp2_ccerr error = *ptr_;
+  error.reason = reason_c_str();
+
+  const size_t reasonlen =
+      std::min(reason_.size(), kMaxConnectionCloseReasonLength);
+
+  error.reasonlen = simdutf::trim_partial_utf8(reason_.data(), reasonlen);
+
+  return error;
 }
 
 std::string QuicError::reason_for_liberr(int liberr) {
@@ -554,4 +571,3 @@ const QuicError QuicError::INTERNAL_ERROR = ForNgtcp2Error(NGTCP2_ERR_INTERNAL);
 }  // namespace node
 
 #endif  // OPENSSL_NO_QUIC
-#endif  // HAVE_OPENSSL && HAVE_QUIC

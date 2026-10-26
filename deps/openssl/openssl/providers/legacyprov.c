@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2025 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -163,7 +163,14 @@ static const OSSL_ALGORITHM legacy_ciphers[] = {
 
 static const OSSL_ALGORITHM legacy_kdfs[] = {
     ALG(PROV_NAMES_PBKDF1, ossl_kdf_pbkdf1_functions),
+#ifndef OPENSSL_NO_PVKKDF
     ALG(PROV_NAMES_PVKKDF, ossl_kdf_pvk_functions),
+#endif
+    { NULL, NULL, NULL }
+};
+
+static const OSSL_ALGORITHM legacy_skeymgmt[] = {
+    ALG(PROV_NAMES_GENERIC, ossl_generic_skeymgmt_functions),
     { NULL, NULL, NULL }
 };
 
@@ -178,6 +185,8 @@ static const OSSL_ALGORITHM *legacy_query(void *provctx, int operation_id,
         return legacy_ciphers;
     case OSSL_OP_KDF:
         return legacy_kdfs;
+    case OSSL_OP_SKEYMGMT:
+        return legacy_skeymgmt;
     }
     return NULL;
 }
@@ -244,6 +253,10 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
             break;
         }
     }
+#endif
+
+#ifndef STATIC_LEGACY
+    OPENSSL_init_crypto(OPENSSL_INIT_NO_ATEXIT, NULL);
 #endif
 
     if ((*provctx = ossl_prov_ctx_new()) == NULL

@@ -1,7 +1,8 @@
-// Flags: --no-warnings
+// Flags: --experimental-bench --no-warnings
 'use strict';
 
 const common = require('../common');
+const { completeSample } = require('../common/bench');
 const assert = require('assert');
 const { createRunner } = require('node:bench');
 const { setImmediate } = require('timers/promises');
@@ -16,18 +17,14 @@ const { setImmediate } = require('timers/promises');
   second.before(common.mustCall());
 
   const firstCompletion = first.bench(
-    'same name', { samples: 2 }, common.mustCall((b) => {
+    'same name', { samples: 2, warmup: 0 }, common.mustCall((b) => {
       firstCalls++;
-      b.start();
-      process.hrtime.bigint();
-      b.end(1);
+      completeSample(b);
     }, 2));
   const secondCompletion = second.bench(
-    'same name', { samples: 1 }, common.mustCall((b) => {
+    'same name', { samples: 1, warmup: 0 }, common.mustCall((b) => {
       secondCalls++;
-      b.start();
-      process.hrtime.bigint();
-      b.end(1);
+      completeSample(b);
     }));
 
   await setImmediate();
@@ -74,9 +71,7 @@ const { setImmediate } = require('timers/promises');
 
   const retry = createRunner({ yieldBetweenSamples: false });
   retry.bench('not filtered', { samples: 1 }, (b) => {
-    b.start();
-    process.hrtime.bigint();
-    b.end(1);
+    completeSample(b);
   });
   assert.throws(() => retry.run({
     namePattern: 'filtered',
@@ -90,9 +85,7 @@ const { setImmediate } = require('timers/promises');
 
   const reentrant = createRunner({ yieldBetweenSamples: false });
   reentrant.bench('reentrant options', { samples: 1 }, (b) => {
-    b.start();
-    process.hrtime.bigint();
-    b.end(1);
+    completeSample(b);
   });
   const reentrantOptions = {};
   Object.defineProperty(reentrantOptions, 'samples', {

@@ -118,6 +118,42 @@ This behavior also applies to \fBchild_process.spawn()\fR, but in that case, the
 flags are propagated via the \fBNODE_OPTIONS\fR environment variable rather than
 directly through the process arguments.
 .
+.It Fl -allow-env
+When using the Permission Model, the process starts without the environment
+variables it has not been granted access to. At startup, every variable that
+\fB--allow-env\fR does not match is removed from the process environment. Removed
+variables are absent from \fBprocess.env\fR, from diagnostic reports, from native
+code calling \fBgetenv()\fR, and from the environment of child processes and worker
+threads.
+The valid values are:
+.Bl -bullet
+.It
+\fB*\fR - Grants access to every environment variable.
+.It
+A variable name, for example \fB--allow-env=DATABASE_URL\fR.
+.It
+A variable name prefix followed by \fB*\fR, for example \fB--allow-env=APP_*\fR.
+.El
+Multiple values can be passed by repeating the flag, or by separating them with
+commas: \fB--allow-env=PORT,APP_*\fR. Variable names are case-insensitive on
+Windows.
+Example:
+.Bd -literal
+console.log(process.env.DATABASE_URL);
+console.log(process.env.AWS_SECRET_ACCESS_KEY);
+.Ed
+.Bd -literal
+$ node --permission --allow-fs-read=* --allow-env=DATABASE_URL index.js
+postgres://localhost/app
+undefined
+(node:1234) Warning: The permission model removed the environment variable "AWS_SECRET_ACCESS_KEY" at startup. Use --allow-env to manage permissions.
+.Ed
+The variables that Node.js and its bundled dependencies read, such as
+\fBNODE_OPTIONS\fR, \fBPATH\fR, \fBHOME\fR, \fBTZ\fR, and \fBSSL_CERT_FILE\fR, are always kept, as
+are the variables defined in \fB--env-file\fR files. \fBNODE_ENV\fR is not kept
+by default, so applications and libraries that read it need
+\fB--allow-env=NODE_ENV\fR. See Environment variable permissions for details.
+.
 .It Fl -allow-ffi
 When using the Permission Model, the process will not be able to use FFI
 APIs by default. Attempts to use FFI APIs will throw an \fBERR_ACCESS_DENIED\fR
@@ -170,11 +206,13 @@ process.permission.has('fs.read', 'custom-require-2.js'); // true
 When using the Permission Model, a virtual file system cannot be
 mounted by default: \fBvfs.mount()\fR throws \fBERR_INVALID_STATE\fR unless the
 user explicitly passes the \fB--allow-fs-vfs\fR flag when starting Node.js.
+In audit mode (\fB--permission-audit\fR), mounting is not
+refused and no message is published to the diagnostics channel.
 A mounted VFS serves paths that the file system permissions do not describe,
 so mounting one is gated on its own flag rather than on \fB--allow-fs-read\fR or
 \fB--allow-fs-write\fR.
 .Bd -literal
-$ node --experimental-vfs --permission --allow-fs-vfs app.js
+$ node --permission --allow-fs-vfs app.js
 .Ed
 .
 .It Fl -allow-fs-write
@@ -243,6 +281,10 @@ an \fBERR_ACCESS_DENIED\fR unless the user explicitly passes the
 This flag grants broad authority to configured OpenSSL STORE loaders. A loader
 may access files, devices, tokens, or the network. Access performed by a loader
 is not constrained by the \fBfs.read\fR, \fBfs.write\fR, or \fBnet\fR permission scopes.
+Loaders and the modules they load are subject to \fB--allow-env\fR, however.
+Environment variables they rely on, such as \fBSOFTHSM2_CONF\fR for SoftHSM, are
+removed at startup unless they are granted explicitly with \fB--allow-env\fR. See
+Environment variable permissions for details.
 .
 .It Fl -allow-wasi
 When using the Permission Model, the process will not be capable of creating
@@ -296,9 +338,11 @@ Error: Access to this API has been restricted
 Starts the Node.js command-line benchmark runner. At least one explicit file or
 glob pattern is required:
 .Bd -literal
-node --bench benchmark.mjs
-node --bench 'benchmarks/**/*.js'
+node --experimental-bench --bench benchmark.mjs
+node --experimental-bench --bench 'benchmarks/**/*.js'
 .Ed
+The \fB--experimental-bench\fR flag is required to use this flag or any other
+\fB--bench-*\fR option.
 Quote glob patterns to prevent expansion by the shell. Matching files are
 sorted and executed serially. By default, each file runs in a separate child
 process. Benchmark files declare benchmarks using \fBnode:bench\fR; they must not
@@ -342,6 +386,8 @@ selected benchmark. A benchmark may finish earlier by calling
 .It Fl -bench-warmup Ns = Ns Ar count
 Overrides the number of unreported warmup callback invocations for every
 selected benchmark. \fBcount\fR must be an integer between \fB0\fR and \fB4294967295\fR.
+Without this option, each benchmark uses its own \fBwarmup\fR value, which defaults
+to \fB10\fR.
 .
 .It Fl -build-sea Ns = Ns Ar config
 Generates a single executable application from a JSON
@@ -437,6 +483,130 @@ For example, to run a module with "development" resolutions:
 .Bd -literal
 node -C development app.js
 .Ed
+.
+.It Fl -config-file Ns = Ns Ar path , Fl -config-file
+If present, Node.js will look for a configuration file at the specified path.
+If the path is not specified, Node.js will look for a \fBnode.config.json\fR file
+in the current working directory.
+To specify a custom path, use the \fB--config-file=path\fR form.
+The space-separated \fB--config-file path\fR form is not supported.
+Node.js will read the configuration file and apply the settings. The
+configuration file should be a JSON file with the following structure. \fBvX.Y.Z\fR
+in the \fB$schema\fR must be replaced with the version of Node.js you are using or
+\fBlatest-vX.x\fR for the latest version of that major release line.
+.Bd -literal
+{
+  "$schema": "https://nodejs.org/dist/vX.Y.Z/docs/node-config-schema.json",
+  "nodeOptions": {
+    "import": [
+      "amaro/strip"
+    ],
+    "watch-path": "src",
+    "watch-preserve-output": true
+  },
+  "test": {
+    "test-isolation": "process"
+  },
+  "watch": {
+    "watch-preserve-output": true
+  }
+}
+.Ed
+The configuration file supports namespace-specific options:
+.Bl -bullet
+.It
+The \fBnodeOptions\fR field contains CLI flags that are allowed in \fBNODE_OPTIONS\fR.
+.It
+Namespace fields like \fBtest\fR, \fBwatch\fR, and \fBpermission\fR contain configuration specific to that subsystem.
+.El
+The configuration file can target a specific Node.js major version with
+\fBnodeVersion\fR:
+.Bd -literal
+{
+  "nodeVersion": 25,
+  "nodeOptions": {
+    "watch-path": "src"
+  }
+}
+.Ed
+To keep multiple version-specific configurations in the same file, use the
+\fBconfigs\fR array. Node.js will use the first entry whose \fBnodeVersion\fR matches
+the current Node.js major version:
+.Bd -literal
+{
+  "$schema": "https://nodejs.org/dist/latest-v26.x/docs/node-config-schema.json",
+  "configs": [
+    {
+      "nodeVersion": 25,
+      "config": {
+        "$schema": "https://nodejs.org/dist/latest-v25.x/docs/node-config-schema.json",
+        "nodeOptions": {
+          "watch-path": "src"
+        }
+      }
+    }
+  ]
+}
+.Ed
+When \fBconfigs\fR is used, the top level may only contain \fB$schema\fR and
+\fBconfigs\fR. Each \fBconfigs\fR item must define an integer \fBnodeVersion\fR and an
+object \fBconfig\fR. A single top-level config does not require \fBnodeVersion\fR, but
+if present it must match the current Node.js major version.
+When a namespace is present in the
+configuration file, Node.js automatically enables the corresponding flag
+(e.g., \fB--test\fR, \fB--watch\fR, \fB--permission\fR). This allows you to configure
+subsystem-specific options without explicitly passing the flag on the command line.
+For example:
+.Bd -literal
+{
+  "test": {
+    "test-isolation": "process"
+  }
+}
+.Ed
+is equivalent to:
+.Bd -literal
+node --test --test-isolation=process
+.Ed
+To disable the automatic flag while still using namespace options, you can
+explicitly set the flag to \fBfalse\fR within the namespace:
+.Bd -literal
+{
+  "test": {
+    "test": false,
+    "test-isolation": "process"
+  }
+}
+.Ed
+No-op flags are not supported.
+Not all V8 flags are currently supported.
+It is possible to use the official JSON schema
+to validate the configuration file, which may vary depending on the Node.js version.
+Each key in the configuration file corresponds to a flag that can be passed
+as a command-line argument. The value of the key is the value that would be
+passed to the flag.
+For example, the configuration file above is equivalent to
+the following command-line arguments:
+.Bd -literal
+node --import amaro/strip --watch-path=src --watch-preserve-output --test-isolation=process
+.Ed
+The priority in configuration is as follows:
+.Bl -bullet
+.It
+NODE_OPTIONS and command-line options
+.It
+Dotenv NODE_OPTIONS
+.It
+Configuration file
+.El
+Values in the configuration file will not override the values in the environment
+variables, command-line options, or the \fBNODE_OPTIONS\fR env file parsed by the
+\fB--env-file\fR flag.
+Keys cannot be duplicated within the same or different namespaces.
+The configuration parser will throw an error if the configuration file contains
+unknown keys or keys that cannot be used in a namespace.
+Node.js will not sanitize or perform validation on the user-provided configuration,
+so \fBNEVER\fR use untrusted configuration files.
 .
 .It Fl -cpu-prof
 Starts the V8 CPU profiler on start up, and writes the CPU profile to disk
@@ -575,9 +745,8 @@ The default is \fBverbatim\fR and \fBdns.setDefaultResultOrder()\fR have higher
 priority than \fB--dns-result-order\fR.
 .
 .It Fl -enable-fips
-Enable FIPS mode at startup. With OpenSSL 3, a configured provider named
-\fBfips\fR must be available and initialize successfully. With OpenSSL 1.1.1,
-Node.js must be built against a FIPS-capable OpenSSL.
+Enable FIPS mode at startup. A configured provider named \fBfips\fR must be
+available and initialize successfully.
 .
 .It Fl -enable-fips-indicator-events
 Publish OpenSSL FIPS indicator results to the
@@ -677,137 +846,8 @@ It is possible to run code containing inline types unless the
 .It Fl -experimental-addon-modules
 Enable experimental import support for \fB.node\fR addons.
 .
-.It Fl -experimental-config-file Ns = Ns Ar path , Fl -experimental-config-file
-If present, Node.js will look for a configuration file at the specified path.
-If the path is not specified, Node.js will look for a \fBnode.config.json\fR file
-in the current working directory.
-To specify a custom path, use the \fB--experimental-config-file=path\fR form.
-The space-separated \fB--experimental-config-file path\fR form is not supported.
-The alias \fB--experimental-default-config-file\fR is equivalent to
-\fB--experimental-config-file\fR without an argument.
-Node.js will read the configuration file and apply the settings. The
-configuration file should be a JSON file with the following structure. \fBvX.Y.Z\fR
-in the \fB$schema\fR must be replaced with the version of Node.js you are using or
-\fBlatest-vX.x\fR for the latest version of that major release line.
-.Bd -literal
-{
-  "$schema": "https://nodejs.org/dist/vX.Y.Z/docs/node-config-schema.json",
-  "nodeOptions": {
-    "import": [
-      "amaro/strip"
-    ],
-    "watch-path": "src",
-    "watch-preserve-output": true
-  },
-  "test": {
-    "test-isolation": "process"
-  },
-  "watch": {
-    "watch-preserve-output": true
-  }
-}
-.Ed
-The configuration file supports namespace-specific options:
-.Bl -bullet
-.It
-The \fBnodeOptions\fR field contains CLI flags that are allowed in \fBNODE_OPTIONS\fR.
-.It
-Namespace fields like \fBtest\fR, \fBwatch\fR, and \fBpermission\fR contain configuration specific to that subsystem.
-.El
-The configuration file can target a specific Node.js major version with
-\fBnodeVersion\fR:
-.Bd -literal
-{
-  "nodeVersion": 25,
-  "nodeOptions": {
-    "watch-path": "src"
-  }
-}
-.Ed
-To keep multiple version-specific configurations in the same file, use the
-\fBconfigs\fR array. Node.js will use the first entry whose \fBnodeVersion\fR matches
-the current Node.js major version:
-.Bd -literal
-{
-  "$schema": "https://nodejs.org/dist/latest-v26.x/docs/node-config-schema.json",
-  "configs": [
-    {
-      "nodeVersion": 25,
-      "config": {
-        "$schema": "https://nodejs.org/dist/latest-v25.x/docs/node-config-schema.json",
-        "nodeOptions": {
-          "watch-path": "src"
-        }
-      }
-    }
-  ]
-}
-.Ed
-When \fBconfigs\fR is used, the top level may only contain \fB$schema\fR and
-\fBconfigs\fR. Each \fBconfigs\fR item must define an integer \fBnodeVersion\fR and an
-object \fBconfig\fR. A single top-level config does not require \fBnodeVersion\fR, but
-if present it must match the current Node.js major version.
-When a namespace is present in the
-configuration file, Node.js automatically enables the corresponding flag
-(e.g., \fB--test\fR, \fB--watch\fR, \fB--permission\fR). This allows you to configure
-subsystem-specific options without explicitly passing the flag on the command line.
-For example:
-.Bd -literal
-{
-  "test": {
-    "test-isolation": "process"
-  }
-}
-.Ed
-is equivalent to:
-.Bd -literal
-node --test --test-isolation=process
-.Ed
-To disable the automatic flag while still using namespace options, you can
-explicitly set the flag to \fBfalse\fR within the namespace:
-.Bd -literal
-{
-  "test": {
-    "test": false,
-    "test-isolation": "process"
-  }
-}
-.Ed
-No-op flags are not supported.
-Not all V8 flags are currently supported.
-It is possible to use the official JSON schema
-to validate the configuration file, which may vary depending on the Node.js version.
-Each key in the configuration file corresponds to a flag that can be passed
-as a command-line argument. The value of the key is the value that would be
-passed to the flag.
-For example, the configuration file above is equivalent to
-the following command-line arguments:
-.Bd -literal
-node --import amaro/strip --watch-path=src --watch-preserve-output --test-isolation=process
-.Ed
-The priority in configuration is as follows:
-.Bl -bullet
-.It
-NODE_OPTIONS and command-line options
-.It
-Dotenv NODE_OPTIONS
-.It
-Configuration file
-.El
-Values in the configuration file will not override the values in the environment
-variables, command-line options, or the \fBNODE_OPTIONS\fR env file parsed by the
-\fB--env-file\fR flag.
-Keys cannot be duplicated within the same or different namespaces.
-The configuration parser will throw an error if the configuration file contains
-unknown keys or keys that cannot be used in a namespace.
-Node.js will not sanitize or perform validation on the user-provided configuration,
-so \fBNEVER\fR use untrusted configuration files.
-.
-.It Fl -experimental-default-config-file
-This flag is an alias for \fB--experimental-config-file\fR without an argument.
-If present, Node.js will look for a
-\fBnode.config.json\fR file in the current working directory and load it as a
-configuration file.
+.It Fl -experimental-bench
+Enable the experimental \fBnode:bench\fR module and command-line benchmark runner.
 .
 .It Fl -experimental-dtls
 Enable experimental support for the DTLS protocol. See the
@@ -868,6 +908,18 @@ Enable experimental support for storage inspection
 .It Fl -experimental-stream-iter
 Enable the experimental \fBnode:stream/iter\fR module.
 .
+.It Fl -experimental-strip-private-modules
+By default, Node.js refuses to strip types from TypeScript files inside
+folders under a \fBnode_modules\fR path. This flag enables type stripping for
+such files when they belong to a package whose \fBpackage.json\fR contains
+\fB"private": true\fR. Files belonging to non-private packages still throw
+\fBERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING\fR.
+The limitation to private packages should never be lifted,
+as publishing packages with TypeScript sources
+is highly discouraged.
+Stripping types inside \fBnode_modules\fR is intended only
+for local development.
+.
 .It Fl -experimental-test-coverage
 When used in conjunction with the \fBnode:test\fR module, a code coverage report is
 generated as part of the test runner output. If no tests are run, a coverage
@@ -890,9 +942,6 @@ The flag may be specified more than once; multiple expressions are combined
 with AND, so a test must satisfy every expression to run.
 A malformed expression causes the test runner to exit with a non-zero status
 before running any tests.
-.
-.It Fl -experimental-vfs
-Enable the experimental \fBnode:vfs\fR module.
 .
 .It Fl -experimental-vm-modules
 Enable experimental ES Module support in the \fBnode:vm\fR module.
@@ -1134,6 +1183,14 @@ Opens the REPL even if stdin does not appear to be a terminal.
 Disable runtime allocation of executable memory. This may be
 required on some platforms for security reasons. It can also reduce attack
 surface on other platforms, but the performance impact may be severe.
+When WebAssembly is unavailable in this mode, TypeScript parsing and WebAssembly
+module imports throw \fBERR_WEBASSEMBLY_NOT_SUPPORTED\fR. Node.js does not
+guarantee alternative implementations of features that require WebAssembly or
+runtime allocation of executable memory when those capabilities are unavailable.
+This flag controls V8's runtime code generation. It does not impose an
+operating-system restriction on executable memory allocated by native addons or
+\fBnode:ffi\fR. FFI operations that require unavailable executable memory can
+throw \fBERR_RX_MEMORY_NOT_SUPPORTED\fR.
 .
 .It Fl -localstorage-file Ns = Ns Ar file
 The file used to store \fBlocalStorage\fR data. If the file does not exist, it is
@@ -1167,12 +1224,6 @@ Disable the \fBnode-addons\fR exports condition as well as disable loading
 native addons. When \fB--no-addons\fR is specified, calling \fBprocess.dlopen\fR or
 requiring a native C++ addon will fail and throw an exception.
 .
-.It Fl -no-async-context-frame
-Disables the use of \fBAsyncLocalStorage\fR backed by \fBAsyncContextFrame\fR and
-uses the prior implementation which relied on async_hooks. The previous model
-is retained for compatibility with Electron and for cases where the context
-flow may differ. However, if a difference in flow is found please report it.
-.
 .It Fl -no-deprecation
 Silence deprecation warnings.
 .
@@ -1191,6 +1242,9 @@ Legacy alias for \fB--no-require-module\fR.
 .
 .It Fl -no-experimental-sqlite
 Disable the experimental \fBnode:sqlite\fR module.
+.
+.It Fl -no-experimental-vfs
+Disable the experimental \fBnode:vfs\fR module and \fB--vfs-load\fR.
 .
 .It Fl -no-experimental-webstorage
 Disable \fBWeb Storage\fR support.
@@ -1231,12 +1285,11 @@ usually only useful for developers debugging Node.js itself.
 .
 .It Fl -openssl-config Ns = Ns Ar file
 Load an OpenSSL configuration file on startup. The file can activate an
-OpenSSL 3 FIPS provider or configure a FIPS-capable OpenSSL 1.1.1 build. See
-FIPS mode.
+OpenSSL FIPS provider. See FIPS mode.
 This option takes precedence over the \fBOPENSSL_CONF\fR environment variable.
 .
 .It Fl -openssl-legacy-provider
-Enable OpenSSL 3.0 legacy provider. For more information please see
+Enable OpenSSL's legacy provider. For more information please see
 OSSL_PROVIDER-legacy.
 .
 .It Fl -openssl-shared-config
@@ -1268,6 +1321,8 @@ File System - manageable through
 \fB--allow-fs-read\fR, \fB--allow-fs-write\fR flags
 .It
 Network - manageable through \fB--allow-net\fR flag
+.It
+Environment variables - manageable through \fB--allow-env\fR flag
 .It
 Child Process - manageable through \fB--allow-child-process\fR flag
 .It
@@ -1347,6 +1402,45 @@ See \fB--preserve-symlinks\fR for more information.
 .It Fl p , Fl -print Ar "script"
 Identical to \fB-e\fR but prints the result.
 .
+.It Fl -process-timeout Ns = Ns Ar duration
+Exits the process with code \fB124\fR if it is still running after \fBduration\fR,
+measured from the start of the process. \fBduration\fR is a positive integer
+followed by a unit: \fBms\fR, \fBs\fR, \fBm\fR, or \fBh\fR, for example \fB500ms\fR, \fB30s\fR, \fB5m\fR, or
+\fB1h\fR. The exit code matches the one used by the \fBtimeout(1)\fR command.
+Before exiting, Node.js prints what the main thread was doing and which
+resources were keeping the event loop alive to stderr:
+.Bd -literal
+$ node --process-timeout=5s server.js
+(node:25418) Process timed out after 5s (--process-timeout). Exiting with code 124.
+Main thread was not executing JavaScript.
+Resources keeping the event loop alive:
+    TCPServerWrap (listening on [::]:3000, fd 20)
+    Timeout x2 (next due in 2931ms)
+.Ed
+If the main thread was executing JavaScript, its stack trace is printed instead.
+Use \fB--report-on-process-timeout\fR to also generate a diagnostic report.
+The process exits without emitting the \fB'beforeExit'\fR and \fB'exit'\fR events, as
+the JavaScript code may be what keeps the process running. Code coverage and
+profiles, such as those enabled with \fBNODE_V8_COVERAGE=dir\fR or
+\fB--cpu-prof\fR, are still written.
+If the main thread does not respond within two seconds, for example because it
+is blocked in a synchronous operation such as \fBchild_process.execSync()\fR,
+Node.js exits immediately without printing the stack trace and resources.
+This option is not allowed in \fBNODE_OPTIONS\fR, and it cannot be combined
+with the options that enable the inspector, such as \fB--inspect\fR,
+\fB--inspect-brk\fR, \fB--inspect-wait\fR, \fB--inspect-port\fR, and
+\fB--inspect-publish-uid\fR, nor with \fBnode inspect\fR, \fB--run\fR, or
+\fB--build-snapshot\fR. While it is in effect, \fBinspector.open()\fR and
+\fBsession.connectToMainThread()\fR throw, and requests to activate the
+inspector with \fBSIGUSR1\fR are ignored.
+Child processes that inherit \fBprocess.execArgv\fR, such as those created with
+\fBchild_process.fork()\fR, apply the timeout from their own start. With
+\fB--watch\fR, the timeout applies to each run of the application rather than
+to the process that watches for changes. When
+running tests from the command line, the test runner process applies the
+timeout to the whole run, and each test file that runs in its own process
+applies it as well.
+.
 .It Fl -prof
 Generate V8 profiler output.
 .
@@ -1389,6 +1483,15 @@ the Node.js runtime such as out of memory) that lead to termination of the
 application. Useful to inspect various diagnostic data elements such as heap,
 stack, event loop state, resource consumption etc. to reason about the fatal
 error.
+.
+.It Fl -report-on-process-timeout
+Enables the report to be generated when \fB--process-timeout\fR expires, in
+addition to the summary printed to stderr. Useful to inspect the JavaScript
+and native stacks, the event loop state, and resource consumption to reason
+about why the process did not exit. Requires \fB--process-timeout\fR.
+Worker threads that do not provide their part of the report within two
+seconds, for example because they are blocked in a synchronous operation such
+as \fBchild_process.execSync()\fR, are left out of it.
 .
 .It Fl -report-on-signal
 Enables report to be generated upon receiving the specified (or predefined)
@@ -1525,6 +1628,16 @@ filtering as the rest of the report.
 .It Fl -test-coverage-lines Ns = Ns Ar threshold
 Require a minimum percent of covered lines. If code coverage does not reach
 the threshold specified, the process will exit with code \fB1\fR.
+.
+.It Fl -test-forbid-only
+Fails the test run if a test or suite is declared with \fBonly: true\fR, including
+the \fBtest.only()\fR, \fBit.only()\fR, \fBsuite.only()\fR, and \fBdescribe.only()\fR shorthands,
+or if \fBtestContext.runOnly(true)\fR is called. This is useful in CI to prevent
+accidentally committing exclusive tests that exclude the rest of a test suite.
+This option applies with either test isolation mode and takes precedence over
+\fB--test-only\fR. Name filtering, TODO markers, and expected failures do not suppress
+detected violations. Only declarations evaluated during the run are checked;
+code inside a skipped test callback is not evaluated.
 .
 .It Fl -test-force-exit
 Configures the test runner to exit the process once all known tests have
@@ -1877,6 +1990,58 @@ amount of CPUs, but it may diverge in environments such as VMs or containers.
 .It Fl v , Fl -version
 Print node's version.
 .
+.It Fl -vfs-load Ns = Ns Ar source
+.Bl -bullet
+.It
+\fBsource\fR \fB<string>\fR A directory or an archive file to mount and run.
+.El
+May be given at most once.
+Mounts \fBsource\fR as a virtual file system (\fBnode:vfs\fR), and runs the entry
+point and all subsequent \fBrequire()\fR/\fBimport\fR resolution against that mount
+rather than the real file system. This option is unavailable when
+\fB--no-experimental-vfs\fR disables \fBnode:vfs\fR. The mount is placed at a
+reserved mount point
+assigned by Node.js, so it never shadows real paths and no target can be
+chosen. The entry point is taken from the mount the same way \fBnode <directory>\fR
+takes one: the mount's own \fBpackage.json\fR \fB"main"\fR, or \fBindex.js\fR. Any
+positional command-line argument is the program's own (available from
+\fBprocess.argv[2]\fR onward), never an entry-point override.
+\fBprocess.argv[1]\fR reports \fBsource\fR rather than the reserved mount point, since
+the mount point is an opaque implementation detail.
+The provider backing a source is chosen from the source itself rather than from
+its file name:
+.Bl -bullet
+.It
+A directory is mounted with a \fBRealFSProvider\fR rooted there.
+.It
+A file whose bytes are a ZIP archive is mounted with a \fBZipProvider\fR, so
+an archive can carry any name.
+.El
+Providers registered with \fBvfs.registerProvider()\fR (typically from a module
+preloaded with \fB--require\fR or \fB--import\fR) are consulted first, in
+reverse registration order, and may claim directories as well as files. If no
+provider claims the source, Node.js exits with an error.
+In worker threads \fB--vfs-load\fR mounts but does not load: a worker inherits the
+mount and runs its own entry point, which may itself live in the mount.
+The source is mounted at the same reserved mount point in every thread that
+mounts it, whatever else that thread mounts, so a path into the mount means the
+same thing in all of them.
+A worker created with its own \fBexecArgv\fR inherits none of the parent's options,
+and so does not mount the source at all. To run a script from the mount, such a
+worker must be given \fB--vfs-load\fR again; without it, that thread has no mount
+for the script to come from, and the worker fails to load it. \fBnode:vfs\fR is
+available to worker code without an experimental flag. A worker whose script
+comes from anywhere else, such as the real file system, needs nothing added.
+\fB--vfs-load\fR is not permitted in \fBNODE_OPTIONS\fR: which entry point runs is
+the command line's decision, and the environment must not be able to redirect
+it.
+A single executable application built with \fB"vfsArchive"\fR mounts that
+archive at the mount point reserved for \fB--vfs-load\fR, so \fB--vfs-load\fR cannot be
+used in it.
+.Bd -literal
+$ node --vfs-load=app.zip
+.Ed
+.
 .It Fl -watch
 Starts Node.js in watch mode.
 When in watch mode, changes in the watched files cause the Node.js process to
@@ -2026,6 +2191,8 @@ one is included in the list below.
 .It
 \fB--allow-child-process\fR
 .It
+\fB--allow-env\fR
+.It
 \fB--allow-ffi\fR
 .It
 \fB--allow-fs-read\fR
@@ -2092,6 +2259,8 @@ one is included in the list below.
 .It
 \fB--experimental-addon-modules\fR
 .It
+\fB--experimental-bench\fR
+.It
 \fB--experimental-detect-module\fR
 .It
 \fB--experimental-dtls\fR
@@ -2124,11 +2293,11 @@ one is included in the list below.
 .It
 \fB--experimental-stream-iter\fR
 .It
+\fB--experimental-strip-private-modules\fR
+.It
 \fB--experimental-test-isolation\fR
 .It
 \fB--experimental-top-level-await\fR
-.It
-\fB--experimental-vfs\fR
 .It
 \fB--experimental-vm-modules\fR
 .It
@@ -2188,8 +2357,6 @@ one is included in the list below.
 .It
 \fB--no-addons\fR
 .It
-\fB--no-async-context-frame\fR
-.It
 \fB--no-deprecation\fR
 .It
 \fB--no-experimental-ffi\fR
@@ -2199,6 +2366,8 @@ one is included in the list below.
 \fB--no-experimental-sqlite\fR
 .It
 \fB--no-experimental-strip-types\fR
+.It
+\fB--no-experimental-vfs\fR
 .It
 \fB--no-experimental-webstorage\fR
 .It
@@ -2279,6 +2448,8 @@ one is included in the list below.
 \fB--test-coverage-include\fR
 .It
 \fB--test-coverage-lines\fR
+.It
+\fB--test-forbid-only\fR
 .It
 \fB--test-global-setup\fR
 .It

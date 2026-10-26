@@ -2,7 +2,9 @@
 
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -122,15 +124,15 @@ WICG proposal:
 
 Algorithms:
 
-* `'AES-OCB'`[^openssl30]
+* `'AES-OCB'`[^noboringssl]
 * `'Argon2d'`[^openssl32]
 * `'Argon2i'`[^openssl32]
 * `'Argon2id'`[^openssl32]
 * `'ChaCha20-Poly1305'`
 * `'cSHAKE128'`
 * `'cSHAKE256'`
-* `'KMAC128'`[^openssl30]
-* `'KMAC256'`[^openssl30]
+* `'KMAC128'`[^noboringssl]
+* `'KMAC256'`[^noboringssl]
 * `'KT128'`
 * `'KT256'`
 * `'ML-DSA-44'`[^openssl35]
@@ -1101,7 +1103,9 @@ The algorithms currently supported include:
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: REPLACEME
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -1170,7 +1174,9 @@ Derives the public key from a given private key.
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: REPLACEME
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version: v24.8.0
@@ -1240,7 +1246,9 @@ The {CryptoKey} (secret key) generating algorithms supported include:
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: REPLACEME
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -1842,6 +1850,9 @@ changes:
     description: Renamed `cShakeParams.length` to `cShakeParams.outputLength`.
 -->
 
+When both `functionName` and `customization` are empty or `undefined`, cSHAKE is
+equivalent to plain SHAKE.
+
 #### `cShakeParams.name`
 
 <!-- YAML
@@ -1858,7 +1869,8 @@ added:
  - v24.15.0
 -->
 
-* Type: {number} represents the requested output length in bits.
+* Type: {number} represents the requested output length in bits. Must be a
+  multiple of 8.
 
 #### `cShakeParams.functionName`
 
@@ -1875,9 +1887,10 @@ changes:
 * Type: {ArrayBuffer|TypedArray|DataView|Buffer|undefined}
 
 The `functionName` member represents the NIST function-name byte string used to
-domain-separate functions built on top of cSHAKE. Accepted values are:
+domain-separate functions built on top of cSHAKE. Non-empty values require
+OpenSSL 4.0 or later. Accepted values are:
 
-* empty or `undefined`, in which case cSHAKE is equivalent to plain SHAKE
+* empty or `undefined`
 * the ASCII byte sequence `'KMAC'`
 * the ASCII byte sequence `'TupleHash'`
 * the ASCII byte sequence `'ParallelHash'`
@@ -1896,11 +1909,11 @@ changes:
 
 * Type: {ArrayBuffer|TypedArray|DataView|Buffer|undefined}
 
-The `customization` member represents the customization data. Accepted
-values are:
+The `customization` member represents the customization data. Non-empty values
+require OpenSSL 4.0 or later. Accepted values are:
 
-* empty or `undefined`, in which case cSHAKE is equivalent to plain SHAKE
-* up to 512 bytes of arbitrary data
+* empty or `undefined`
+* up to 512 bytes of data without null bytes
 
 ### Class: `EcdhKeyDeriveParams`
 
@@ -2360,7 +2373,7 @@ added: v24.8.0
 * Type: {number}
 
 The optional number of bits in the KMAC key. This is optional and should
-be omitted for most cases.
+be omitted for most cases. The key length must be at least 32 and a multiple of 8.
 
 #### `kmacImportParams.name`
 
@@ -2410,7 +2423,8 @@ added: v24.8.0
 
 The number of bits to generate for the KMAC key. If omitted,
 the length will be determined by the KMAC algorithm used.
-This is optional and should be omitted for most cases.
+This is optional and should be omitted for most cases. Must be at least 32 and a
+multiple of 8.
 
 #### `kmacKeyGenParams.name`
 
@@ -2448,7 +2462,8 @@ added:
  - v24.15.0
 -->
 
-* Type: {number} represents the requested output length in bits.
+* Type: {number} represents the requested output length in bits. Must be a
+  multiple of 8.
 
 #### `kmacParams.customization`
 
@@ -2761,7 +2776,7 @@ added:
 
 [^modern-algos]: See [Modern Algorithms in the Web Cryptography API][]
 
-[^openssl30]: Requires OpenSSL >= 3.0
+[^noboringssl]: Not available when Node.js is built against BoringSSL
 
 [^openssl32]: Requires OpenSSL >= 3.2
 

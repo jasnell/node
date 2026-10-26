@@ -6,7 +6,7 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-const { hasOpenSSL, hasFIPS, isBoringSSL } = require('../common/crypto');
+const { hasFIPS, isBoringSSL } = require('../common/crypto');
 
 const assert = require('assert');
 const { subtle } = globalThis.crypto;
@@ -97,7 +97,7 @@ const fips4 = hasFIPS(4);
        'ac5d90a6bc848961e78a491887539b29c532a9c0d0b39cec464df071a63e0061'],
     );
   } else {
-    common.printSkipMessage('Skipping unsupported SHA-3 test cases');
+    common.printSkipMessage('SHA-3 is only supported for digest operations');
   }
 
   const tests = Promise.all(kTests.map((args) => test(...args)));
@@ -150,7 +150,7 @@ const fips4 = hasFIPS(4);
        '03431052c37d626ae3fc1df582ff2a4d610642fc27e1b8130ca5980c0b0756ac']
     );
   } else {
-    common.printSkipMessage('Skipping unsupported SHA-3 test cases');
+    common.printSkipMessage('SHA-3 is only supported for digest operations');
   }
 
   const promises = kTests.map((args) => test(...args));
@@ -188,10 +188,10 @@ const fips4 = hasFIPS(4);
       // [{ name: 'HMAC', hash: 'SHA3-512' }, 'sign', 512],
     );
   } else {
-    common.printSkipMessage('Skipping unsupported SHA-3 test cases');
+    common.printSkipMessage('SHA-3 is only supported for digest operations');
   }
 
-  if (hasOpenSSL(3)) {
+  if (!isBoringSSL) {
     vectors.push(
       ['KMAC128', 'sign', 128],
       [{ name: 'KMAC128', length: 384 }, 'sign', 384],
@@ -248,10 +248,10 @@ const fips4 = hasFIPS(4);
       // [{ name: 'HMAC', hash: 'SHA3-512' }, 'sign', 512],
     );
   } else {
-    common.printSkipMessage('Skipping unsupported SHA-3 test cases');
+    common.printSkipMessage('SHA-3 is only supported for digest operations');
   }
 
-  if (hasOpenSSL(3)) {
+  if (!isBoringSSL) {
     vectors.push(
       ['KMAC128', 'sign', 128],
       [{ name: 'KMAC128', length: 384 }, 'sign', 384],
@@ -284,7 +284,7 @@ const fips4 = hasFIPS(4);
   })().then(common.mustCall());
 }
 
-if (hasOpenSSL(3) && !hasFIPS()) {
+if (!isBoringSSL) {
   (async () => {
     const derivedKeyAlgorithm = { name: 'KMAC128', length: 0 };
     const usages = ['sign'];
@@ -314,19 +314,9 @@ if (hasOpenSSL(3) && !hasFIPS()) {
         baseKeyAlgorithm,
         false,
         ['deriveKey']);
-      const derived = await subtle.deriveKey(
-        algorithm,
-        baseKey,
-        derivedKeyAlgorithm,
-        false,
-        usages);
-      assert.strictEqual(derived.algorithm.length, 0);
-
-      const signature = subtle.sign({
-        name: 'KMAC128',
-        outputLength: 256,
-      }, derived, new Uint8Array());
-      assert.strictEqual((await signature).byteLength, 32);
+      await assert.rejects(
+        subtle.deriveKey(algorithm, baseKey, derivedKeyAlgorithm, false, usages),
+        { name: 'NotSupportedError', message: 'Invalid key length' });
     }
   })().then(common.mustCall());
 }
@@ -366,8 +356,7 @@ if (hasOpenSSL(3) && !hasFIPS()) {
     for (const name of ['X25519', 'X448']) {
       assert.rejects(
         test(name),
-        (err) => err.name === 'OperationError' &&
-                 err.cause?.code === 'ERR_OSSL_EVP_UNSUPPORTED')
+        { name: 'NotSupportedError', message: 'Unrecognized algorithm name' })
         .then(common.mustCall());
     }
   } else {

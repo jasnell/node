@@ -6,6 +6,7 @@ common.skipIfFFIMissing();
 
 const assert = require('node:assert');
 const { test } = require('node:test');
+const { queryObjects } = require('node:v8');
 const { internalBinding } = require('internal/test/binding');
 const {
   kSbSharedBuffer,
@@ -95,6 +96,37 @@ test('optimized pointer arguments reject direct SharedArrayBuffers', () => {
 
     assert.throws(() => callFirstByte(shared), expected);
   } finally {
+    eval('%WaitForBackgroundOptimization()');
+    lib.close();
+  }
+});
+
+test('optimized buffer calls do not retain handles', () => {
+  const { lib, functions } = ffi.dlopen(libraryPath, {
+    first_byte: { arguments: ['buffer'], return: 'u8' },
+  });
+  // A leaked handle to the backing store keeps it alive until the current
+  // synchronous run ends, so count live backing stores after the calls.
+  class TrackedArrayBuffer extends ArrayBuffer {}
+
+  function callFirstByte(view) {
+    return functions.first_byte(view);
+  }
+
+  try {
+    const warm = new Uint8Array(1);
+    eval('%PrepareFunctionForOptimization(callFirstByte)');
+    for (let i = 0; i < 1000; i++) callFirstByte(warm);
+    eval('%OptimizeFunctionOnNextCall(callFirstByte)');
+    callFirstByte(warm);
+
+    for (let i = 0; i < 100; i++) {
+      callFirstByte(new Uint8Array(new TrackedArrayBuffer(1)));
+    }
+    assert.strictEqual(
+      queryObjects(TrackedArrayBuffer, { format: 'count' }), 0);
+  } finally {
+    eval('%WaitForBackgroundOptimization()');
     lib.close();
   }
 });
@@ -202,6 +234,7 @@ test('optimized buffer signatures preserve pointer-like conversions', () => {
       }
     }
   } finally {
+    eval('%WaitForBackgroundOptimization()');
     lib.close();
   }
 });
@@ -235,6 +268,7 @@ test('multi-argument buffer signatures accept pointer BigInts', () => {
       assert.strictEqual(functions.sum_buffer(pointer, length), 28n);
     }
   } finally {
+    eval('%WaitForBackgroundOptimization()');
     lib.close();
   }
 });

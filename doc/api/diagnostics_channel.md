@@ -1573,7 +1573,9 @@ passed to `console.error()`.
 #### Crypto
 
 <!-- YAML
-added: REPLACEME
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 > Stability: 1 - Experimental
@@ -1930,6 +1932,16 @@ Emitted when [`child_process.spawn()`][] encounters an error.
 
 Emitted when [`process.execve()`][] is invoked.
 
+#### Test Runner
+
+<!-- YAML
+added:
+ - v26.1.0
+ - v24.16.0
+-->
+
+See [Test instrumentation and OpenTelemetry][] for details.
+
 #### Web Locks
 
 > Stability: 1 - Experimental
@@ -1993,7 +2005,9 @@ Emitted when a new thread is created.
 #### SQLite
 
 <!-- YAML
-added: v26.8.0
+added:
+  - v26.8.0
+  - v24.22.0
 -->
 
 > Stability: 1 - Experimental
@@ -2003,14 +2017,14 @@ added: v26.8.0
 * `sql` {string} The expanded SQL with bound parameter values substituted.
   If expansion fails, the source SQL with unsubstituted placeholders is used
   instead.
-* `database` {DatabaseSync} The [`DatabaseSync`][] instance that executed the
+* `database` {Database} The [`Database`][] instance that executed the
   statement.
 * `duration` {number} SQLite's internal estimate of the statement run time in
   nanoseconds. This reflects C-layer execution time only and does not include
   JavaScript binding overhead such as argument marshaling or result-row
   construction.
 
-Emitted after a SQL statement finishes executing against a [`DatabaseSync`][]
+Emitted after a SQL statement finishes executing against a [`Database`][]
 instance. This is a **profiling** event: it fires once per statement upon
 completion and reports an estimated duration from SQLite's internal profiler.
 It is not a distributed-tracing span. There is no corresponding start event,
@@ -2027,12 +2041,13 @@ statement, since both are still in use while the event is being delivered; see
 [`database.close()`][] and [`statement.close()`][].
 
 [BoundedChannel Channels]: #boundedchannel-channels
+[Test instrumentation and OpenTelemetry]: test.md#test-instrumentation-and-opentelemetry
 [TracingChannel Channels]: #tracingchannel-channels
 [`'uncaughtException'`]: process.md#event-uncaughtexception
 [`--enable-fips-indicator-events`]: cli.md#--enable-fips-indicator-events
 [`--force-fips=strict`]: cli.md#--force-fips
 [`BoundedChannel`]: #class-boundedchannel
-[`DatabaseSync`]: sqlite.md#class-databasesync
+[`Database`]: sqlite.md#class-database
 [`TracingChannel`]: #class-tracingchannel
 [`asyncEnd` event]: #asyncendevent
 [`asyncStart` event]: #asyncstartevent

@@ -11,7 +11,7 @@ if /i "%arg:~-4%"=="help" goto help
 cd %~dp0
 
 set JS_SUITES=default
-set NATIVE_SUITES=addons js-native-api node-api embedding
+set NATIVE_SUITES=addons ffi js-native-api node-api embedding
 @rem CI_* variables should be kept synchronized with the ones in Makefile
 set "CI_NATIVE_SUITES=%NATIVE_SUITES% benchmark"
 set "CI_JS_SUITES=%JS_SUITES% pummel"
@@ -85,6 +85,7 @@ set compile_commands=
 set cfg=
 set v8temporal=
 set v8windbg=
+set with_perfetto=
 set exit_code=0
 
 :next-arg
@@ -116,10 +117,11 @@ if /i "%1"=="pgo-generate"  set pgo_generate=1&goto arg-ok
 if /i "%1"=="pgo-use"       set pgo_use=1&goto arg-ok
 if /i "%1"=="v8temporal"    set v8temporal=1&goto arg-ok
 if /i "%1"=="v8windbg"      set v8windbg=1&goto arg-ok
+if /i "%1"=="with-perfetto" set with_perfetto=1&goto arg-ok
 if /i "%1"=="licensertf"    set licensertf=1&goto arg-ok
 if /i "%1"=="test"          set test_args=%test_args% %common_test_suites%&set lint_cpp=1&set lint_js=1&set lint_md=1&goto arg-ok
 if /i "%1"=="test-ci-native" set test_args=%test_args% %test_ci_args% -p tap --logfile test.tap %CI_NATIVE_SUITES% %CI_DOC%&set build_addons=1&set build_js_native_api_tests=1&set build_node_api_tests=1&set build_ffi_tests=1&set cctest_args=%cctest_args% --gtest_output=xml:cctest.junit.xml&goto arg-ok
-if /i "%1"=="test-ci-js"    set test_args=%test_args% %test_ci_args% -p tap --logfile test.tap %CI_JS_SUITES%&set build_ffi_tests=1&set no_cctest=1&goto arg-ok
+if /i "%1"=="test-ci-js"    set test_args=%test_args% %test_ci_args% -p tap --logfile test.tap %CI_JS_SUITES%&set no_cctest=1&goto arg-ok
 if /i "%1"=="build-addons"   set build_addons=1&goto arg-ok
 if /i "%1"=="build-js-native-api-tests"   set build_js_native_api_tests=1&goto arg-ok
 if /i "%1"=="build-node-api-tests"   set build_node_api_tests=1&goto arg-ok
@@ -237,7 +239,7 @@ if "%target_env%"=="vs2026" set "node_gyp_exe=%node_gyp_exe% --msvs_version=2026
 if "%*"=="lint" if exist "%node_exe%" goto lint-cpp
 
 :: skip building if the only argument received was format-md
-if "%*"=="format-md" if exist "%node_exe%" goto format-md
+if "%*"=="format-md" if exist "%node_exe%" goto lint-md-build
 
 if "%config%"=="Debug"      set configure_flags=%configure_flags% --debug
 if defined nosnapshot       set configure_flags=%configure_flags% --without-snapshot
@@ -272,6 +274,7 @@ if defined compile_commands set configure_flags=%configure_flags% -C
 if defined cfg              set configure_flags=%configure_flags% --control-flow-guard
 if defined v8temporal       set configure_flags=%configure_flags% --v8-enable-temporal-support
 if defined v8windbg         set configure_flags=%configure_flags% --enable-v8windbg
+if defined with_perfetto    set configure_flags=%configure_flags% --with-perfetto
 
 if "%target_arch%"=="x86" (
   echo "32-bit Windows builds are not supported anymore."
@@ -296,6 +299,18 @@ if errorlevel 1 goto :exit
 REM NASM is only needed on x86_64.
 if not defined openssl_no_asm if "%target_arch%" NEQ "arm64" call tools\msvs\find_nasm.cmd
 if errorlevel 1 echo Could not find NASM, install it or build with openssl-no-asm. See BUILDING.md.
+
+REM cargo is needed to build the Rust crates used for Temporal.
+if defined nobuild goto skip-find-cargo
+if "%target%"=="Clean" goto skip-find-cargo
+echo %configure_flags% | findstr /C:"--v8-disable-temporal-support" /C:"--shared-temporal_capi" >NUL && goto skip-find-cargo
+call tools\msvs\find_cargo.cmd
+if errorlevel 1 (
+  echo Could not find cargo, install the Rust toolchain. See BUILDING.md.
+  set exit_code=1
+  goto exit
+)
+:skip-find-cargo
 
 call :getnodeversion || exit /b 1
 
@@ -812,6 +827,13 @@ echo running 'cctest %cctest_args%'
 "%config%\cctest" %cctest_args%
 if %errorlevel% neq 0 set exit_code=%errorlevel%
 :run-test-py
+@rem Download trace_processor_shell for perfetto builds.
+if defined TRACE_PROCESSOR_SHELL_PATH goto run-test-py-start
+findstr /r /c:"v8_use_perfetto.: 1," config.gypi >nul 2>&1
+if errorlevel 1 goto run-test-py-start
+python tools\perfetto\get_trace_processor.py
+if errorlevel 1 exit /b 1
+:run-test-py-start
 echo running 'python tools\test.py %test_args%'
 python tools\test.py %test_args%
 if %errorlevel% neq 0 set exit_code=%errorlevel%
@@ -850,7 +872,7 @@ echo running lint-js
 goto lint-js-fix
 
 :lint-js-fix
-if not defined lint_js_fix goto lint-md
+if not defined lint_js_fix goto lint-md-build
 if not exist tools\eslint\node_modules\eslint goto no-lint
 echo running lint-js-fix
 %node_exe% tools\eslint\node_modules\eslint\bin\eslint.js --cache --max-warnings=0 --report-unused-disable-directives --rule "@stylistic/js/linebreak-style: 0" eslint.config.mjs benchmark doc lib test tools --fix
@@ -898,6 +920,7 @@ for /D %%D IN (doc\*) do (
 )
 %node_exe% tools\lint-md\lint-md.mjs --format %lint_md_files%
 ENDLOCAL
+goto exit
 
 :no-lint
 echo Linting is not available through the source tarball.

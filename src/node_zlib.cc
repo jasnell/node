@@ -34,6 +34,7 @@
 #include "threadpoolwork-inl.h"
 #include "util-inl.h"
 
+#include "absl/crc/crc32c.h"
 #include "node_debug.h"
 #include "v8-fast-api-calls.h"
 #include "v8.h"
@@ -52,6 +53,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace node {
 
@@ -178,6 +181,18 @@ struct CompressionError {
   inline bool IsError() const { return code != nullptr; }
 };
 
+void RecordBrotliParam(std::vector<std::pair<int, uint32_t>>* params,
+                       int key,
+                       uint32_t value) {
+  for (auto& entry : *params) {
+    if (entry.first == key) {
+      entry.second = value;
+      return;
+    }
+  }
+  params->emplace_back(key, value);
+}
+
 class ZlibContext final : public MemoryRetainer {
  public:
   ZlibContext() = default;
@@ -229,6 +244,15 @@ class ZlibContext final : public MemoryRetainer {
   unsigned int gzip_id_bytes_read_ = 0;
   std::vector<unsigned char> dictionary_;
 
+  // gzip and zlib-wrapped deflate emit a header on the first deflate() call.
+  // Resetting after those bytes have left the compressor starts a new member
+  // while the fragment remains, so gunzip/inflate fail with Z_DATA_ERROR.
+  // Raw deflate has no header; Z_FULL_FLUSH + reset still concatenates.
+  // A member is complete once deflate() has been called with Z_FINISH and
+  // returned Z_STREAM_END.
+  bool stream_complete_ = true;
+  bool output_emitted_ = false;
+
   z_stream strm_;
 };
 
@@ -277,6 +301,8 @@ class BrotliEncoderContext final : public BrotliContext {
       prepared_dictionary_;
   // Dictionary data must remain valid while the prepared dictionary is alive.
   std::vector<uint8_t> dictionary_;
+  // Last successful parameters, replayed by ResetStream.
+  std::vector<std::pair<int, uint32_t>> params_;
 };
 
 class BrotliDecoderContext final : public BrotliContext {
@@ -299,6 +325,8 @@ class BrotliDecoderContext final : public BrotliContext {
   DeleteFnPtr<BrotliDecoderState, BrotliDecoderDestroyInstance> state_;
   // Dictionary data must remain valid for the lifetime of the decoder.
   std::vector<uint8_t> dictionary_;
+  // Last successful parameters, replayed by ResetStream.
+  std::vector<std::pair<int, uint32_t>> params_;
 };
 
 class ZstdContext : public MemoryRetainer {
@@ -336,7 +364,8 @@ class ZstdCompressContext final : public ZstdContext {
 
   // Zstd specific:
   CompressionError Init(uint64_t pledged_src_size,
-                        std::string_view dictionary = {});
+                        std::string_view dictionary = {},
+                        bool reject_garbage_after_end = false);
   CompressionError SetParameter(int key, int value);
 
   // Wrap ZSTD_freeCCtx to remove the return type.
@@ -351,6 +380,14 @@ class ZstdCompressContext final : public ZstdContext {
 
   uint64_t pledged_src_size_ = ZSTD_CONTENTSIZE_UNKNOWN;
   std::optional<uint64_t> consumed_src_size_;
+
+  // A frame is complete once ZSTD_compressStream2() has been called with
+  // ZSTD_e_end and has returned 0. Resetting an incomplete frame is only unsafe
+  // once some of that frame has already been written out: those bytes cannot be
+  // discarded, and the next frame would be appended to the fragment. Unflushed
+  // internal state alone is cancelled by ZSTD_reset_session_only.
+  bool frame_complete_ = true;
+  bool frame_output_emitted_ = false;
 };
 
 class ZstdDecompressContext final : public ZstdContext {
@@ -365,7 +402,8 @@ class ZstdDecompressContext final : public ZstdContext {
 
   // Zstd specific:
   CompressionError Init(uint64_t pledged_src_size,
-                        std::string_view dictionary = {});
+                        std::string_view dictionary = {},
+                        bool reject_garbage_after_end = false);
 
   CompressionError SetParameter(int key, int value);
 
@@ -379,6 +417,11 @@ class ZstdDecompressContext final : public ZstdContext {
  private:
   DeleteFnPtr<ZSTD_DCtx, ZstdDecompressContext::FreeZstd> dctx_;
   bool frame_complete_ = false;
+  bool decoding_frame_after_complete_ = false;
+  bool reject_garbage_after_end_ = false;
+  bool ignoring_trailing_input_ = false;
+  size_t frame_prefix_size_ = 0;
+  uint8_t possible_frame_types_ = 0;
 };
 
 class CompressionStreamMemoryOwner {
@@ -947,9 +990,9 @@ class ZstdStream final : public CompressionStream<CompressionContext> {
   }
 
   static void Init(const FunctionCallbackInfo<Value>& args) {
-    CHECK((args.Length() == 4 || args.Length() == 5) &&
+    CHECK((args.Length() >= 4 && args.Length() <= 6) &&
           "init(params, pledgedSrcSize, writeResult, writeCallback[, "
-          "dictionary])");
+          "dictionary[, rejectGarbageAfterEnd]])");
 
     ZstdStream* wrap;
     ASSIGN_OR_RETURN_UNWRAP(&wrap, args.This());
@@ -986,7 +1029,7 @@ class ZstdStream final : public CompressionStream<CompressionContext> {
     AllocScope alloc_scope(wrap);
     std::string_view dictionary;
     ArrayBufferViewContents<char> contents;
-    if (args.Length() == 5 && !args[4]->IsUndefined()) {
+    if (args.Length() >= 5 && !args[4]->IsUndefined()) {
       if (!args[4]->IsArrayBufferView()) {
         THROW_ERR_INVALID_ARG_TYPE(
             wrap->env(), "dictionary must be an ArrayBufferView if provided");
@@ -996,7 +1039,14 @@ class ZstdStream final : public CompressionStream<CompressionContext> {
       dictionary = std::string_view(contents.data(), contents.length());
     }
 
-    CompressionError err = wrap->context()->Init(pledged_src_size, dictionary);
+    bool reject_garbage_after_end = false;
+    if (args.Length() == 6) {
+      CHECK(args[5]->IsBoolean());
+      reject_garbage_after_end = args[5]->IsTrue();
+    }
+
+    CompressionError err = wrap->context()->Init(
+        pledged_src_size, dictionary, reject_garbage_after_end);
     if (err.IsError()) {
       wrap->EmitError(err);
       THROW_ERR_ZLIB_INITIALIZATION_FAILED(wrap->env(), err.message);
@@ -1074,9 +1124,20 @@ void ZlibContext::DoThreadPoolWork() {
   switch (mode_) {
     case DEFLATE:
     case GZIP:
-    case DEFLATERAW:
+    case DEFLATERAW: {
+      const unsigned out_before = strm_.avail_out;
       err_ = deflate(&strm_, flush_);
+      if (out_before > strm_.avail_out) {
+        output_emitted_ = true;
+      }
+      if (err_ == Z_STREAM_END) {
+        stream_complete_ = true;
+        output_emitted_ = false;
+      } else if (err_ == Z_OK || err_ == Z_BUF_ERROR) {
+        stream_complete_ = false;
+      }
       break;
+    }
     case UNZIP:
       if (strm_.avail_in > 0) {
         next_expected_header_byte = strm_.next_in;
@@ -1219,6 +1280,20 @@ CompressionError ZlibContext::GetErrorInfo() const {
 
 
 CompressionError ZlibContext::ResetStream() {
+  // deflateReset() is deflateEnd + deflateInit: a new stream. gzip emits a
+  // wrapper header on the first write; those bytes cannot be taken back, so
+  // refuse reset once an incomplete gzip member has emitted output.
+  // zlib-wrapped deflate still allows reset after flush: callers discard the
+  // first member (test-zlib-dictionary.js). Raw deflate has no wrapper header,
+  // so flush+reset still concatenates.
+  if (mode_ == GZIP && !stream_complete_ && output_emitted_) {
+    return CompressionError(
+        "Cannot reset a gzip stream with an incomplete member; end the "
+        "stream or start a new gzip compressor",
+        "ERR_ZLIB_INCOMPLETE_FRAME",
+        Z_STREAM_ERROR);
+  }
+
   bool first_init_call = InitZlib();
   if (first_init_call && err_ != Z_OK) {
     return ErrorForMessage("Failed to init stream before reset");
@@ -1244,6 +1319,8 @@ CompressionError ZlibContext::ResetStream() {
   if (err_ != Z_OK)
     return ErrorForMessage("Failed to reset stream");
 
+  stream_complete_ = true;
+  output_emitted_ = false;
   return SetDictionary();
 }
 
@@ -1288,6 +1365,8 @@ void ZlibContext::Init(int level,
   flush_ = Z_NO_FLUSH;
 
   err_ = Z_OK;
+  stream_complete_ = true;
+  output_emitted_ = false;
 
   if (mode_ == GZIP || mode_ == GUNZIP) {
     window_bits_ += 16;
@@ -1445,6 +1524,7 @@ void BrotliEncoderContext::Close() {
   state_.reset();
   prepared_dictionary_.reset();
   dictionary_.clear();
+  params_.clear();
   mode_ = NONE;
 }
 
@@ -1458,6 +1538,7 @@ CompressionError BrotliEncoderContext::Init(std::vector<uint8_t>&& dictionary) {
   // Clean up any previous dictionary state before re-initializing.
   prepared_dictionary_.reset();
   dictionary_.clear();
+  params_.clear();
 
   state_.reset(BrotliEncoderCreateInstance(alloc, free, opaque));
   if (!state_) {
@@ -1497,7 +1578,19 @@ CompressionError BrotliEncoderContext::Init(std::vector<uint8_t>&& dictionary) {
 }
 
 CompressionError BrotliEncoderContext::ResetStream() {
-  return Init();
+  std::vector<uint8_t> dictionary = dictionary_;
+  const auto params = params_;
+  CompressionError err = Init(std::move(dictionary));
+  if (err.IsError()) {
+    return err;
+  }
+  for (const auto& entry : params) {
+    err = SetParams(entry.first, entry.second);
+    if (err.IsError()) {
+      return err;
+    }
+  }
+  return CompressionError{};
 }
 
 CompressionError BrotliEncoderContext::SetParams(int key, uint32_t value) {
@@ -1508,6 +1601,7 @@ CompressionError BrotliEncoderContext::SetParams(int key, uint32_t value) {
                             "ERR_BROTLI_PARAM_SET_FAILED",
                             -1);
   } else {
+    RecordBrotliParam(&params_, key, value);
     return CompressionError {};
   }
 }
@@ -1526,6 +1620,7 @@ CompressionError BrotliEncoderContext::GetErrorInfo() const {
 void BrotliDecoderContext::Close() {
   state_.reset();
   dictionary_.clear();
+  params_.clear();
   mode_ = NONE;
 }
 
@@ -1555,6 +1650,7 @@ CompressionError BrotliDecoderContext::Init(std::vector<uint8_t>&& dictionary) {
 
   // Clean up any previous dictionary state before re-initializing.
   dictionary_.clear();
+  params_.clear();
 
   state_.reset(BrotliDecoderCreateInstance(alloc, free, opaque));
   if (!state_) {
@@ -1582,7 +1678,19 @@ CompressionError BrotliDecoderContext::Init(std::vector<uint8_t>&& dictionary) {
 }
 
 CompressionError BrotliDecoderContext::ResetStream() {
-  return Init();
+  std::vector<uint8_t> dictionary = dictionary_;
+  const auto params = params_;
+  CompressionError err = Init(std::move(dictionary));
+  if (err.IsError()) {
+    return err;
+  }
+  for (const auto& entry : params) {
+    err = SetParams(entry.first, entry.second);
+    if (err.IsError()) {
+      return err;
+    }
+  }
+  return CompressionError{};
 }
 
 CompressionError BrotliDecoderContext::SetParams(int key, uint32_t value) {
@@ -1593,6 +1701,7 @@ CompressionError BrotliDecoderContext::SetParams(int key, uint32_t value) {
                             "ERR_BROTLI_PARAM_SET_FAILED",
                             -1);
   } else {
+    RecordBrotliParam(&params_, key, value);
     return CompressionError {};
   }
 }
@@ -1661,8 +1770,11 @@ void ZstdCompressContext::Close() {
 }
 
 CompressionError ZstdCompressContext::Init(uint64_t pledged_src_size,
-                                           std::string_view dictionary) {
+                                           std::string_view dictionary,
+                                           bool) {
   pledged_src_size_ = pledged_src_size;
+  frame_complete_ = true;
+  frame_output_emitted_ = false;
   if (pledged_src_size == ZSTD_CONTENTSIZE_UNKNOWN) {
     consumed_src_size_.reset();
   } else {
@@ -1703,7 +1815,42 @@ CompressionError ZstdCompressContext::Init(uint64_t pledged_src_size,
 }
 
 CompressionError ZstdCompressContext::ResetStream() {
-  return Init(pledged_src_size_);
+  // ZSTD_reset_session_only cancels unflushed internal data. Bytes that have
+  // already been written out cannot be taken back, so refuse reset only when
+  // the current incomplete frame has already emitted output.
+  if (!frame_complete_ && frame_output_emitted_) {
+    return CompressionError(
+        "Cannot reset a zstd stream with an incomplete frame; end the frame "
+        "or discard the output produced so far",
+        "ERR_ZLIB_INCOMPLETE_FRAME",
+        ZSTD_error_stage_wrong);
+  }
+
+  size_t result = ZSTD_CCtx_reset(cctx_.get(), ZSTD_reset_session_only);
+  if (ZSTD_isError(result)) {
+    const ZSTD_ErrorCode error = ZSTD_getErrorCode(result);
+    return CompressionError(
+        ZSTD_getErrorString(error), ZstdStrerror(error), error);
+  }
+
+  result = ZSTD_CCtx_setPledgedSrcSize(cctx_.get(), pledged_src_size_);
+  if (ZSTD_isError(result)) {
+    const ZSTD_ErrorCode error = ZSTD_getErrorCode(result);
+    return CompressionError(
+        ZSTD_getErrorString(error), ZstdStrerror(error), error);
+  }
+
+  if (pledged_src_size_ == ZSTD_CONTENTSIZE_UNKNOWN) {
+    consumed_src_size_.reset();
+  } else {
+    consumed_src_size_ = 0;
+  }
+  frame_complete_ = true;
+  frame_output_emitted_ = false;
+  error_ = ZSTD_error_no_error;
+  error_string_.clear();
+  error_code_string_.clear();
+  return {};
 }
 
 void ZstdCompressContext::DoThreadPoolWork() {
@@ -1714,19 +1861,28 @@ void ZstdCompressContext::DoThreadPoolWork() {
   if (consumed_src_size_.has_value()) {
     *consumed_src_size_ += input_.pos - input_pos;
   }
+  if (output_.pos > 0) {
+    frame_output_emitted_ = true;
+  }
   if (ZSTD_isError(remaining)) {
     error_ = ZSTD_getErrorCode(remaining);
     error_code_string_ = ZstdStrerror(error_);
     error_string_ = ZSTD_getErrorString(error_);
-  } else if (remaining == 0 && flush_ == ZSTD_e_end &&
-             consumed_src_size_.has_value()) {
-    uint64_t const consumed_src_size = *consumed_src_size_;
-    consumed_src_size_.reset();
-    if (consumed_src_size != pledged_src_size_) {
-      error_ = ZSTD_error_srcSize_wrong;
-      error_code_string_ = ZstdStrerror(error_);
-      error_string_ = ZSTD_getErrorString(error_);
+    frame_complete_ = false;
+  } else if (remaining == 0 && flush_ == ZSTD_e_end) {
+    frame_complete_ = true;
+    frame_output_emitted_ = false;
+    if (consumed_src_size_.has_value()) {
+      uint64_t const consumed_src_size = *consumed_src_size_;
+      consumed_src_size_.reset();
+      if (consumed_src_size != pledged_src_size_) {
+        error_ = ZSTD_error_srcSize_wrong;
+        error_code_string_ = ZstdStrerror(error_);
+        error_string_ = ZSTD_getErrorString(error_);
+      }
     }
+  } else {
+    frame_complete_ = false;
   }
 }
 
@@ -1745,8 +1901,14 @@ void ZstdDecompressContext::Close() {
 }
 
 CompressionError ZstdDecompressContext::Init(uint64_t pledged_src_size,
-                                             std::string_view dictionary) {
+                                             std::string_view dictionary,
+                                             bool reject_garbage_after_end) {
   frame_complete_ = false;
+  decoding_frame_after_complete_ = false;
+  reject_garbage_after_end_ = reject_garbage_after_end;
+  ignoring_trailing_input_ = false;
+  frame_prefix_size_ = 0;
+  possible_frame_types_ = 0;
 
 #ifdef NODE_BUNDLED_ZSTD
   ZSTD_customMem custom_mem = {
@@ -1777,12 +1939,29 @@ CompressionError ZstdDecompressContext::Init(uint64_t pledged_src_size,
 }
 
 CompressionError ZstdDecompressContext::ResetStream() {
-  // We pass ZSTD_CONTENTSIZE_UNKNOWN because the argument is ignored for
-  // decompression.
-  return Init(ZSTD_CONTENTSIZE_UNKNOWN);
+  const size_t result = ZSTD_DCtx_reset(dctx_.get(), ZSTD_reset_session_only);
+  if (ZSTD_isError(result)) {
+    const ZSTD_ErrorCode error = ZSTD_getErrorCode(result);
+    return CompressionError(
+        ZSTD_getErrorString(error), ZstdStrerror(error), error);
+  }
+
+  frame_complete_ = false;
+  decoding_frame_after_complete_ = false;
+  ignoring_trailing_input_ = false;
+  frame_prefix_size_ = 0;
+  possible_frame_types_ = 0;
+  error_ = ZSTD_error_no_error;
+  error_string_.clear();
+  error_code_string_.clear();
+  return {};
 }
 
 void ZstdDecompressContext::DoThreadPoolWork() {
+  if (ignoring_trailing_input_) {
+    return;
+  }
+
   // The JavaScript processing loop retries with an empty input buffer when the
   // previous call filled the output buffer. Avoid interpreting that retry as
   // the beginning of a new, incomplete frame.
@@ -1790,15 +1969,64 @@ void ZstdDecompressContext::DoThreadPoolWork() {
     return;
   }
 
-  size_t const ret = ZSTD_decompressStream(dctx_.get(), &output_, &input_);
-  if (ZSTD_isError(ret)) {
-    frame_complete_ = false;
-    error_ = ZSTD_getErrorCode(ret);
-    error_code_string_ = ZstdStrerror(error_);
-    error_string_ = ZSTD_getErrorString(error_);
-  } else {
+  do {
+    if (frame_complete_) {
+      decoding_frame_after_complete_ = true;
+      frame_prefix_size_ = 0;
+      possible_frame_types_ = 0b11;
+    }
+
+    if (decoding_frame_after_complete_ && frame_prefix_size_ < 4) {
+      static constexpr uint8_t zstd_magic[] = {0x28, 0xb5, 0x2f, 0xfd};
+      static constexpr uint8_t skippable_magic[] = {0x50, 0x2a, 0x4d, 0x18};
+      const auto* data = static_cast<const uint8_t*>(input_.src);
+      size_t input_prefix_offset = 0;
+
+      while (frame_prefix_size_ < 4 &&
+             input_.pos + input_prefix_offset < input_.size) {
+        const size_t index = frame_prefix_size_;
+        const uint8_t byte = data[input_.pos + input_prefix_offset];
+        if (byte != zstd_magic[index]) {
+          possible_frame_types_ &= ~0b01;
+        }
+        if ((index == 0 && (byte & 0xf0) != skippable_magic[0]) ||
+            (index != 0 && byte != skippable_magic[index])) {
+          possible_frame_types_ &= ~0b10;
+        }
+        frame_prefix_size_++;
+        input_prefix_offset++;
+      }
+
+      if (possible_frame_types_ == 0) {
+        frame_complete_ = true;
+        decoding_frame_after_complete_ = false;
+        if (reject_garbage_after_end_) {
+          error_ = ZSTD_error_GENERIC;
+          error_code_string_ = "ERR_TRAILING_JUNK_AFTER_STREAM_END";
+          error_string_ =
+              "Trailing junk found after the end of the compressed stream";
+        } else {
+          ignoring_trailing_input_ = true;
+        }
+        return;
+      }
+    }
+
+    const size_t ret = ZSTD_decompressStream(dctx_.get(), &output_, &input_);
+    if (ZSTD_isError(ret)) {
+      frame_complete_ = false;
+      error_ = ZSTD_getErrorCode(ret);
+      error_code_string_ = ZstdStrerror(error_);
+      error_string_ = ZSTD_getErrorString(error_);
+      return;
+    }
+
     frame_complete_ = ret == 0;
-  }
+    if (frame_complete_) {
+      decoding_frame_after_complete_ = false;
+    }
+  } while (frame_complete_ && input_.pos < input_.size &&
+           output_.pos < output_.size);
 }
 
 CompressionError ZstdDecompressContext::GetErrorInfo() const {
@@ -1809,6 +2037,17 @@ CompressionError ZstdDecompressContext::GetErrorInfo() const {
 
   if (flush_ == ZSTD_e_end && !frame_complete_ && input_.pos == input_.size &&
       output_.pos < output_.size) {
+    if (decoding_frame_after_complete_) {
+      if (frame_prefix_size_ < 4) {
+        if (reject_garbage_after_end_) {
+          return CompressionError(
+              "Trailing junk found after the end of the compressed stream",
+              "ERR_TRAILING_JUNK_AFTER_STREAM_END",
+              -1);
+        }
+        return {};
+      }
+    }
     return CompressionError(
         "unexpected end of file", "Z_BUF_ERROR", Z_BUF_ERROR);
   }
@@ -1889,6 +2128,36 @@ static uint32_t FastCRC32(v8::Local<v8::Value> receiver,
 
 static CFunction fast_crc32_(CFunction::Make(FastCRC32));
 
+static inline uint32_t CRC32CImpl(Isolate* isolate,
+                                  Local<Value> data,
+                                  uint32_t value) {
+  return CallOnSequence<uint32_t>(
+      isolate, data, [&](const char* ptr, size_t size) -> uint32_t {
+        return static_cast<uint32_t>(absl::ExtendCrc32c(
+            absl::crc32c_t{value}, std::string_view(ptr, size)));
+      });
+}
+
+static void CRC32C(const FunctionCallbackInfo<Value>& args) {
+  CHECK(args[0]->IsArrayBufferView() || args[0]->IsString());
+  CHECK(args[1]->IsUint32());
+  uint32_t value = args[1].As<v8::Uint32>()->Value();
+  args.GetReturnValue().Set(CRC32CImpl(args.GetIsolate(), args[0], value));
+}
+
+static uint32_t FastCRC32C(v8::Local<v8::Value> receiver,
+                           v8::Local<v8::Value> data,
+                           uint32_t value,
+                           // NOLINTNEXTLINE(runtime/references)
+                           v8::FastApiCallbackOptions& options) {
+  TRACK_V8_FAST_API_CALL("zlib.crc32c");
+  v8::HandleScope handle_scope(options.isolate);
+  CHECK(data->IsArrayBufferView() || data->IsString());
+  return CRC32CImpl(options.isolate, data, value);
+}
+
+static CFunction fast_crc32c_(CFunction::Make(FastCRC32C));
+
 void Initialize(Local<Object> target,
                 Local<Value> unused,
                 Local<Context> context,
@@ -1902,6 +2171,7 @@ void Initialize(Local<Object> target,
   MakeClass<ZstdDecompressStream>::Make(env, target, "ZstdDecompress");
 
   SetFastMethodNoSideEffect(context, target, "crc32", CRC32, &fast_crc32_);
+  SetFastMethodNoSideEffect(context, target, "crc32c", CRC32C, &fast_crc32c_);
   target->Set(env->context(),
               FIXED_ONE_BYTE_STRING(env->isolate(), "ZLIB_VERSION"),
               FIXED_ONE_BYTE_STRING(env->isolate(), ZLIB_VERSION)).Check();
@@ -1915,6 +2185,8 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   MakeClass<ZstdDecompressStream>::Make(registry);
   registry->Register(CRC32);
   registry->Register(fast_crc32_);
+  registry->Register(CRC32C);
+  registry->Register(fast_crc32c_);
 }
 
 }  // anonymous namespace
@@ -2008,37 +2280,10 @@ void DefineZlibConstants(Local<Object> target) {
   NODE_DEFINE_CONSTANT(target,
       BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION);
   NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_PARAM_LARGE_WINDOW);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_NO_ERROR);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_SUCCESS);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_NEEDS_MORE_INPUT);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_NEEDS_MORE_OUTPUT);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_RESERVED);
-  NODE_DEFINE_CONSTANT(target,
-      BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE);
-  NODE_DEFINE_CONSTANT(target,
-      BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_CL_SPACE);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_TRANSFORM);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_DICTIONARY);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_PADDING_1);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_PADDING_2);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_FORMAT_DISTANCE);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES);
-  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER_ERROR_UNREACHABLE);
+#define V(PREFIX, NAME, CODE)                                                  \
+  NODE_DEFINE_CONSTANT(target, BROTLI_DECODER##PREFIX##NAME);
+  BROTLI_DECODER_ERROR_CODES_LIST(V, )
+#undef V
 
   // Zstd constants
   NODE_DEFINE_CONSTANT(target, ZSTD_e_continue);

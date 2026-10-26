@@ -7,21 +7,15 @@
 #include "threadpoolwork-inl.h"
 #include "v8.h"
 
-#if OPENSSL_WITH_EVP_MAC
-#include <openssl/core_names.h>
 #include <openssl/evp.h>
-#endif
 
 #if NCRYPTO_USE_BORINGSSL_EVP_DO_ALL_FALLBACK
 #include <openssl/digest.h>
 #endif
 
 #include <algorithm>
-#include <array>
 #include <climits>
 #include <cstdio>
-#include <limits>
-#include <memory>
 #include <string_view>
 #include <utility>
 
@@ -82,7 +76,7 @@ constexpr BoringSSLDigest kBoringSSLDigests[] = {
 void ResetHashCache(Environment* env,
                     uint64_t generation,
                     Local<Object> algorithm_cache = Local<Object>()) {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   ncrypto::DigestCache* cache = env->provider_digest_cache.get();
   CHECK_NOT_NULL(cache);
   if (!algorithm_cache.IsEmpty()) {
@@ -113,7 +107,7 @@ bool SynchronizeHashCache(Environment* env,
   return true;
 }
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
 const EVP_MD* GetCachedMDByID(Environment* env,
                               int32_t id,
                               Local<Object> algorithm_cache = Local<Object>()) {
@@ -232,7 +226,7 @@ void SaveSupportedProviderHashAlgorithms(EVP_MD* md, void* arg) {
   EVP_MD_names_do_all(md, SaveSupportedProviderHashName, &context);
 }
 
-#else
+#elif NCRYPTO_USE_BORINGSSL
 void SaveSupportedHashAlgorithms(const EVP_MD* md,
                                  const char* from,
                                  const char* to,
@@ -241,7 +235,7 @@ void SaveSupportedHashAlgorithms(const EVP_MD* md,
   Environment* env = static_cast<Environment*>(arg);
   env->supported_hash_algorithms.push_back(from);
 }
-#endif  // NCRYPTO_USE_OPENSSL3_PROVIDER
+#endif  // NCRYPTO_USE_OPENSSL_PROVIDER
 
 const std::vector<std::string>& GetSupportedHashAlgorithms(Environment* env) {
   while (true) {
@@ -254,13 +248,19 @@ const std::vector<std::string>& GetSupportedHashAlgorithms(Environment* env) {
         static_cast<void>(digest.get);
         env->supported_hash_algorithms.emplace_back(digest.name);
       }
-#elif NCRYPTO_USE_OPENSSL3_PROVIDER
+#elif NCRYPTO_USE_OPENSSL_PROVIDER
       // Since we'll fetch the EVP_MD*, cache them along the way to speed up
       // later lookups instead of throwing them away immediately.
       EVP_MD_do_all_sorted(SaveSupportedHashAlgorithmsAndCacheMD, env);
       EVP_MD_do_all_provided(nullptr, SaveSupportedProviderHashAlgorithms, env);
-#else
+#elif NCRYPTO_USE_BORINGSSL
       EVP_MD_do_all_sorted(SaveSupportedHashAlgorithms, env);
+#endif
+#if NCRYPTO_USE_BORINGSSL
+      // SHA-3 descriptors are not included in BoringSSL's name registry.
+      for (const char* name : {"sha3-256", "sha3-384", "sha3-512"}) {
+        env->supported_hash_algorithms.emplace_back(name);
+      }
 #endif
     }
     const uint64_t current_generation = ncrypto::getFipsStateGeneration();
@@ -290,7 +290,7 @@ void Hash::GetCachedAliases(const FunctionCallbackInfo<Value>& args) {
   size_t size = 0;
   LocalVector<Name> names(isolate);
   LocalVector<Value> values(isolate);
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   const auto& aliases = env->provider_digest_cache->aliases();
   size = aliases.size();
   names.reserve(size);
@@ -317,7 +317,7 @@ const EVP_MD* GetDigestImplementation(
   CHECK(algorithm_cache->IsObject());
   DCHECK(!digest_owner.has_value());
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   Local<Object> cache = algorithm_cache.As<Object>();
   int32_t cache_id = cache_id_val.As<Int32>()->Value();
   if (cache_id != -1) {
@@ -351,16 +351,16 @@ const EVP_MD* GetDigestImplementation(
     return digest_owner->get();
   }
   return nullptr;
-#else
+#elif NCRYPTO_USE_BORINGSSL
   Utf8Value utf8(env->isolate(), algorithm);
   return ncrypto::getDigestByName(*utf8);
 #endif
 }
 
 void MarkInvalidXofLength() {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   ERR_raise(ERR_LIB_EVP, EVP_R_NOT_XOF_OR_INVALID_LENGTH);
-#else
+#elif NCRYPTO_USE_BORINGSSL
   EVPerr(EVP_F_EVP_DIGESTFINALXOF, EVP_R_NOT_XOF_OR_INVALID_LENGTH);
 #endif
 }
@@ -373,9 +373,9 @@ void MarkInvalidXofLength() {
 // version-independent.
 #if !OPENSSL_VERSION_PREREQ(3, 4)
 bool IsShakeDigest(const EVP_MD* md) {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   return EVP_MD_is_a(md, "SHAKE128") || EVP_MD_is_a(md, "SHAKE256");
-#else
+#elif NCRYPTO_USE_BORINGSSL
   const char* name = OBJ_nid2sn(EVP_MD_type(md));
   return name != nullptr &&
          (strcmp(name, "SHAKE128") == 0 || strcmp(name, "SHAKE256") == 0);
@@ -409,7 +409,7 @@ void OneShotDigestWithMD(Environment* env,
   enum encoding output_enc = ParseEncoding(isolate, args[4], args[5], HEX);
 
   bool is_xof = (EVP_MD_flags(md) & EVP_MD_FLAG_XOF) != 0;
-  int output_length = EVP_MD_size(md);
+  OPENSSL_SIZE_T output_length = EVP_MD_size(md);
 
   // This is to cause hash() to fail when an incorrect
   // outputLength option was passed for a non-XOF hash function.
@@ -537,7 +537,7 @@ void Hash::OneShotDigest(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[6]->IsUint32() || args[6]->IsUndefined());  // outputLength
 
   if (args.Length() == 7) {
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
     const int32_t cache_id = args[1].As<Int32>()->Value();
     if (cache_id != -1) {
       if (const EVP_MD* md =
@@ -546,7 +546,7 @@ void Hash::OneShotDigest(const FunctionCallbackInfo<Value>& args) {
       }
       if (env->isolate()->HasPendingException()) return;
     }
-#else
+#elif NCRYPTO_USE_BORINGSSL
     Utf8Value utf8(env->isolate(), args[0]);
     return OneShotDigestWithMD(
         env, args, ncrypto::getDigestByName(*utf8), nullptr);
@@ -588,9 +588,6 @@ void Hash::Initialize(Environment* env, Local<Object> target) {
   SetMethodNoSideEffect(context, target, "oneShotDigest", OneShotDigest);
 
   HashJob::Initialize(env, target);
-#if OPENSSL_WITH_EVP_MAC
-  CShakeJob::Initialize(env, target);
-#endif
 }
 
 void Hash::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
@@ -602,9 +599,6 @@ void Hash::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(OneShotDigest);
 
   HashJob::RegisterExternalReferences(registry);
-#if OPENSSL_WITH_EVP_MAC
-  CShakeJob::RegisterExternalReferences(registry);
-#endif
 }
 
 // new Hash(algorithm, xofLen, algorithmId, algorithmCache[, functionName,
@@ -619,7 +613,7 @@ void Hash::New(const FunctionCallbackInfo<Value>& args) {
     xof_md_len = Just<unsigned int>(args[1].As<Uint32>()->Value());
   }
 
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
   // This is the common path after the first lookup. Avoid constructing a
   // digest owner when the Environment already owns the cached implementation.
   if (args.Length() == 4 && args[0]->IsString()) {
@@ -894,347 +888,6 @@ bool HashTraits::DeriveBits(Environment* env,
 
   return true;
 }
-
-#if OPENSSL_WITH_EVP_MAC
-namespace {
-
-static constexpr std::array<unsigned char, 1> kEmptyString = {};
-static constexpr size_t kKeccakKmac128Rate = 168;
-static constexpr size_t kKeccakKmac256Rate = 136;
-static constexpr size_t kMaxCShakeCustomizationSize = 512;
-
-struct EncodedLength {
-  std::array<unsigned char, sizeof(size_t) + 1> data;
-  size_t size;
-};
-
-struct EncodedStringInput {
-  const void* data;
-  size_t byte_length;
-  size_t bit_length;
-};
-
-struct KeccakKmacXof {
-  ncrypto::EVPMDCtxPointer ctx;
-  size_t rate;
-};
-
-size_t EncodedLengthSize(size_t value) {
-  size_t size = 1;
-  size_t remaining = value;
-  while (remaining >>= CHAR_BIT) size++;
-  return size + 1;
-}
-
-bool AddSize(size_t a, size_t b, size_t* out) {
-  if (a > std::numeric_limits<size_t>::max() - b) return false;
-  *out = a + b;
-  return true;
-}
-
-EncodedLength EncodeLength(size_t value, bool left) {
-  const size_t value_size = EncodedLengthSize(value) - 1;
-  EncodedLength encoded = {{}, value_size + 1};
-
-  if (left) encoded.data[0] = static_cast<unsigned char>(value_size);
-  for (size_t n = 0; n < value_size; n++) {
-    const size_t shift = CHAR_BIT * (value_size - n - 1);
-    encoded.data[(left ? 1 : 0) + n] =
-        static_cast<unsigned char>(value >> shift);
-  }
-  if (!left) encoded.data[value_size] = static_cast<unsigned char>(value_size);
-
-  return encoded;
-}
-
-bool DigestUpdate(ncrypto::EVPMDCtxPointer* ctx,
-                  const void* data,
-                  size_t size) {
-  if (size == 0) return true;
-  return ctx->digestUpdate(ncrypto::Buffer<const void>{
-      .data = data,
-      .len = size,
-  });
-}
-
-bool DigestUpdateZeros(ncrypto::EVPMDCtxPointer* ctx, size_t size) {
-  static constexpr std::array<unsigned char, 168> zeros = {};
-  while (size > 0) {
-    const size_t chunk = std::min(size, zeros.size());
-    if (!DigestUpdate(ctx, zeros.data(), chunk)) return false;
-    size -= chunk;
-  }
-  return true;
-}
-
-bool EncodedStringSize(size_t byte_length, size_t bit_length, size_t* size) {
-  return AddSize(EncodedLengthSize(bit_length), byte_length, size);
-}
-
-bool ByteLengthToBitLength(size_t byte_length, size_t* bit_length) {
-  if (byte_length > std::numeric_limits<size_t>::max() / CHAR_BIT) {
-    return false;
-  }
-  *bit_length = byte_length * CHAR_BIT;
-  return true;
-}
-
-KeccakKmacXof NewKeccakKmacXof(bool use_128_bits) {
-  // OpenSSL 3.x exposes the cSHAKE/KMAC suffix primitive as KECCAK-KMAC-*.
-  const char* digest_name = use_128_bits ? OSSL_DIGEST_NAME_KECCAK_KMAC128
-                                         : OSSL_DIGEST_NAME_KECCAK_KMAC256;
-  auto digest = std::unique_ptr<EVP_MD, decltype(&EVP_MD_free)>{
-      EVP_MD_fetch(nullptr, digest_name, nullptr), EVP_MD_free};
-  if (!digest) return {};
-
-  auto ctx = ncrypto::EVPMDCtxPointer::New();
-  if (!ctx.digestInit(digest.get())) return {};
-
-  return {
-      .ctx = std::move(ctx),
-      .rate = use_128_bits ? kKeccakKmac128Rate : kKeccakKmac256Rate,
-  };
-}
-
-bool ToEncodedStringInput(const void* data,
-                          size_t byte_length,
-                          EncodedStringInput* input) {
-  if (byte_length > 0 && data == nullptr) return false;
-
-  size_t bit_length;
-  if (!ByteLengthToBitLength(byte_length, &bit_length)) return false;
-
-  *input = {
-      .data = byte_length == 0 ? kEmptyString.data() : data,
-      .byte_length = byte_length,
-      .bit_length = bit_length,
-  };
-  return true;
-}
-
-bool DigestUpdateEncodedLength(ncrypto::EVPMDCtxPointer* ctx,
-                               size_t value,
-                               bool left) {
-  const EncodedLength encoded = EncodeLength(value, left);
-  return DigestUpdate(ctx, encoded.data.data(), encoded.size);
-}
-
-bool DigestUpdateEncodedString(ncrypto::EVPMDCtxPointer* ctx,
-                               const void* data,
-                               size_t byte_length,
-                               size_t bit_length) {
-  return DigestUpdateEncodedLength(ctx, bit_length, true) &&
-         DigestUpdate(ctx, data, byte_length);
-}
-
-bool DigestUpdateBytepad(ncrypto::EVPMDCtxPointer* ctx,
-                         size_t width,
-                         const void* data,
-                         size_t byte_length,
-                         size_t bit_length,
-                         const void* data2 = nullptr,
-                         size_t byte_length2 = 0,
-                         size_t bit_length2 = 0) {
-  if (width == 0) return false;
-
-  size_t encoded_size;
-  size_t written = EncodedLengthSize(width);
-  if (!EncodedStringSize(byte_length, bit_length, &encoded_size) ||
-      !AddSize(written, encoded_size, &written)) {
-    return false;
-  }
-  if (data2 != nullptr) {
-    if (!EncodedStringSize(byte_length2, bit_length2, &encoded_size) ||
-        !AddSize(written, encoded_size, &written)) {
-      return false;
-    }
-  }
-
-  size_t padded_size;
-  if (!AddSize(written, width - 1, &padded_size)) return false;
-  padded_size = padded_size / width * width;
-  DCHECK_GE(padded_size, written);
-  const size_t padding = padded_size - written;
-
-  return DigestUpdateEncodedLength(ctx, width, true) &&
-         DigestUpdateEncodedString(ctx, data, byte_length, bit_length) &&
-         (data2 == nullptr ||
-          DigestUpdateEncodedString(ctx, data2, byte_length2, bit_length2)) &&
-         DigestUpdateZeros(ctx, padding);
-}
-
-}  // namespace
-
-CShakeConfig::CShakeConfig(CShakeConfig&& other) noexcept
-    : in(std::move(other.in)),
-      function_name(std::move(other.function_name)),
-      customization(std::move(other.customization)),
-      variant(other.variant),
-      length(other.length) {}
-
-CShakeConfig& CShakeConfig::operator=(CShakeConfig&& other) noexcept {
-  if (&other == this) return *this;
-  this->~CShakeConfig();
-  return *new (this) CShakeConfig(std::move(other));
-}
-
-void CShakeConfig::MemoryInfo(MemoryTracker* tracker) const {
-  tracker->TraitTrackInline(in, "in");
-  tracker->TraitTrackInline(function_name, "function_name");
-  tracker->TraitTrackInline(customization, "customization");
-}
-
-MaybeLocal<Value> CShakeTraits::EncodeOutput(Environment* env,
-                                             const CShakeConfig& params,
-                                             ByteSource* out) {
-  return out->ToArrayBuffer(env);
-}
-
-Maybe<void> CShakeTraits::AdditionalConfig(
-    CryptoJobMode mode,
-    const FunctionCallbackInfo<Value>& args,
-    unsigned int offset,
-    CShakeConfig* params) {
-  Environment* env = Environment::GetCurrent(args);
-
-  if (IsFipsEnabled()) {
-    THROW_ERR_CRYPTO_UNSUPPORTED_OPERATION(env);
-    return Nothing<void>();
-  }
-
-  CHECK(args[offset]->IsString());  // Algorithm name
-  Utf8Value algorithm_name(env->isolate(), args[offset]);
-  std::string_view algorithm_str = algorithm_name.ToStringView();
-
-  if (algorithm_str == "cSHAKE128") {
-    params->variant = CShakeVariant::CSHAKE128;
-  } else if (algorithm_str == "cSHAKE256") {
-    params->variant = CShakeVariant::CSHAKE256;
-  } else {
-    UNREACHABLE();
-  }
-
-  ArrayBufferOrViewContents<char> data(args[offset + 1]);
-  if (!data.CheckSizeInt32()) [[unlikely]] {
-    THROW_ERR_OUT_OF_RANGE(env, "data is too big");
-    return Nothing<void>();
-  }
-  params->in = IsCryptoJobAsync(mode) ? data.ToCopy() : data.ToByteSource();
-
-  if (!args[offset + 2]->IsUndefined()) {
-    ArrayBufferOrViewContents<char> function_name(args[offset + 2]);
-    if (!function_name.CheckSizeInt32()) [[unlikely]] {
-      THROW_ERR_OUT_OF_RANGE(env, "functionName is too big");
-      return Nothing<void>();
-    }
-    params->function_name = IsCryptoJobAsync(mode)
-                                ? function_name.ToCopy()
-                                : function_name.ToByteSource();
-  }
-
-  if (!args[offset + 3]->IsUndefined()) {
-    ArrayBufferOrViewContents<char> customization(args[offset + 3]);
-    if (!customization.CheckSizeInt32()) [[unlikely]] {
-      THROW_ERR_OUT_OF_RANGE(env, "customization is too big");
-      return Nothing<void>();
-    }
-    params->customization = IsCryptoJobAsync(mode)
-                                ? customization.ToCopy()
-                                : customization.ToByteSource();
-  }
-
-  CHECK(args[offset + 4]->IsUint32());  // Length
-  params->length = args[offset + 4].As<Uint32>()->Value();
-
-  return JustVoid();
-}
-
-bool CShakeTraits::DeriveBits(Environment* env,
-                              const CShakeConfig& params,
-                              ByteSource* out,
-                              CryptoJobMode mode,
-                              CryptoErrorStore*) {
-  CShakeParams cshake_params = {
-      .variant = params.variant,
-      .function_name_data = params.function_name.data(),
-      .function_name_size = params.function_name.size(),
-      .customization_data = params.customization.data(),
-      .customization_size = params.customization.size(),
-      .bytepad_input = nullptr,
-      .input_data = params.in.data(),
-      .input_size = params.in.size(),
-      .append_output_length = false,
-      .length = params.length,
-  };
-  return DeriveCShakeBits(cshake_params, out);
-}
-
-bool DeriveCShakeBits(const CShakeParams& params, ByteSource* out) {
-  if (params.customization_size > kMaxCShakeCustomizationSize) {
-    return false;
-  }
-
-  if (params.length == 0) {
-    *out = ByteSource();
-    return true;
-  }
-
-  auto xof = NewKeccakKmacXof(params.variant == CShakeVariant::CSHAKE128);
-  if (!xof.ctx) return false;
-  auto ctx = std::move(xof.ctx);
-
-  EncodedStringInput function_name;
-  EncodedStringInput customization;
-  if (!ToEncodedStringInput(params.function_name_data,
-                            params.function_name_size,
-                            &function_name) ||
-      !ToEncodedStringInput(params.customization_data,
-                            params.customization_size,
-                            &customization)) {
-    return false;
-  }
-
-  if (!DigestUpdateBytepad(&ctx,
-                           xof.rate,
-                           function_name.data,
-                           function_name.byte_length,
-                           function_name.bit_length,
-                           customization.data,
-                           customization.byte_length,
-                           customization.bit_length)) {
-    return false;
-  }
-
-  if (params.bytepad_input != nullptr &&
-      !DigestUpdateBytepad(&ctx,
-                           xof.rate,
-                           params.bytepad_input->data,
-                           params.bytepad_input->byte_length,
-                           params.bytepad_input->bit_length)) {
-    return false;
-  }
-
-  if (!DigestUpdate(&ctx, params.input_data, params.input_size)) {
-    return false;
-  }
-
-  if (params.append_output_length &&
-      !DigestUpdateEncodedLength(&ctx, params.length, false)) {
-    return false;
-  }
-
-  const size_t length_bytes =
-      NumBitsToBytes(static_cast<size_t>(params.length));
-  auto data = ctx.digestFinal(length_bytes);
-  if (!data) [[unlikely]]
-    return false;
-
-  DCHECK(!data.isSecure());
-  *out = ByteSource::Allocated(data.release());
-  if (params.length % CHAR_BIT != 0) TruncateToBitLength(params.length, out);
-  return true;
-}
-#endif  // OPENSSL_WITH_EVP_MAC
 
 }  // namespace crypto
 }  // namespace node

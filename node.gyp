@@ -19,6 +19,7 @@
     'node_shared_brotli%': 'false',
     'node_shared_cares%': 'false',
     'node_shared_gtest%': 'false',
+    'node_shared_gtest_libraries%': [],
     'node_shared_hdr_histogram%': 'false',
     'node_shared_highway%': 'false',
     'node_shared_http_parser%': 'false',
@@ -28,6 +29,7 @@
     'node_shared_nbytes%': 'false',
     'node_shared_nghttp2%': 'false',
     'node_shared_openssl%': 'false',
+    'node_shared_perfetto%': 'false',
     'node_shared_sqlite%': 'false',
     'node_shared_ffi%': 'false',
     'node_shared_temporal_capi%': 'false',
@@ -75,7 +77,6 @@
       'deps/v8/tools/tickprocessor-driver.mjs',
       'deps/acorn/acorn/dist/acorn.js',
       'deps/acorn/acorn-walk/dist/walk.js',
-      'deps/minimatch/index.js',
       '<@(node_builtin_shareable_builtins)',
     ],
     'node_sources': [
@@ -102,6 +103,12 @@
       'src/encoding_binding.cc',
       'src/env.cc',
       'src/fs_event_wrap.cc',
+      'src/glob/glob_matcher.cc',
+      'src/glob/glob_unicode.cc',
+      'src/glob/glob_walker.cc',
+      'src/glob/node_glob.cc',
+      'src/glob/glob_parser.cc',
+      'src/glob/glob_program.cc',
       'src/handle_wrap.cc',
       'src/heap_utils.cc',
       'src/histogram.cc',
@@ -113,7 +120,6 @@
       'src/js_native_api_v8_internals.h',
       'src/js_stream.cc',
       'src/json_utils.cc',
-      'src/js_udp_wrap.cc',
       'src/module_wrap.cc',
       'src/node.cc',
       'src/node_api.cc',
@@ -180,6 +186,7 @@
       'src/node_worker.cc',
       'src/node_zlib.cc',
       'src/path.cc',
+      'src/permission/env_permission.cc',
       'src/permission/fs_permission.cc',
       'src/permission/permission.cc',
       'src/pipe_wrap.cc',
@@ -258,6 +265,13 @@
       'src/node_errors.h',
       'src/node_exit_code.h',
       'src/node_external_reference.h',
+      'src/glob/glob_ast.h',
+      'src/glob/glob_matcher.h',
+      'src/glob/glob_parser.h',
+      'src/glob/glob_program.h',
+      'src/glob/glob_unicode.h',
+      'src/glob/glob_walker.h',
+      'src/glob/node_glob.h',
       'src/node_file.h',
       'src/node_file-inl.h',
       'src/node_http_common.h',
@@ -308,6 +322,7 @@
       'src/node_worker.h',
       'src/path.h',
       'src/permission/boolean_permission.h',
+      'src/permission/env_permission.h',
       'src/permission/fs_permission.h',
       'src/permission/permission.h',
       'src/permission/permission_base.h',
@@ -397,7 +412,6 @@
       'src/crypto/crypto_context.cc',
       'src/crypto/crypto_tls_certificates.cc',
       'src/crypto/crypto_ec.cc',
-      'src/crypto/crypto_pqc.cc',
       'src/crypto/crypto_kem.cc',
       'src/crypto/crypto_hmac.cc',
       'src/crypto/crypto_kmac.cc',
@@ -411,6 +425,7 @@
       'src/crypto/crypto_hash.cc',
       'src/crypto/crypto_keys.cc',
       'src/crypto/crypto_keygen.cc',
+      'src/crypto/crypto_pkcs12.cc',
       'src/crypto/crypto_scrypt.cc',
       'src/crypto/crypto_tls.cc',
       'src/crypto/crypto_x509.cc',
@@ -431,12 +446,12 @@
       'src/crypto/crypto_hash.h',
       'src/crypto/crypto_keys.h',
       'src/crypto/crypto_keygen.h',
+      'src/crypto/crypto_pkcs12.h',
       'src/crypto/crypto_scrypt.h',
       'src/crypto/crypto_tls.h',
       'src/crypto/crypto_context.h',
       'src/crypto/crypto_tls_certificates.h',
       'src/crypto/crypto_ec.h',
-      'src/crypto/crypto_pqc.h',
       'src/crypto/crypto_hkdf.h',
       'src/crypto/crypto_pbkdf2.h',
       'src/crypto/crypto_sig.h',
@@ -755,87 +770,22 @@
             },
           },
         }],
-        ['node_fipsinstall=="true"', {
-          'variables': {
-            'openssl-cli': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)openssl-cli<(EXECUTABLE_SUFFIX)',
-            'provider_name': 'libopenssl-fipsmodule',
-            'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
-            'conditions': [
-              ['GENERATOR == "ninja"', {
-	        'fipsmodule_internal': '<(PRODUCT_DIR)/lib/<(provider_name).so',
-                'fipsmodule': '<(PRODUCT_DIR)/obj/lib/openssl-modules/fips.so',
-                'fipsconfig': '<(PRODUCT_DIR)/obj/lib/fipsmodule.cnf',
-                'opensslconfig_internal': '<(PRODUCT_DIR)/obj/lib/openssl.cnf',
-             }, {
-	        'fipsmodule_internal': '<(PRODUCT_DIR)/obj.target/deps/openssl/<(provider_name).so',
-                'fipsmodule': '<(PRODUCT_DIR)/obj.target/deps/openssl/lib/openssl-modules/fips.so',
-                'fipsconfig': '<(PRODUCT_DIR)/obj.target/deps/openssl/fipsmodule.cnf',
-                'opensslconfig_internal': '<(PRODUCT_DIR)/obj.target/deps/openssl/openssl.cnf',
-             }],
-            ],
-          },
-          'actions': [
-            {
-              'action_name': 'fipsinstall',
-              'process_outputs_as_sources': 1,
-              'inputs': [
-                '<(fipsmodule_internal)',
-              ],
-              'outputs': [
-                '<(fipsconfig)',
-              ],
-              'action': [
-                '<(openssl-cli)', 'fipsinstall',
-                '-provider_name', '<(provider_name)',
-                '-module', '<(fipsmodule_internal)',
-                '-out', '<(fipsconfig)',
-                #'-quiet',
-              ],
-            },
-            {
-              'action_name': 'copy_fips_module',
-              'inputs': [
-                '<(fipsmodule_internal)',
-              ],
-              'outputs': [
-                '<(fipsmodule)',
-              ],
-              'action': [
-                '<(python)', 'tools/copyfile.py',
-                '<(fipsmodule_internal)',
-                '<(fipsmodule)',
-              ],
-            },
-            {
-              'action_name': 'copy_openssl_cnf_and_include_fips_cnf',
-              'inputs': [ '<(opensslconfig)', ],
-              'outputs': [ '<(opensslconfig_internal)', ],
-              'action': [
-                '<(python)', 'tools/enable_fips_include.py',
-                '<(opensslconfig)',
-                '<(opensslconfig_internal)',
-                '<(fipsconfig)',
-              ],
-            },
+      ],
+      'variables': {
+        'opensslconfig_internal': '<(obj_dir)/deps/openssl/openssl.cnf',
+        'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
+      },
+      'actions': [
+        {
+          'action_name': 'reset_openssl_cnf',
+          'inputs': [ '<(opensslconfig)', ],
+          'outputs': [ '<(opensslconfig_internal)', ],
+          'action': [
+            '<(python)', 'tools/copyfile.py',
+            '<(opensslconfig)',
+            '<(opensslconfig_internal)',
           ],
-         }, {
-           'variables': {
-              'opensslconfig_internal': '<(obj_dir)/deps/openssl/openssl.cnf',
-              'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
-           },
-           'actions': [
-             {
-               'action_name': 'reset_openssl_cnf',
-               'inputs': [ '<(opensslconfig)', ],
-               'outputs': [ '<(opensslconfig_internal)', ],
-               'action': [
-                 '<(python)', 'tools/copyfile.py',
-                 '<(opensslconfig)',
-                 '<(opensslconfig_internal)',
-               ],
-             },
-           ],
-         }],
+        },
       ],
     }, # node_core_target_name
     {
@@ -942,8 +892,12 @@
           'sources': [
             '<@(node_tracing_perfetto_sources)',
           ],
-          'dependencies': [
-            'deps/perfetto/perfetto.gyp:perfetto_sdk',
+          'conditions': [
+            ['node_shared_perfetto=="false"', {
+              'dependencies': [
+                'deps/perfetto/perfetto.gyp:perfetto_sdk',
+              ],
+            }],
           ],
         }, {
           'sources': [
@@ -1369,7 +1323,7 @@
           ],
         }],
         [ 'node_shared_gtest=="true"', {
-          'libraries': [ '-lgtest_main' ],
+          'libraries': [ '<@(node_shared_gtest_libraries)' ],
         }],
         [ 'node_use_bundled_v8!="false" and node_shared_abseil=="false"', {
           'dependencies': [ 'tools/v8_gypfiles/abseil.gyp:abseil' ],
@@ -1394,14 +1348,10 @@
         }, {
           'sources!': [ '<@(node_cctest_openssl_sources)' ],
         }],
-        [ 'node_use_quic=="true"', {
-          'defines': [
-            'HAVE_QUIC=1',
-          ],
-        }, {
+        [ 'node_use_quic!="true"', {
           'sources!': [ '<@(node_cctest_quic_sources)' ],
         }],
-        [ 'v8_use_perfetto==1', {
+        [ 'v8_use_perfetto==1 and node_shared_perfetto=="false"', {
           'dependencies': [
             'deps/perfetto/perfetto.gyp:perfetto_sdk',
           ],
@@ -1647,7 +1597,7 @@
           'libraries': [ '-framework CoreFoundation -framework Security' ],
         }],
         [ 'node_shared_simdutf=="false" and node_use_bundled_v8!="false"', {
-          'dependencies': [ 'tools/v8_gypfiles/v8.gyp:simdutf#host' ],
+          'dependencies': [ 'tools/v8_gypfiles/simdutf.gyp:simdutf#host' ],
         }],
         [ 'node_shared_libuv=="false"', {
           'dependencies': [ 'deps/uv/uv.gyp:libuv#host' ],
@@ -1731,7 +1681,7 @@
             'NODE_USE_NODE_CODE_CACHE=1',
           ],
         }],
-        [ 'v8_use_perfetto==1', {
+        [ 'v8_use_perfetto==1 and node_shared_perfetto=="false"', {
           'dependencies': [
             'deps/perfetto/perfetto.gyp:perfetto_sdk',
           ],
