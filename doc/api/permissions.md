@@ -94,6 +94,11 @@ This flag grants broad authority to configured OpenSSL STORE loaders, which may
 access files, devices, tokens, or the network. Access performed by a loader is
 not constrained by the `fs.read`, `fs.write`, or `net` permission scopes.
 
+Mounting a [virtual file system][] with [`vfs.mount()`][] throws
+`ERR_INVALID_STATE` unless the [`--allow-fs-vfs`][] flag is passed. A mounted
+VFS serves paths that the file system permissions do not describe, so it is not
+gated by [`--allow-fs-read`][] or [`--allow-fs-write`][].
+
 #### Runtime API
 
 When enabling the Permission Model through the [`--permission`][]
@@ -158,10 +163,11 @@ mode. Execution continues normally.
 
 Audit mode is useful for discovering what permissions your application
 requires before deploying with [`--permission`][]. It can also be combined
-with the [`--allow-fs-read`][], [`--allow-fs-write`][], [`--allow-net`][],
-[`--allow-env`][], [`--allow-child-process`][], [`--allow-worker`][],
-[`--allow-addons`][], [`--allow-wasi`][], and [`--allow-ffi`][] flags to audit
-a subset of permissions while granting others.
+with the [`--allow-fs-read`][], [`--allow-fs-write`][], [`--allow-fs-vfs`][],
+[`--allow-net`][], [`--allow-env`][], [`--allow-child-process`][],
+[`--allow-worker`][], [`--allow-addons`][], [`--allow-wasi`][],
+[`--allow-ffi`][], [`--allow-inspector`][], and [`--allow-openssl-store`][]
+flags to audit a subset of permissions while granting others.
 
 When a permission check fails in audit mode, a message is published to the
 diagnostics channel corresponding to the denied scope. The channel names are:
@@ -174,6 +180,7 @@ diagnostics channel corresponding to the denied scope. The channel names are:
 * `node:permission-model:wasi` — WASI
 * `node:permission-model:addon` — Native Addons
 * `node:permission-model:ffi` — FFI
+* `node:permission-model:openssl-store` — OpenSSL STORE loaders
 * `node:permission-model:env` — Environment variables
 
 Each message is an object with the following properties:
@@ -181,6 +188,8 @@ Each message is an object with the following properties:
 * `permission` {string} The name of the denied permission scope.
 * `resource` {string} The resource that access was denied to (e.g. a file path
   or host).
+* `drop` {boolean|undefined} `true` when the message was published by
+  [`permission.drop()`][] rather than by a failed permission check.
 
 ```js
 const diagnostics_channel = require('node:diagnostics_channel');
@@ -267,7 +276,7 @@ When the permission model is enabled these operations are disabled and throw
 `ERR_ACCESS_DENIED`, regardless of how the descriptor was obtained. This applies
 both to the top-level `node:fs` functions and to the equivalent
 `FileHandle` methods, and currently includes `fsync`/`fdatasync`,
-`fchmod`, and `fchown` (and their synchronous variants).
+`fchmod`, `fchown`, and `futimes` (and their synchronous variants).
 
 #### Environment variable permissions
 
@@ -345,6 +354,10 @@ initialization, and then remove it:
 const databaseUrl = process.env.DATABASE_URL;
 process.permission.drop('env', 'DATABASE_URL');
 ```
+
+Wildcards cannot be dropped: `process.permission.drop('env', 'APP_*')` and
+`process.permission.drop('env', '*')` throw `ERR_INVALID_ARG_VALUE`. To remove
+every variable, drop the whole `env` scope.
 
 When a process that enforces the Permission Model spawns a child process, the
 child is started with `--allow-env=*`: the environment it inherits only contains
@@ -476,6 +489,7 @@ There are constraints you need to know before using this system:
   * WASI
   * FFI
   * OpenSSL STORE loaders
+  * Virtual file system mounting
 * The Permission Model is initialized after the Node.js environment is set up.
   However, certain flags such as `--env-file` or `--openssl-config` are designed
   to read files before environment initialization. As a result, such flags are
@@ -489,8 +503,6 @@ There are constraints you need to know before using this system:
   expanded path is not covered by `--allow-fs-write`. Because the location is
   chosen by the operator, gaps like this are treated as regular bugs rather
   than vulnerabilities. Please report them through the regular issue tracker.
-* OpenSSL engines cannot be requested at runtime when the Permission
-  Model is enabled, affecting the built-in crypto, https, and tls modules.
 * Run-Time Loadable Extensions cannot be loaded when the Permission Model is
   enabled, affecting the sqlite module.
 * Using existing file descriptors via the `node:fs` module bypasses the
@@ -534,7 +546,9 @@ Developers relying on --permission to sandbox untrusted code should be aware tha
 [`--allow-env`]: cli.md#--allow-env
 [`--allow-ffi`]: cli.md#--allow-ffi
 [`--allow-fs-read`]: cli.md#--allow-fs-read
+[`--allow-fs-vfs`]: cli.md#--allow-fs-vfs
 [`--allow-fs-write`]: cli.md#--allow-fs-write
+[`--allow-inspector`]: cli.md#--allow-inspector
 [`--allow-net`]: cli.md#--allow-net
 [`--allow-openssl-store`]: cli.md#--allow-openssl-store
 [`--allow-wasi`]: cli.md#--allow-wasi
@@ -550,3 +564,5 @@ Developers relying on --permission to sandbox untrusted code should be aware tha
 [`permission.drop()`]: process.md#processpermissiondropscope-reference
 [`permission.has()`]: process.md#processpermissionhasscope-reference
 [`process.loadEnvFile()`]: process.md#processloadenvfilepath
+[`vfs.mount()`]: vfs.md#vfsmount
+[virtual file system]: vfs.md

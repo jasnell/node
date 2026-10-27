@@ -2064,6 +2064,9 @@ Since it's not possible to build Node.js without libuv, this value is always `tr
 added: v22.5.0
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66482
+    description: Returns a function that removes the registration.
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/66436
     description: Marked as release candidate.
 -->
@@ -2075,6 +2078,7 @@ changes:
   is finalized.
   * `ref` {Object | Function} The reference to the resource that is being tracked.
   * `event` {string} The event that triggered the finalization. Defaults to 'exit'.
+* Returns: {Function} A function that removes this registration when called.
 
 This function registers a callback to be called when the process emits the `exit`
 event if the `ref` object was not garbage collected. If the object `ref` was garbage collected
@@ -2171,12 +2175,26 @@ but if it is not, `dispose` will be called when `process.exit` is called.
 Be careful and avoid relying on this feature for the disposal of critical resources,
 as it is not guaranteed that the callback will be called under all circumstances.
 
+The returned function removes only this registration, leaving other
+registrations for the same `ref` in place. Calling it more than once has no
+effect. It does not hold a strong reference to `ref`.
+
+```js
+const unregister = finalization.register(myDisposableObject, onFinalize);
+
+// Later, once the resource has been released manually:
+unregister();
+```
+
 ## `process.finalization.registerBeforeExit(ref, callback)`
 
 <!-- YAML
 added: v22.5.0
 changes:
   - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66482
+    description: Returns a function that removes the registration.
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/66436
     description: Marked as release candidate.
 -->
@@ -2189,6 +2207,7 @@ changes:
   is finalized.
   * `ref` {Object | Function} The reference to the resource that is being tracked.
   * `event` {string} The event that triggered the finalization. Defaults to 'beforeExit'.
+* Returns: {Function} A function that removes this registration when called.
 
 This function behaves exactly like the `register`, except that the callback will be called
 when the process emits the `beforeExit` event if `ref` object was not garbage collected.
@@ -2201,7 +2220,7 @@ this means that there is a possibility that the callback will not be called unde
 <!-- YAML
 added: v22.5.0
 changes:
-  - version: REPLACEME
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/66436
     description: Marked as release candidate.
 -->
@@ -3153,7 +3172,7 @@ for the current process. Additional documentation is available in the
 <!-- YAML
 added: v20.0.0
 changes:
-  - version: REPLACEME
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/65492
     description: The `reference` argument can be a `URL` or a `Uint8Array`.
 -->
@@ -3206,7 +3225,7 @@ added:
  - v26.3.0
  - v24.20.0
 changes:
-  - version: REPLACEME
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/65492
     description: The `reference` argument can be a `URL` or a `Uint8Array`.
 -->
@@ -3250,7 +3269,7 @@ The available scopes are the same as [`process.permission.has()`][]:
 * `fs.write` - File System write operations
 * `child` - Child process spawning operations
 * `env` - Environment variables. Dropping a variable removes it from the
-  environment
+  environment. A reference ending with `*` is not accepted
 * `openssl.store` - Loading keys through OpenSSL STORE loaders
 * `worker` - Worker thread spawning operation
 * `net` - Network operations

@@ -27,6 +27,12 @@ X509_STORE* NewRootCertStore(Environment* env);
 
 X509_STORE* GetOrCreateRootCertStore(Environment* env);
 
+// Installs the certificate verification callback that applies the SPKI
+// blocklist (and, on OpenSSL 4.1+, the CN name-constraint handling) to every
+// chain verified through `ctx`. Must be called for every SSL_CTX Node.js
+// creates, since SSL_CTX_set_cert_verify_callback replaces any earlier hook.
+void InstallCertVerifyCallback(SSL_CTX* ctx);
+
 ncrypto::BIOPointer LoadBIO(Environment* env, v8::Local<v8::Value> v);
 
 class SecureContext final : public BaseObject {
@@ -106,15 +112,12 @@ class SecureContext final : public BaseObject {
   static const int kTicketKeyIVIndex = 4;
 
  protected:
-  // OpenSSL structures are opaque. This is sizeof(SSL_CTX) for OpenSSL 1.1.1b:
+  // OpenSSL structures are opaque. Estimate SSL_CTX memory usage:
   static const int64_t kExternalSize = 1024;
 
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Init(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void SetKey(const v8::FunctionCallbackInfo<v8::Value>& args);
-#ifndef OPENSSL_NO_ENGINE
-  static void SetEngineKey(const v8::FunctionCallbackInfo<v8::Value>& args);
-#endif  // !OPENSSL_NO_ENGINE
   static void SetCert(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void AddCACert(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void SetAllowPartialTrustChain(
@@ -141,10 +144,6 @@ class SecureContext final : public BaseObject {
   static void GetMaxProto(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Close(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void LoadPKCS12(const v8::FunctionCallbackInfo<v8::Value>& args);
-#ifndef OPENSSL_NO_ENGINE
-  static void SetClientCertEngine(
-      const v8::FunctionCallbackInfo<v8::Value>& args);
-#endif  // !OPENSSL_NO_ENGINE
   static void GetTicketKeys(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void SetTicketKeys(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void EnableTicketKeyCallback(
@@ -154,13 +153,22 @@ class SecureContext final : public BaseObject {
   template <bool primary>
   static void GetCertificate(const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Test-only hooks for the SPKI blocklist that every SSL_CTX applies
+  // during certificate verification. Reachable through
+  // internalBinding('crypto') with --expose-internals. The argument is the
+  // SHA-256 of a DER-encoded SubjectPublicKeyInfo.
+  static void AddBlockedSPKIForTesting(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+  static void ClearBlockedSPKIsForTesting(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
   static int TicketKeyCallback(SSL* ssl,
                                unsigned char* name,
                                unsigned char* iv,
                                EVP_CIPHER_CTX* ectx,
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
                                EVP_MAC_CTX* hctx,
-#else
+#elif NCRYPTO_USE_BORINGSSL
                                HMAC_CTX* hctx,
 #endif
                                int enc);
@@ -169,9 +177,9 @@ class SecureContext final : public BaseObject {
                                          unsigned char* name,
                                          unsigned char* iv,
                                          EVP_CIPHER_CTX* ectx,
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
                                          EVP_MAC_CTX* hctx,
-#else
+#elif NCRYPTO_USE_BORINGSSL
                                          HMAC_CTX* hctx,
 #endif
                                          int enc);
@@ -185,10 +193,6 @@ class SecureContext final : public BaseObject {
   ncrypto::X509Pointer issuer_;
   // Non-owning cache for SSL_CTX_get_cert_store(ctx_.get())
   X509_STORE* own_cert_store_cache_ = nullptr;
-#ifndef OPENSSL_NO_ENGINE
-  bool client_cert_engine_provided_ = false;
-  ncrypto::EnginePointer private_key_engine_;
-#endif  // !OPENSSL_NO_ENGINE
 
   unsigned char ticket_key_name_[16];
   unsigned char ticket_key_aes_[16];

@@ -22,6 +22,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <string_view>
 
 namespace node {
 namespace sqlite {
@@ -679,6 +680,11 @@ class BackupJob : public ThreadPoolWork {
       return;
     }
 
+    if (backup_status_ == SQLITE_BUSY || backup_status_ == SQLITE_LOCKED) {
+      this->ScheduleWork();
+      return;
+    }
+
     int total_pages = sqlite3_backup_pagecount(backup_.get());
     int remaining_pages = sqlite3_backup_remaining(backup_.get());
     if (remaining_pages != 0) {
@@ -1119,7 +1125,7 @@ bool VirtualTableModule::CanCallIntoJS() const {
 bool VirtualTableModule::CloseIterator(NodeVTabCursor* cursor) {
   VirtualTableModule* mod = cursor->module;
 
-  // Skipped in two cases:
+  // Skipped in three cases:
   //
   // - While the database is being torn down from a destructor, because those
   //   run from a garbage collection callback where JavaScript cannot be
@@ -1130,7 +1136,11 @@ bool VirtualTableModule::CloseIterator(NodeVTabCursor* cursor) {
   //   A generator whose own body threw has already run its `finally` as part of
   //   that throw, so this only affects an iterator abandoned while suspended
   //   because something else failed.
-  if (cursor->iterator.IsEmpty() || !mod->CanCallIntoJS() ||
+  // - When next() has already reported `done: true`, because the iteration ran
+  //   to completion. `return()` is only called on abrupt termination in
+  //   `for...of`; a finished iterator must not be asked to clean up again, and
+  //   a custom iterable may throw from `return()` even after completion.
+  if (cursor->iterator.IsEmpty() || cursor->done || !mod->CanCallIntoJS() ||
       mod->env_->isolate()->HasPendingException()) {
     return false;
   }
@@ -1444,7 +1454,10 @@ int VirtualTableModule::xNext(sqlite3_vtab_cursor* pCursor) {
            .ToLocal(&next_method_val)) {
     return mod->PropagateJSError();
   }
+  // On a protocol error, drop the iterator so it is not closed later.
+  // `for...of` does not call return() when next() is invalid either.
   if (!next_method_val->IsFunction()) {
+    cursor->iterator.Reset();
     return ReportProtocolError(
         pCursor->pVtab,
         "The \"options.rows\" iterator must have a next() method");
@@ -1457,6 +1470,7 @@ int VirtualTableModule::xNext(sqlite3_vtab_cursor* pCursor) {
     return mod->PropagateJSError();
   }
   if (!next_val->IsObject()) {
+    cursor->iterator.Reset();
     return ReportProtocolError(
         pCursor->pVtab,
         "The \"options.rows\" iterator's next() method must return an object");
@@ -1817,6 +1831,32 @@ void Database::CreateTagStore(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(session->object());
 }
 
+// Reads an optional boolean property, leaving |out| unchanged when it is
+// undefined. Returns false if a JavaScript exception is pending, either from
+// the property getter or because the value is not a boolean.
+template <typename T>
+static bool ReadOptionalBool(Environment* env,
+                             Local<Object> options,
+                             const char* key,
+                             T* out) {
+  Local<String> key_string =
+      OneByteString(env->isolate(), key, -1, NewStringType::kInternalized);
+  Local<Value> value;
+  if (!options->Get(env->context(), key_string).ToLocal(&value)) {
+    return false;
+  }
+  if (value->IsUndefined()) {
+    return true;
+  }
+  if (!value->IsBoolean()) {
+    THROW_ERR_INVALID_ARG_TYPE(
+        env->isolate(), "The \"options.%s\" argument must be a boolean.", key);
+    return false;
+  }
+  *out = value->IsTrue();
+  return true;
+}
+
 std::optional<std::string> ValidateDatabasePath(Environment* env,
                                                 Local<Value> path,
                                                 const std::string& field_name) {
@@ -1892,90 +1932,23 @@ void Database::New(const FunctionCallbackInfo<Value>& args) {
     }
 
     Local<Object> options = args[1].As<Object>();
-    Local<String> open_string = FIXED_ONE_BYTE_STRING(env->isolate(), "open");
-    Local<Value> open_v;
-    if (!options->Get(env->context(), open_string).ToLocal(&open_v)) {
+    bool read_only = open_config.get_read_only();
+    bool enable_foreign_keys = open_config.get_enable_foreign_keys();
+    bool enable_dqs = open_config.get_enable_dqs();
+    if (!ReadOptionalBool(env, options, "open", &open)) return;
+    if (!ReadOptionalBool(env, options, "readOnly", &read_only)) return;
+    if (!ReadOptionalBool(
+            env, options, "enableForeignKeyConstraints", &enable_foreign_keys))
       return;
-    }
-    if (!open_v->IsUndefined()) {
-      if (!open_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(), "The \"options.open\" argument must be a boolean.");
-        return;
-      }
-      open = open_v.As<Boolean>()->Value();
-    }
-
-    Local<String> read_only_string =
-        FIXED_ONE_BYTE_STRING(env->isolate(), "readOnly");
-    Local<Value> read_only_v;
-    if (!options->Get(env->context(), read_only_string).ToLocal(&read_only_v)) {
+    if (!ReadOptionalBool(
+            env, options, "enableDoubleQuotedStringLiterals", &enable_dqs))
       return;
-    }
-    if (!read_only_v->IsUndefined()) {
-      if (!read_only_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.readOnly\" argument must be a boolean.");
-        return;
-      }
-      open_config.set_read_only(read_only_v.As<Boolean>()->Value());
-    }
-
-    Local<String> enable_foreign_keys_string =
-        FIXED_ONE_BYTE_STRING(env->isolate(), "enableForeignKeyConstraints");
-    Local<Value> enable_foreign_keys_v;
-    if (!options->Get(env->context(), enable_foreign_keys_string)
-             .ToLocal(&enable_foreign_keys_v)) {
+    if (!ReadOptionalBool(
+            env, options, "allowExtension", &allow_load_extension))
       return;
-    }
-    if (!enable_foreign_keys_v->IsUndefined()) {
-      if (!enable_foreign_keys_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.enableForeignKeyConstraints\" argument must be a "
-            "boolean.");
-        return;
-      }
-      open_config.set_enable_foreign_keys(
-          enable_foreign_keys_v.As<Boolean>()->Value());
-    }
-
-    Local<String> enable_dqs_string = FIXED_ONE_BYTE_STRING(
-        env->isolate(), "enableDoubleQuotedStringLiterals");
-    Local<Value> enable_dqs_v;
-    if (!options->Get(env->context(), enable_dqs_string)
-             .ToLocal(&enable_dqs_v)) {
-      return;
-    }
-    if (!enable_dqs_v->IsUndefined()) {
-      if (!enable_dqs_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.enableDoubleQuotedStringLiterals\" argument must be "
-            "a boolean.");
-        return;
-      }
-      open_config.set_enable_dqs(enable_dqs_v.As<Boolean>()->Value());
-    }
-
-    Local<String> allow_extension_string =
-        FIXED_ONE_BYTE_STRING(env->isolate(), "allowExtension");
-    Local<Value> allow_extension_v;
-    if (!options->Get(env->context(), allow_extension_string)
-             .ToLocal(&allow_extension_v)) {
-      return;
-    }
-
-    if (!allow_extension_v->IsUndefined()) {
-      if (!allow_extension_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.allowExtension\" argument must be a boolean.");
-        return;
-      }
-      allow_load_extension = allow_extension_v.As<Boolean>()->Value();
-    }
+    open_config.set_read_only(read_only);
+    open_config.set_enable_foreign_keys(enable_foreign_keys);
+    open_config.set_enable_dqs(enable_dqs);
 
     Local<Value> timeout_v;
     if (!options->Get(env->context(), env->timeout_string())
@@ -1994,80 +1967,28 @@ void Database::New(const FunctionCallbackInfo<Value>& args) {
       open_config.set_timeout(timeout_v.As<Int32>()->Value());
     }
 
-    Local<Value> read_bigints_v;
-    if (options->Get(env->context(), env->read_bigints_string())
-            .ToLocal(&read_bigints_v)) {
-      if (!read_bigints_v->IsUndefined()) {
-        if (!read_bigints_v->IsBoolean()) {
-          THROW_ERR_INVALID_ARG_TYPE(
-              env->isolate(),
-              R"(The "options.readBigInts" argument must be a boolean.)");
-          return;
-        }
-        open_config.set_use_big_ints(read_bigints_v.As<Boolean>()->Value());
-      }
-    }
-
-    Local<Value> return_arrays_v;
-    if (options->Get(env->context(), env->return_arrays_string())
-            .ToLocal(&return_arrays_v)) {
-      if (!return_arrays_v->IsUndefined()) {
-        if (!return_arrays_v->IsBoolean()) {
-          THROW_ERR_INVALID_ARG_TYPE(
-              env->isolate(),
-              R"(The "options.returnArrays" argument must be a boolean.)");
-          return;
-        }
-        open_config.set_return_arrays(return_arrays_v.As<Boolean>()->Value());
-      }
-    }
-
-    Local<Value> allow_bare_named_params_v;
-    if (options->Get(env->context(), env->allow_bare_named_params_string())
-            .ToLocal(&allow_bare_named_params_v)) {
-      if (!allow_bare_named_params_v->IsUndefined()) {
-        if (!allow_bare_named_params_v->IsBoolean()) {
-          THROW_ERR_INVALID_ARG_TYPE(
-              env->isolate(),
-              R"(The "options.allowBareNamedParameters" )"
-              "argument must be a boolean.");
-          return;
-        }
-        open_config.set_allow_bare_named_params(
-            allow_bare_named_params_v.As<Boolean>()->Value());
-      }
-    }
-
-    Local<Value> allow_unknown_named_params_v;
-    if (options->Get(env->context(), env->allow_unknown_named_params_string())
-            .ToLocal(&allow_unknown_named_params_v)) {
-      if (!allow_unknown_named_params_v->IsUndefined()) {
-        if (!allow_unknown_named_params_v->IsBoolean()) {
-          THROW_ERR_INVALID_ARG_TYPE(
-              env->isolate(),
-              R"(The "options.allowUnknownNamedParameters" )"
-              "argument must be a boolean.");
-          return;
-        }
-        open_config.set_allow_unknown_named_params(
-            allow_unknown_named_params_v.As<Boolean>()->Value());
-      }
-    }
-
-    Local<Value> defensive_v;
-    if (!options->Get(env->context(), env->defensive_string())
-             .ToLocal(&defensive_v)) {
+    bool use_big_ints = open_config.get_use_big_ints();
+    bool return_arrays = open_config.get_return_arrays();
+    bool allow_bare_named_params = open_config.get_allow_bare_named_params();
+    bool allow_unknown_named_params =
+        open_config.get_allow_unknown_named_params();
+    bool defensive = open_config.get_enable_defensive();
+    if (!ReadOptionalBool(env, options, "readBigInts", &use_big_ints)) return;
+    if (!ReadOptionalBool(env, options, "returnArrays", &return_arrays)) return;
+    if (!ReadOptionalBool(
+            env, options, "allowBareNamedParameters", &allow_bare_named_params))
       return;
-    }
-    if (!defensive_v->IsUndefined()) {
-      if (!defensive_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.defensive\" argument must be a boolean.");
-        return;
-      }
-      open_config.set_enable_defensive(defensive_v.As<Boolean>()->Value());
-    }
+    if (!ReadOptionalBool(env,
+                          options,
+                          "allowUnknownNamedParameters",
+                          &allow_unknown_named_params))
+      return;
+    if (!ReadOptionalBool(env, options, "defensive", &defensive)) return;
+    open_config.set_use_big_ints(use_big_ints);
+    open_config.set_return_arrays(return_arrays);
+    open_config.set_allow_bare_named_params(allow_bare_named_params);
+    open_config.set_allow_unknown_named_params(allow_unknown_named_params);
+    open_config.set_enable_defensive(defensive);
 
     // Parse limits option
     Local<Value> limits_v;
@@ -2217,85 +2138,17 @@ void Database::Prepare(const FunctionCallbackInfo<Value>& args) {
       return;
     }
     Local<Object> options = args[1].As<Object>();
-
-    Local<Value> return_arrays_v;
-    if (!options->Get(env->context(), env->return_arrays_string())
-             .ToLocal(&return_arrays_v)) {
+    if (!ReadOptionalBool(env, options, "returnArrays", &return_arrays)) return;
+    if (!ReadOptionalBool(env, options, "readBigInts", &use_big_ints)) return;
+    if (!ReadOptionalBool(
+            env, options, "allowBareNamedParameters", &allow_bare_named_params))
       return;
-    }
-    if (!return_arrays_v->IsUndefined()) {
-      if (!return_arrays_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.returnArrays\" argument must be a boolean.");
-        return;
-      }
-      return_arrays = return_arrays_v->IsTrue();
-    }
-
-    Local<Value> read_big_ints_v;
-    if (!options->Get(env->context(), env->read_bigints_string())
-             .ToLocal(&read_big_ints_v)) {
+    if (!ReadOptionalBool(env,
+                          options,
+                          "allowUnknownNamedParameters",
+                          &allow_unknown_named_params))
       return;
-    }
-    if (!read_big_ints_v->IsUndefined()) {
-      if (!read_big_ints_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.readBigInts\" argument must be a boolean.");
-        return;
-      }
-      use_big_ints = read_big_ints_v->IsTrue();
-    }
-
-    Local<Value> allow_bare_named_params_v;
-    if (!options->Get(env->context(), env->allow_bare_named_params_string())
-             .ToLocal(&allow_bare_named_params_v)) {
-      return;
-    }
-    if (!allow_bare_named_params_v->IsUndefined()) {
-      if (!allow_bare_named_params_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.allowBareNamedParameters\" argument must be a "
-            "boolean.");
-        return;
-      }
-      allow_bare_named_params = allow_bare_named_params_v->IsTrue();
-    }
-
-    Local<Value> allow_unknown_named_params_v;
-    if (!options->Get(env->context(), env->allow_unknown_named_params_string())
-             .ToLocal(&allow_unknown_named_params_v)) {
-      return;
-    }
-    if (!allow_unknown_named_params_v->IsUndefined()) {
-      if (!allow_unknown_named_params_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.allowUnknownNamedParameters\" argument must be a "
-            "boolean.");
-        return;
-      }
-      allow_unknown_named_params = allow_unknown_named_params_v->IsTrue();
-    }
-
-    Local<Value> persistent_v;
-    if (!options
-             ->Get(env->context(),
-                   FIXED_ONE_BYTE_STRING(env->isolate(), "persistent"))
-             .ToLocal(&persistent_v)) {
-      return;
-    }
-    if (!persistent_v->IsUndefined()) {
-      if (!persistent_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.persistent\" argument must be a boolean.");
-        return;
-      }
-      persistent = persistent_v->IsTrue();
-    }
+    if (!ReadOptionalBool(env, options, "persistent", &persistent)) return;
   }
 
   // Reading the options bag above can run user JavaScript through a property
@@ -2399,77 +2252,12 @@ void Database::CustomFunction(const FunctionCallbackInfo<Value>& args) {
     }
 
     Local<Object> options = args[1].As<Object>();
-    Local<Value> use_bigint_args_v;
-    if (!options
-             ->Get(env->context(),
-                   FIXED_ONE_BYTE_STRING(env->isolate(), "useBigIntArguments"))
-             .ToLocal(&use_bigint_args_v)) {
+    if (!ReadOptionalBool(env, options, "useBigIntArguments", &use_bigint_args))
       return;
-    }
-
-    if (!use_bigint_args_v->IsUndefined()) {
-      if (!use_bigint_args_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.useBigIntArguments\" argument must be a boolean.");
-        return;
-      }
-      use_bigint_args = use_bigint_args_v.As<Boolean>()->Value();
-    }
-
-    Local<Value> varargs_v;
-    if (!options
-             ->Get(env->context(),
-                   FIXED_ONE_BYTE_STRING(env->isolate(), "varargs"))
-             .ToLocal(&varargs_v)) {
+    if (!ReadOptionalBool(env, options, "varargs", &varargs)) return;
+    if (!ReadOptionalBool(env, options, "deterministic", &deterministic))
       return;
-    }
-
-    if (!varargs_v->IsUndefined()) {
-      if (!varargs_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.varargs\" argument must be a boolean.");
-        return;
-      }
-      varargs = varargs_v.As<Boolean>()->Value();
-    }
-
-    Local<Value> deterministic_v;
-    if (!options
-             ->Get(env->context(),
-                   FIXED_ONE_BYTE_STRING(env->isolate(), "deterministic"))
-             .ToLocal(&deterministic_v)) {
-      return;
-    }
-
-    if (!deterministic_v->IsUndefined()) {
-      if (!deterministic_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.deterministic\" argument must be a boolean.");
-        return;
-      }
-      deterministic = deterministic_v.As<Boolean>()->Value();
-    }
-
-    Local<Value> direct_only_v;
-    if (!options
-             ->Get(env->context(),
-                   FIXED_ONE_BYTE_STRING(env->isolate(), "directOnly"))
-             .ToLocal(&direct_only_v)) {
-      return;
-    }
-
-    if (!direct_only_v->IsUndefined()) {
-      if (!direct_only_v->IsBoolean()) {
-        THROW_ERR_INVALID_ARG_TYPE(
-            env->isolate(),
-            "The \"options.directOnly\" argument must be a boolean.");
-        return;
-      }
-      direct_only = direct_only_v.As<Boolean>()->Value();
-    }
+    if (!ReadOptionalBool(env, options, "directOnly", &direct_only)) return;
   }
 
   if (!args[fn_index]->IsFunction()) {
@@ -2749,60 +2537,11 @@ void Database::AggregateFunction(const FunctionCallbackInfo<Value>& args) {
   bool use_bigint_args = false;
   bool varargs = false;
   bool direct_only = false;
-  Local<Value> use_bigint_args_v;
   Local<Function> inverseFunc = Local<Function>();
-  if (!options
-           ->Get(env->context(),
-                 FIXED_ONE_BYTE_STRING(env->isolate(), "useBigIntArguments"))
-           .ToLocal(&use_bigint_args_v)) {
+  if (!ReadOptionalBool(env, options, "useBigIntArguments", &use_bigint_args))
     return;
-  }
-
-  if (!use_bigint_args_v->IsUndefined()) {
-    if (!use_bigint_args_v->IsBoolean()) {
-      THROW_ERR_INVALID_ARG_TYPE(
-          env->isolate(),
-          "The \"options.useBigIntArguments\" argument must be a boolean.");
-      return;
-    }
-    use_bigint_args = use_bigint_args_v.As<Boolean>()->Value();
-  }
-
-  Local<Value> varargs_v;
-  if (!options
-           ->Get(env->context(),
-                 FIXED_ONE_BYTE_STRING(env->isolate(), "varargs"))
-           .ToLocal(&varargs_v)) {
-    return;
-  }
-
-  if (!varargs_v->IsUndefined()) {
-    if (!varargs_v->IsBoolean()) {
-      THROW_ERR_INVALID_ARG_TYPE(
-          env->isolate(),
-          "The \"options.varargs\" argument must be a boolean.");
-      return;
-    }
-    varargs = varargs_v.As<Boolean>()->Value();
-  }
-
-  Local<Value> direct_only_v;
-  if (!options
-           ->Get(env->context(),
-                 FIXED_ONE_BYTE_STRING(env->isolate(), "directOnly"))
-           .ToLocal(&direct_only_v)) {
-    return;
-  }
-
-  if (!direct_only_v->IsUndefined()) {
-    if (!direct_only_v->IsBoolean()) {
-      THROW_ERR_INVALID_ARG_TYPE(
-          env->isolate(),
-          "The \"options.directOnly\" argument must be a boolean.");
-      return;
-    }
-    direct_only = direct_only_v.As<Boolean>()->Value();
-  }
+  if (!ReadOptionalBool(env, options, "varargs", &varargs)) return;
+  if (!ReadOptionalBool(env, options, "directOnly", &direct_only)) return;
 
   Local<Value> inverse_v;
   if (!options->Get(env->context(), env->inverse_string())
@@ -2953,42 +2692,10 @@ void Database::CreateModule(const FunctionCallbackInfo<Value>& args) {
 
   // Extract optional boolean options.
   bool direct_only = false;
-  Local<Value> direct_only_v;
-  if (!options
-           ->Get(env->context(),
-                 FIXED_ONE_BYTE_STRING(env->isolate(), "directOnly"))
-           .ToLocal(&direct_only_v)) {
-    return;
-  }
-
-  if (!direct_only_v->IsUndefined()) {
-    if (!direct_only_v->IsBoolean()) {
-      THROW_ERR_INVALID_ARG_TYPE(
-          env->isolate(),
-          "The \"options.directOnly\" argument must be a boolean.");
-      return;
-    }
-    direct_only = direct_only_v.As<Boolean>()->Value();
-  }
-
   bool use_bigint_args = false;
-  Local<Value> use_bigint_args_v;
-  if (!options
-           ->Get(env->context(),
-                 FIXED_ONE_BYTE_STRING(env->isolate(), "useBigIntArguments"))
-           .ToLocal(&use_bigint_args_v)) {
+  if (!ReadOptionalBool(env, options, "directOnly", &direct_only)) return;
+  if (!ReadOptionalBool(env, options, "useBigIntArguments", &use_bigint_args))
     return;
-  }
-
-  if (!use_bigint_args_v->IsUndefined()) {
-    if (!use_bigint_args_v->IsBoolean()) {
-      THROW_ERR_INVALID_ARG_TYPE(
-          env->isolate(),
-          "The \"options.useBigIntArguments\" argument must be a boolean.");
-      return;
-    }
-    use_bigint_args = use_bigint_args_v.As<Boolean>()->Value();
-  }
 
   // Build CREATE TABLE schema SQL from columns.
   std::string schema_sql = "CREATE TABLE x(";
@@ -3207,9 +2914,11 @@ void Database::CreateSession(const FunctionCallbackInfo<Value>& args) {
 
 void Backup(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-  if (args.Length() < 1 || !args[0]->IsObject()) {
-    THROW_ERR_INVALID_ARG_TYPE(env->isolate(),
-                               "The \"sourceDb\" argument must be an object.");
+  if (!args[0]->IsObject() ||
+      !env->sqlite_database_constructor_template()->HasInstance(args[0])) {
+    THROW_ERR_INVALID_ARG_TYPE(
+        env->isolate(),
+        "The \"sourceDb\" argument must be an instance of Database.");
     return;
   }
 
@@ -3722,8 +3431,11 @@ int Database::TraceCallback(unsigned int type,
   Environment* env = db->env();
 
   diagnostics_channel::Channel* ch = db->trace_channel_.get();
-  if (ch == nullptr || !ch->HasSubscribers() ||
-      db->AreTraceEventsSuppressed()) {
+  // Checked before the channel, so that a suppressed callback does not
+  // dereference it at all. Statement finalization suppresses trace events, and
+  // that is the path SQLite takes during environment teardown.
+  if (db->AreTraceEventsSuppressed() || ch == nullptr ||
+      !ch->HasSubscribers()) {
     return 0;
   }
 
@@ -3812,6 +3524,7 @@ void Statement::Finalize() {
 
 void Statement::InvalidateColumnNameCache() {
   cached_column_names_.clear();
+  cached_row_template_.Reset();
   cached_column_names_reprepare_count_ = -1;
 }
 
@@ -3850,8 +3563,10 @@ inline int Statement::ResetStatement() {
 }
 
 bool Statement::BindParams(const FunctionCallbackInfo<Value>& args) {
-  int r = sqlite3_clear_bindings(statement_.get());
-  CHECK_ERROR_OR_THROW(env()->isolate(), db_.get(), r, SQLITE_OK, false);
+  int param_count = sqlite3_bind_parameter_count(statement_.get());
+  // Parameter indexing starts at one.
+  MaybeStackBuffer<bool, 32> bound(param_count + 1);
+  std::fill_n(bound.out(), param_count + 1, false);
 
   int anon_idx = 1;
   int anon_start = 0;
@@ -3867,8 +3582,6 @@ bool Statement::BindParams(const FunctionCallbackInfo<Value>& args) {
 
     if (allow_bare_named_params_ && !bare_named_params_.has_value()) {
       bare_named_params_.emplace();
-      int param_count = sqlite3_bind_parameter_count(statement_.get());
-      // Parameter indexing starts at one.
       for (int i = 1; i <= param_count; ++i) {
         const char* name = sqlite3_bind_parameter_name(statement_.get(), i);
         if (name == nullptr) {
@@ -3931,6 +3644,7 @@ bool Statement::BindParams(const FunctionCallbackInfo<Value>& args) {
       if (!BindValue(value, r)) {
         return false;
       }
+      bound[r] = true;
     }
     anon_start++;
   }
@@ -3946,8 +3660,18 @@ bool Statement::BindParams(const FunctionCallbackInfo<Value>& args) {
     if (!BindValue(args[i], anon_idx)) {
       return false;
     }
+    bound[anon_idx] = true;
 
     anon_idx++;
+  }
+
+  // sqlite3_clear_bindings() would expire statements whose query plan depends
+  // on a bound value, so only reset the parameters that were not bound.
+  for (int i = 1; i <= param_count; ++i) {
+    if (!bound[i]) {
+      int r = sqlite3_bind_null(statement_.get(), i);
+      CHECK_ERROR_OR_THROW(env()->isolate(), db_.get(), r, SQLITE_OK, false);
+    }
   }
 
   return true;
@@ -4033,37 +3757,79 @@ MaybeLocal<Name> Statement::ColumnNameToName(const int column) {
       .As<Name>();
 }
 
-// Populates `keys` with cached column names, rebuilding the cache if the
-// statement was re-prepared.
-bool Statement::GetCachedColumnNames(LocalVector<Name>* keys) {
-  Isolate* isolate = env()->isolate();
+// Size of the stack array RowToObject passes to the template.
+static constexpr int kMaxRowTemplateColumns = 64;
 
+// Templates read names as Latin-1 and reject indices and duplicates.
+static bool CanUseInRowTemplate(Local<Context> context,
+                                Local<Name> key,
+                                std::string_view name,
+                                const std::vector<std::string_view>& seen) {
+  return simdutf::validate_ascii(name.data(), name.size()) &&
+         std::find(seen.begin(), seen.end(), name) == seen.end() &&
+         key->ToArrayIndex(context).IsEmpty();
+}
+
+// Fills either cached_row_template_ or cached_column_names_.
+bool Statement::UpdateRowCache() {
   const int reprepare_count =
       sqlite3_stmt_status(statement_.get(), SQLITE_STMTSTATUS_REPREPARE, false);
-  if (reprepare_count != cached_column_names_reprepare_count_) {
-    cached_column_names_.clear();
-    const int num_cols = sqlite3_column_count(statement_.get());
-    if (num_cols == 0) {
-      cached_column_names_reprepare_count_ = reprepare_count;
-      return true;
-    }
-    cached_column_names_.reserve(num_cols);
-    for (int i = 0; i < num_cols; ++i) {
-      Local<Name> key;
-      if (!ColumnNameToName(i).ToLocal(&key)) {
-        InvalidateColumnNameCache();
-        return false;
-      }
-      cached_column_names_.emplace_back(Global<Name>(isolate, key));
-    }
-    cached_column_names_reprepare_count_ = reprepare_count;
+  if (reprepare_count == cached_column_names_reprepare_count_) return true;
+
+  InvalidateColumnNameCache();
+  Isolate* isolate = env()->isolate();
+  Local<Context> context = env()->context();
+  const int num_cols = sqlite3_column_count(statement_.get());
+  LocalVector<Name> keys(isolate);
+  std::vector<std::string_view> names;
+  keys.reserve(num_cols);
+  names.reserve(num_cols);
+  bool use_template = num_cols <= kMaxRowTemplateColumns;
+  for (int i = 0; i < num_cols; ++i) {
+    Local<Name> key;
+    if (!ColumnNameToName(i).ToLocal(&key)) return false;
+    std::string_view name = sqlite3_column_name(statement_.get(), i);
+    use_template =
+        use_template && CanUseInRowTemplate(context, key, name, names);
+    keys.push_back(key);
+    names.push_back(name);
   }
 
-  keys->reserve(cached_column_names_.size());
-  for (const auto& name : cached_column_names_) {
-    keys->emplace_back(name.Get(isolate));
+  if (use_template) {
+    cached_row_template_.Reset(
+        isolate,
+        DictionaryTemplate::New(isolate, {names.data(), names.size()}));
+  } else {
+    cached_column_names_.reserve(num_cols);
+    for (Local<Name> key : keys) {
+      cached_column_names_.emplace_back(isolate, key);
+    }
   }
+  cached_column_names_reprepare_count_ = reprepare_count;
   return true;
+}
+
+MaybeLocal<Object> Statement::RowToObject(LocalVector<Value>* values) {
+  DCHECK_EQ(
+      sqlite3_stmt_status(statement_.get(), SQLITE_STMTSTATUS_REPREPARE, false),
+      cached_column_names_reprepare_count_);
+  Isolate* isolate = env()->isolate();
+  if (cached_row_template_.IsEmpty()) {
+    LocalVector<Name> keys(isolate);
+    keys.reserve(cached_column_names_.size());
+    for (const auto& name : cached_column_names_) {
+      keys.emplace_back(name.Get(isolate));
+    }
+    DCHECK_EQ(keys.size(), values->size());
+    return Object::New(
+        isolate, Null(isolate), keys.data(), values->data(), keys.size());
+  }
+  DCHECK_LE(values->size(), kMaxRowTemplateColumns);
+  MaybeLocal<Value> template_values[kMaxRowTemplateColumns];
+  std::copy(values->begin(), values->end(), template_values);
+  return NewDictionaryInstanceNullProto(env()->context(),
+                                        cached_row_template_.Get(isolate),
+                                        {template_values, values->size()});
 }
 
 MaybeLocal<Value> StatementExecutionHelper::ColumnToValue(Environment* env,
@@ -4108,12 +3874,14 @@ MaybeLocal<Value> StatementExecutionHelper::All(Environment* env,
   int num_cols = 0;
   LocalVector<Value> rows(isolate);
   LocalVector<Value> row_values(isolate);
-  LocalVector<Name> row_keys(isolate);
 
   SteppingStatementGuard stepping(db, stmt);
   while ((r = sqlite3_step(stmt)) == SQLITE_ROW) {
     if (num_cols == 0) {
       num_cols = sqlite3_column_count(stmt);
+      if (!return_arrays && !statement->UpdateRowCache()) {
+        return MaybeLocal<Value>();
+      }
     }
 
     if (ExtractRowValues(env, stmt, num_cols, use_big_ints, &row_values)
@@ -4126,16 +3894,10 @@ MaybeLocal<Value> StatementExecutionHelper::All(Environment* env,
           Array::New(isolate, row_values.data(), row_values.size());
       rows.emplace_back(row_array);
     } else {
-      if (row_keys.size() == 0) {
-        // Reuses the statement's internalized column names instead of
-        // re-interning them on every call.
-        if (!statement->GetCachedColumnNames(&row_keys)) {
-          return MaybeLocal<Value>();
-        }
+      Local<Object> row_obj;
+      if (!statement->RowToObject(&row_values).ToLocal(&row_obj)) {
+        return MaybeLocal<Value>();
       }
-      DCHECK_EQ(row_keys.size(), row_values.size());
-      Local<Object> row_obj = Object::New(
-          isolate, Null(isolate), row_keys.data(), row_values.data(), num_cols);
       rows.emplace_back(row_obj);
     }
   }
@@ -4272,17 +4034,9 @@ MaybeLocal<Value> StatementExecutionHelper::Get(Environment* env,
   Local<Value> result;
   if (return_arrays) {
     result = Array::New(isolate, row_values.data(), row_values.size());
-  } else {
-    LocalVector<Name> keys(isolate);
-    // Reuses the statement's internalized column names instead of
-    // re-interning them on every call.
-    if (!statement->GetCachedColumnNames(&keys)) {
-      return MaybeLocal<Value>();
-    }
-
-    DCHECK_EQ(keys.size(), row_values.size());
-    result = Object::New(
-        isolate, Null(isolate), keys.data(), row_values.data(), num_cols);
+  } else if (!statement->UpdateRowCache() ||
+             !statement->RowToObject(&row_values).ToLocal(&result)) {
+    return MaybeLocal<Value>();
   }
 
   RESET_AND_CHECK(isolate, db, stmt, needs_reset, MaybeLocal<Value>());
@@ -4679,9 +4433,6 @@ bool SQLTagStore::ResetAndBindStatement(
     const FunctionCallbackInfo<Value>& args) {
   Isolate* isolate = env->isolate();
   int r = stmt->ResetStatement();
-  CHECK_ERROR_OR_THROW(isolate, stmt->db_.get(), r, SQLITE_OK, false);
-
-  r = sqlite3_clear_bindings(stmt->statement_.get());
   CHECK_ERROR_OR_THROW(isolate, stmt->db_.get(), r, SQLITE_OK, false);
 
   uint32_t n_params = args.Length() - 1;
@@ -5083,7 +4834,6 @@ void StatementIterator::Next(const FunctionCallbackInfo<Value>& args) {
 
   int num_cols = sqlite3_column_count(iter->stmt_->statement_.get());
   Local<Value> row_value;
-  LocalVector<Name> row_keys(isolate);
   LocalVector<Value> row_values(isolate);
 
   if (ExtractRowValues(env,
@@ -5097,14 +4847,9 @@ void StatementIterator::Next(const FunctionCallbackInfo<Value>& args) {
 
   if (iter->stmt_->return_arrays_) {
     row_value = Array::New(isolate, row_values.data(), row_values.size());
-  } else {
-    // Use cached internalized column names to avoid repeated V8 string
-    // creation and enable hidden class sharing across row objects.
-    if (!iter->stmt_->GetCachedColumnNames(&row_keys)) return;
-
-    DCHECK_EQ(row_keys.size(), row_values.size());
-    row_value = Object::New(
-        isolate, Null(isolate), row_keys.data(), row_values.data(), num_cols);
+  } else if (!iter->stmt_->UpdateRowCache() ||
+             !iter->stmt_->RowToObject(&row_values).ToLocal(&row_value)) {
+    return;
   }
 
   MaybeLocal<Value> values[] = {Boolean::New(isolate, false), row_value};
@@ -5355,51 +5100,60 @@ static void Initialize(Local<Object> target,
       }
     });
   }
-  Local<FunctionTemplate> db_tmpl = NewFunctionTemplate(isolate, Database::New);
-  db_tmpl->InstanceTemplate()->SetInternalFieldCount(
-      Database::kInternalFieldCount);
   Local<Object> constants = Object::New(isolate);
 
   DefineConstants(constants);
 
-  SetProtoMethod(isolate, db_tmpl, "open", Database::Open);
-  SetProtoMethod(isolate, db_tmpl, "close", Database::Close);
-  SetProtoDispose(isolate, db_tmpl, Database::Dispose);
-  SetProtoMethod(isolate, db_tmpl, "prepare", Database::Prepare);
-  SetProtoMethod(isolate, db_tmpl, "exec", Database::Exec);
-  SetProtoMethod(isolate, db_tmpl, "function", Database::CustomFunction);
-  SetProtoMethod(isolate, db_tmpl, "createTagStore", Database::CreateTagStore);
-  SetProtoMethodNoSideEffect(isolate, db_tmpl, "location", Database::Location);
-  SetProtoMethod(isolate, db_tmpl, "aggregate", Database::AggregateFunction);
-  SetProtoMethod(isolate, db_tmpl, "createSession", Database::CreateSession);
-  SetProtoMethod(isolate, db_tmpl, "applyChangeset", Database::ApplyChangeset);
-  SetProtoMethod(
-      isolate, db_tmpl, "enableLoadExtension", Database::EnableLoadExtension);
-  SetProtoMethod(
-      isolate, db_tmpl, "enableDefensive", Database::EnableDefensive);
-  SetProtoMethod(isolate, db_tmpl, "loadExtension", Database::LoadExtension);
-  SetProtoMethod(isolate, db_tmpl, "serialize", Database::Serialize);
-  SetProtoMethod(isolate, db_tmpl, "deserialize", Database::Deserialize);
-  SetProtoMethod(isolate, db_tmpl, "setAuthorizer", Database::SetAuthorizer);
-  SetProtoMethod(isolate, db_tmpl, "createModule", Database::CreateModule);
-  SetSideEffectFreeGetter(isolate,
-                          db_tmpl,
-                          FIXED_ONE_BYTE_STRING(isolate, "isOpen"),
-                          Database::IsOpenGetter);
-  SetSideEffectFreeGetter(isolate,
-                          db_tmpl,
-                          FIXED_ONE_BYTE_STRING(isolate, "isTransaction"),
-                          Database::IsTransactionGetter);
-  SetSideEffectFreeGetter(
-      isolate, db_tmpl, env->limits_string(), Database::LimitsGetter);
-  Local<String> sqlite_type_key = FIXED_ONE_BYTE_STRING(isolate, "sqlite-type");
-  Local<v8::Symbol> sqlite_type_symbol =
-      v8::Symbol::For(isolate, sqlite_type_key);
-  Local<String> database_sync_string =
-      FIXED_ONE_BYTE_STRING(isolate, "node:sqlite");
-  db_tmpl->InstanceTemplate()->Set(sqlite_type_symbol, database_sync_string);
-
-  SetConstructorFunction(context, target, "Database", db_tmpl);
+  Local<FunctionTemplate> db_tmpl = env->sqlite_database_constructor_template();
+  if (db_tmpl.IsEmpty()) {
+    db_tmpl = NewFunctionTemplate(isolate, Database::New);
+    db_tmpl->SetClassName(FIXED_ONE_BYTE_STRING(isolate, "Database"));
+    db_tmpl->InstanceTemplate()->SetInternalFieldCount(
+        Database::kInternalFieldCount);
+    SetProtoMethod(isolate, db_tmpl, "open", Database::Open);
+    SetProtoMethod(isolate, db_tmpl, "close", Database::Close);
+    SetProtoDispose(isolate, db_tmpl, Database::Dispose);
+    SetProtoMethod(isolate, db_tmpl, "prepare", Database::Prepare);
+    SetProtoMethod(isolate, db_tmpl, "exec", Database::Exec);
+    SetProtoMethod(isolate, db_tmpl, "function", Database::CustomFunction);
+    SetProtoMethod(
+        isolate, db_tmpl, "createTagStore", Database::CreateTagStore);
+    SetProtoMethodNoSideEffect(
+        isolate, db_tmpl, "location", Database::Location);
+    SetProtoMethod(isolate, db_tmpl, "aggregate", Database::AggregateFunction);
+    SetProtoMethod(isolate, db_tmpl, "createSession", Database::CreateSession);
+    SetProtoMethod(
+        isolate, db_tmpl, "applyChangeset", Database::ApplyChangeset);
+    SetProtoMethod(
+        isolate, db_tmpl, "enableLoadExtension", Database::EnableLoadExtension);
+    SetProtoMethod(
+        isolate, db_tmpl, "enableDefensive", Database::EnableDefensive);
+    SetProtoMethod(isolate, db_tmpl, "loadExtension", Database::LoadExtension);
+    SetProtoMethod(isolate, db_tmpl, "serialize", Database::Serialize);
+    SetProtoMethod(isolate, db_tmpl, "deserialize", Database::Deserialize);
+    SetProtoMethod(isolate, db_tmpl, "setAuthorizer", Database::SetAuthorizer);
+    SetProtoMethod(isolate, db_tmpl, "createModule", Database::CreateModule);
+    SetSideEffectFreeGetter(isolate,
+                            db_tmpl,
+                            FIXED_ONE_BYTE_STRING(isolate, "isOpen"),
+                            Database::IsOpenGetter);
+    SetSideEffectFreeGetter(isolate,
+                            db_tmpl,
+                            FIXED_ONE_BYTE_STRING(isolate, "isTransaction"),
+                            Database::IsTransactionGetter);
+    SetSideEffectFreeGetter(
+        isolate, db_tmpl, env->limits_string(), Database::LimitsGetter);
+    Local<String> sqlite_type_key =
+        FIXED_ONE_BYTE_STRING(isolate, "sqlite-type");
+    Local<v8::Symbol> sqlite_type_symbol =
+        v8::Symbol::For(isolate, sqlite_type_key);
+    Local<String> database_sync_string =
+        FIXED_ONE_BYTE_STRING(isolate, "node:sqlite");
+    db_tmpl->InstanceTemplate()->Set(sqlite_type_symbol, database_sync_string);
+    env->set_sqlite_database_constructor_template(db_tmpl);
+  }
+  SetConstructorFunction(
+      context, target, "Database", db_tmpl, SetConstructorFunctionFlag::NONE);
   SetConstructorFunction(context,
                          target,
                          "Statement",

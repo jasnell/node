@@ -24,8 +24,8 @@ import vfs from 'node:vfs';
 const vfs = require('node:vfs');
 ```
 
-This module is only available under the `node:` scheme, and only when Node.js
-is started with the `--experimental-vfs` flag.
+This module is only available under the `node:` scheme. Loading it emits an
+`ExperimentalWarning`.
 
 ## Security
 
@@ -77,8 +77,9 @@ added: v26.4.0
 * `provider` {VirtualProvider} The provider to use. **Default:**
   `new MemoryProvider()`.
 * `options` {Object}
-  * `emitExperimentalWarning` {boolean} Whether to emit the experimental
-    warning when the instance is created. **Default:** `true`.
+  * `emitExperimentalWarning` {boolean} Whether to emit an experimental warning
+    when an instance is created. **Default:** `true`. Loading `node:vfs` emits
+    the warning regardless of this option.
 * Returns: {VirtualFileSystem}
 
 Convenience factory equivalent to `new VirtualFileSystem(provider, options)`.
@@ -148,7 +149,7 @@ vfs.registerProvider({
 ```
 
 ```console
-$ node --experimental-vfs --require ./provider.js \
+$ node --require ./provider.js \
        --vfs-load archive.customfmt
 ```
 
@@ -193,8 +194,9 @@ added: v26.4.0
 * `provider` {VirtualProvider} The provider to use. **Default:**
   `new MemoryProvider()`.
 * `options` {Object}
-  * `emitExperimentalWarning` {boolean} Whether to emit the experimental
-    warning. **Default:** `true`.
+  * `emitExperimentalWarning` {boolean} Whether to emit an experimental warning
+    when an instance is created. **Default:** `true`. Loading `node:vfs` emits
+    the warning regardless of this option.
 
 ### `vfs.mount()`
 
@@ -223,7 +225,7 @@ const fs = require('node:fs');
 const myVfs = vfs.create();
 myVfs.writeFileSync('/data.txt', 'Hello');
 const mountPoint = myVfs.mount();
-// e.g. '/dev/null/vfs/0'
+// e.g. '/dev/null/vfs/1'
 
 fs.readFileSync(`${mountPoint}/data.txt`, 'utf8'); // 'Hello'
 ```
@@ -374,6 +376,7 @@ signatures as their [`node:fs`][] counterparts:
 * `utimesSync(path, atime, mtime)`
 * `lutimesSync(path, atime, mtime)`
 * `mkdtempSync(prefix)`
+* `mkstempSync(prefix)`
 * `opendirSync(path[, options])`
 * `openAsBlob(path[, options])`
 * File-descriptor ops: `openSync`, `closeSync`, `readSync`, `writeSync`,
@@ -385,8 +388,8 @@ signatures as their [`node:fs`][] counterparts:
 
 `readFile`, `writeFile`, `stat`, `lstat`, `readdir`, `realpath`, `readlink`,
 `access`, `open`, `close`, `read`, `write`, `rm`, `fstat`, `truncate`,
-`ftruncate`, `link`, `mkdtemp`, `opendir`. Each takes a Node.js-style
-callback `(err, ...result) => {}`.
+`ftruncate`, `link`, `mkdtemp`, `mkstemp`, `opendir`. Each takes a
+Node.js-style callback `(err, ...result) => {}`.
 
 #### Promise API
 
@@ -407,8 +410,8 @@ example();
 The promise namespace mirrors `fs.promises` and includes `readFile`,
 `writeFile`, `appendFile`, `stat`, `lstat`, `readdir`, `mkdir`, `rmdir`,
 `unlink`, `rename`, `copyFile`, `realpath`, `readlink`, `symlink`,
-`access`, `rm`, `truncate`, `link`, `mkdtemp`, `chmod`, `chown`, `lchown`,
-`utimes`, `lutimes`, `open`, `lchmod`, and `watch`.
+`access`, `rm`, `truncate`, `link`, `mkdtemp`, `mkstemp`, `chmod`, `chown`,
+`lchown`, `utimes`, `lutimes`, `open`, `lchmod`, and `watch`.
 
 ## The reserved root directory
 
@@ -653,7 +656,7 @@ myVfs.writeFileSync('/x.txt', 'fail'); // throws EROFS
 ## Class: `ComposableProvider`
 
 <!-- YAML
-added: REPLACEME
+added: v26.12.0
 -->
 
 [`ComposableProvider`][] combines one or more providers in priority order. The first
@@ -666,7 +669,7 @@ The first provider must be writable to change the composed file system.
 ### `new ComposableProvider(providers)`
 
 <!-- YAML
-added: REPLACEME
+added: v26.12.0
 -->
 
 * `providers` {VirtualProvider\[]} Non-empty array of providers, ordered from
@@ -685,7 +688,7 @@ combined.writeFileSync('/config.json', '{"debug":true}');
 ### `composableProvider.providers`
 
 <!-- YAML
-added: REPLACEME
+added: v26.12.0
 -->
 
 * {VirtualProvider\[]}

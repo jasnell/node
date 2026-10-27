@@ -19,6 +19,7 @@
     'node_shared_brotli%': 'false',
     'node_shared_cares%': 'false',
     'node_shared_gtest%': 'false',
+    'node_shared_gtest_libraries%': [],
     'node_shared_hdr_histogram%': 'false',
     'node_shared_highway%': 'false',
     'node_shared_http_parser%': 'false',
@@ -769,87 +770,22 @@
             },
           },
         }],
-        ['node_fipsinstall=="true"', {
-          'variables': {
-            'openssl-cli': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)openssl-cli<(EXECUTABLE_SUFFIX)',
-            'provider_name': 'libopenssl-fipsmodule',
-            'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
-            'conditions': [
-              ['GENERATOR == "ninja"', {
-	        'fipsmodule_internal': '<(PRODUCT_DIR)/lib/<(provider_name).so',
-                'fipsmodule': '<(PRODUCT_DIR)/obj/lib/openssl-modules/fips.so',
-                'fipsconfig': '<(PRODUCT_DIR)/obj/lib/fipsmodule.cnf',
-                'opensslconfig_internal': '<(PRODUCT_DIR)/obj/lib/openssl.cnf',
-             }, {
-	        'fipsmodule_internal': '<(PRODUCT_DIR)/obj.target/deps/openssl/<(provider_name).so',
-                'fipsmodule': '<(PRODUCT_DIR)/obj.target/deps/openssl/lib/openssl-modules/fips.so',
-                'fipsconfig': '<(PRODUCT_DIR)/obj.target/deps/openssl/fipsmodule.cnf',
-                'opensslconfig_internal': '<(PRODUCT_DIR)/obj.target/deps/openssl/openssl.cnf',
-             }],
-            ],
-          },
-          'actions': [
-            {
-              'action_name': 'fipsinstall',
-              'process_outputs_as_sources': 1,
-              'inputs': [
-                '<(fipsmodule_internal)',
-              ],
-              'outputs': [
-                '<(fipsconfig)',
-              ],
-              'action': [
-                '<(openssl-cli)', 'fipsinstall',
-                '-provider_name', '<(provider_name)',
-                '-module', '<(fipsmodule_internal)',
-                '-out', '<(fipsconfig)',
-                #'-quiet',
-              ],
-            },
-            {
-              'action_name': 'copy_fips_module',
-              'inputs': [
-                '<(fipsmodule_internal)',
-              ],
-              'outputs': [
-                '<(fipsmodule)',
-              ],
-              'action': [
-                '<(python)', 'tools/copyfile.py',
-                '<(fipsmodule_internal)',
-                '<(fipsmodule)',
-              ],
-            },
-            {
-              'action_name': 'copy_openssl_cnf_and_include_fips_cnf',
-              'inputs': [ '<(opensslconfig)', ],
-              'outputs': [ '<(opensslconfig_internal)', ],
-              'action': [
-                '<(python)', 'tools/enable_fips_include.py',
-                '<(opensslconfig)',
-                '<(opensslconfig_internal)',
-                '<(fipsconfig)',
-              ],
-            },
+      ],
+      'variables': {
+        'opensslconfig_internal': '<(obj_dir)/deps/openssl/openssl.cnf',
+        'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
+      },
+      'actions': [
+        {
+          'action_name': 'reset_openssl_cnf',
+          'inputs': [ '<(opensslconfig)', ],
+          'outputs': [ '<(opensslconfig_internal)', ],
+          'action': [
+            '<(python)', 'tools/copyfile.py',
+            '<(opensslconfig)',
+            '<(opensslconfig_internal)',
           ],
-         }, {
-           'variables': {
-              'opensslconfig_internal': '<(obj_dir)/deps/openssl/openssl.cnf',
-              'opensslconfig': './deps/openssl/nodejs-openssl.cnf',
-           },
-           'actions': [
-             {
-               'action_name': 'reset_openssl_cnf',
-               'inputs': [ '<(opensslconfig)', ],
-               'outputs': [ '<(opensslconfig_internal)', ],
-               'action': [
-                 '<(python)', 'tools/copyfile.py',
-                 '<(opensslconfig)',
-                 '<(opensslconfig_internal)',
-               ],
-             },
-           ],
-         }],
+        },
       ],
     }, # node_core_target_name
     {
@@ -1387,7 +1323,7 @@
           ],
         }],
         [ 'node_shared_gtest=="true"', {
-          'libraries': [ '-lgtest_main' ],
+          'libraries': [ '<@(node_shared_gtest_libraries)' ],
         }],
         [ 'node_use_bundled_v8!="false" and node_shared_abseil=="false"', {
           'dependencies': [ 'tools/v8_gypfiles/abseil.gyp:abseil' ],
