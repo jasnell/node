@@ -987,7 +987,8 @@ added: v23.8.0
     is application-specific. **Default:** `'transport'`.
   * `reason` {string} An optional human-readable reason string included in
     the `CONNECTION_CLOSE` frame. Per RFC 9000, this is for diagnostic purposes
-    only and should not be used for machine-readable error descriptions.
+    only and should not be used for machine-readable error descriptions. If its
+    UTF-8 encoding exceeds 256 bytes, it is truncated to at most 256 bytes.
 * Returns: {Promise}
 
 Initiate a graceful close of the session. Existing streams will be allowed
@@ -1066,7 +1067,9 @@ added: v23.8.0
   * `type` {string} Either `'transport'` or `'application'`. **Default:**
     `'transport'`.
   * `reason` {string} An optional human-readable reason string included in
-    the `CONNECTION_CLOSE` frame.
+    the `CONNECTION_CLOSE` frame. Per RFC 9000, this is for diagnostic purposes
+    only and should not be used for machine-readable error descriptions. If its
+    UTF-8 encoding exceeds 256 bytes, it is truncated to at most 256 bytes.
 
 Immediately destroy the session. All streams will be destroyed and the
 session will be closed. If `error` is provided and [`session.onerror`][] is
@@ -1976,9 +1979,10 @@ changes:
 * `error` {any}
 * `options` {Object}
   * `code` {bigint|number} The application error code to include in the
-    `RESET_STREAM` and `STOP_SENDING` frames sent to the peer. Numbers are
-    coerced to `BigInt`. When omitted, the wire code is derived from `error`
-    (see below).
+    `RESET_STREAM` and `STOP_SENDING` frames sent to the peer. Must be a
+    non-negative 62-bit unsigned varint
+    (`0n <= code <= 2n ** 62n - 1n`). Numbers are coerced to `BigInt`. When
+    omitted, the wire code is derived from `error` (see below).
   * `reason` {string} An optional human-readable reason string. Accepted for
     symmetry with [`session.close()`][] and [`session.destroy()`][], but
     **not transmitted on the wire** — neither `RESET_STREAM` nor
@@ -2058,8 +2062,9 @@ not perform this derivation: they send `code` as given.
 added: v23.8.0
 -->
 
-* `code` {number|bigint} The application error code to send to the peer.
-  **Default:** `0n`.
+* `code` {number|bigint} The application error code to send to the peer. Must
+  be a non-negative 62-bit unsigned varint
+  (`0n <= code <= 2n ** 62n - 1n`). **Default:** `0n`.
 
 Tells the peer that this end will not send any more data on this stream,
 sending a `RESET_STREAM` frame carrying `code`. The readable side is left
@@ -2078,8 +2083,9 @@ remote-initiated unidirectional stream, which has no writable side to abort.
 added: v23.8.0
 -->
 
-* `code` {number|bigint} The application error code to send to the peer.
-  **Default:** `0n`.
+* `code` {number|bigint} The application error code to send to the peer. Must
+  be a non-negative 62-bit unsigned varint
+  (`0n <= code <= 2n ** 62n - 1n`). **Default:** `0n`.
 
 Asks the peer to stop sending data on this stream, sending a `STOP_SENDING`
 frame carrying `code`. The writable side is left open, so this end can
@@ -2113,10 +2119,9 @@ side, it is always `false`.
 added: v23.8.0
 -->
 
-* Type: {string|null} One of `'bidi'`, `'uni'`, or `null`.
+* Type: {string} One of `'bidi'` or `'uni'`.
 
-The directionality of the stream, or `null` if the stream has been destroyed
-or is still pending. Read only.
+The directionality of the stream. Read only.
 
 ### `stream.budget`
 
@@ -2145,8 +2150,7 @@ added: v23.8.0
 
 * Type: {bigint|null}
 
-The stream ID, or `null` if the stream has been destroyed or is still
-pending. Read only.
+The stream ID, or `null` while the stream is pending. Read only.
 
 ### `stream.onerror`
 

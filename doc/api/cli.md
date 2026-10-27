@@ -324,13 +324,15 @@ added: v26.9.0
 When using the [Permission Model][], a [virtual file system][] cannot be
 mounted by default: [`vfs.mount()`][] throws `ERR_INVALID_STATE` unless the
 user explicitly passes the `--allow-fs-vfs` flag when starting Node.js.
+In audit mode ([`--permission-audit`](#--permission-audit)), mounting is not
+refused and no message is published to the diagnostics channel.
 
 A mounted VFS serves paths that the file system permissions do not describe,
 so mounting one is gated on its own flag rather than on `--allow-fs-read` or
 `--allow-fs-write`.
 
 ```console
-$ node --experimental-vfs --permission --allow-fs-vfs app.js
+$ node --permission --allow-fs-vfs app.js
 ```
 
 ### `--allow-fs-write`
@@ -808,7 +810,7 @@ added:
  - v23.10.0
  - v22.16.0
 changes:
-  - version: REPLACEME
+  - version: v26.12.0
     pr-url: https://github.com/nodejs/node/pull/66431
     description: This flag was renamed from `--experimental-config-file` to
                  `--config-file` and is now stable. `--experimental-config-file`
@@ -1224,14 +1226,15 @@ priority than `--dns-result-order`.
 added: v6.0.0
 -->
 
-Enable [FIPS mode][] at startup. With OpenSSL 3, a configured provider named
-`fips` must be available and initialize successfully. With OpenSSL 1.1.1,
-Node.js must be built against a FIPS-capable OpenSSL.
+Enable [FIPS mode][] at startup. A configured provider named `fips` must be
+available and initialize successfully.
 
 ### `--enable-fips-indicator-events`
 
 <!-- YAML
-added: v26.9.0
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 Publish OpenSSL FIPS indicator results to the
@@ -1643,6 +1646,25 @@ added:
 
 Enable the experimental [`node:stream/iter`][] module.
 
+### `--experimental-strip-private-modules`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+By default, Node.js refuses to strip types from TypeScript files inside
+folders under a `node_modules` path. This flag enables type stripping for
+such files when they belong to a package whose `package.json` contains
+`"private": true`. Files belonging to non-private packages still throw
+[`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`][].
+The limitation to private packages should never be lifted,
+as publishing packages with TypeScript sources
+is highly discouraged.
+Stripping types inside `node_modules` is intended only
+for local development.
+
 ### `--experimental-test-coverage`
 
 <!-- YAML
@@ -1709,16 +1731,6 @@ with AND, so a test must satisfy every expression to run.
 A malformed expression causes the test runner to exit with a non-zero status
 before running any tests.
 
-### `--experimental-vfs`
-
-<!-- YAML
-added: v26.4.0
--->
-
-> Stability: 1 - Experimental
-
-Enable the experimental [`node:vfs`][] module.
-
 ### `--experimental-vm-modules`
 
 <!-- YAML
@@ -1781,7 +1793,9 @@ Disable loading native addons that are not [context-aware][].
 <!-- YAML
 added: v6.0.0
 changes:
-  - version: v26.9.0
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65645
     description: Added the optional `provider` and `strict` modes.
 -->
@@ -2360,6 +2374,18 @@ changes:
 
 Disable the experimental [`node:sqlite`][] module.
 
+### `--no-experimental-vfs`
+
+<!-- YAML
+added: v26.4.0
+changes:
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/66318
+    description: VFS is unflagged but still experimental.
+-->
+
+Disable the experimental [`node:vfs`][] module and `--vfs-load`.
+
 ### `--no-experimental-webstorage`
 
 <!-- YAML
@@ -2505,8 +2531,7 @@ added: v6.9.0
 -->
 
 Load an OpenSSL configuration file on startup. The file can activate an
-OpenSSL 3 FIPS provider or configure a FIPS-capable OpenSSL 1.1.1 build. See
-[FIPS mode][].
+OpenSSL FIPS provider. See [FIPS mode][].
 
 This option takes precedence over the `OPENSSL_CONF` environment variable.
 
@@ -2518,7 +2543,7 @@ added:
   - v16.17.0
 -->
 
-Enable OpenSSL 3.0 legacy provider. For more information please see
+Enable OpenSSL's legacy provider. For more information please see
 [OSSL\_PROVIDER-legacy][OSSL_PROVIDER-legacy].
 
 ### `--openssl-shared-config`
@@ -2974,7 +2999,9 @@ forked processes, or clustered processes.
 <!-- YAML
 added: v22.0.0
 changes:
-  - version: v26.9.0
+  - version:
+    - v26.9.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/64606
     description: Passing `--run` without a command lists the available scripts.
   - version: v22.3.0
@@ -3231,6 +3258,22 @@ added: v22.8.0
 
 Require a minimum percent of covered lines. If code coverage does not reach
 the threshold specified, the process will exit with code `1`.
+
+### `--test-forbid-only`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+Fails the test run if a test or suite is declared with `only: true`, including
+the `test.only()`, `it.only()`, `suite.only()`, and `describe.only()` shorthands,
+or if `testContext.runOnly(true)` is called. This is useful in CI to prevent
+accidentally committing exclusive tests that exclude the rest of a test suite.
+
+This option applies with either test isolation mode and takes precedence over
+`--test-only`. Name filtering, TODO markers, and expected failures do not suppress
+detected violations. Only declarations evaluated during the run are checked;
+code inside a skipped test callback is not evaluated.
 
 ### `--test-force-exit`
 
@@ -3901,11 +3944,13 @@ added: v26.10.0
 
 * `source` {string} A directory or an archive file to mount and run.
 
-Requires [`--experimental-vfs`][]. May be given at most once.
+May be given at most once.
 
 Mounts `source` as a virtual file system ([`node:vfs`][]), and runs the entry
 point and all subsequent `require()`/`import` resolution against that mount
-rather than the real file system. The mount is placed at a reserved mount point
+rather than the real file system. This option is unavailable when
+`--no-experimental-vfs` disables [`node:vfs`][]. The mount is placed at a
+reserved mount point
 assigned by Node.js, so it never shadows real paths and no target can be
 chosen. The entry point is taken from the mount the same way `node <directory>`
 takes one: the mount's own `package.json` `"main"`, or `index.js`. Any
@@ -3936,18 +3981,21 @@ same thing in all of them.
 
 A worker created with its own `execArgv` inherits none of the parent's options,
 and so does not mount the source at all. To run a script from the mount, such a
-worker must be given the same options again, `--experimental-vfs` and
-`--vfs-load`; without them, that thread has no mount for the script to come
-from, and the worker fails to load it. `--experimental-vfs` is also what makes
-[`node:vfs`][] available to the worker's own code. A worker whose script comes
-from anywhere else, such as the real file system, needs nothing added.
+worker must be given `--vfs-load` again; without it, that thread has no mount
+for the script to come from, and the worker fails to load it. [`node:vfs`][] is
+available to worker code without an experimental flag. A worker whose script
+comes from anywhere else, such as the real file system, needs nothing added.
 
 `--vfs-load` is not permitted in [`NODE_OPTIONS`][]: which entry point runs is
 the command line's decision, and the environment must not be able to redirect
 it.
 
+A [single executable application][] built with `"vfsArchive"` mounts that
+archive at the mount point reserved for `--vfs-load`, so `--vfs-load` cannot be
+used in it.
+
 ```console
-$ node --experimental-vfs --vfs-load=app.zip
+$ node --vfs-load=app.zip
 ```
 
 ### `--watch`
@@ -4272,9 +4320,9 @@ one is included in the list below.
 * `--experimental-shadow-realm`
 * `--experimental-specifier-resolution`
 * `--experimental-stream-iter`
+* `--experimental-strip-private-modules`
 * `--experimental-test-isolation`
 * `--experimental-top-level-await`
-* `--experimental-vfs`
 * `--experimental-vm-modules`
 * `--experimental-wasi-unstable-preview1`
 * `--experimental-web-worker`
@@ -4309,6 +4357,7 @@ one is included in the list below.
 * `--no-experimental-global-navigator`
 * `--no-experimental-sqlite`
 * `--no-experimental-strip-types`
+* `--no-experimental-vfs`
 * `--no-experimental-webstorage`
 * `--no-extra-info-on-fatal-exception`
 * `--no-force-async-hooks-checks`
@@ -4349,6 +4398,7 @@ one is included in the list below.
 * `--test-coverage-include-all`
 * `--test-coverage-include`
 * `--test-coverage-lines`
+* `--test-forbid-only`
 * `--test-global-setup`
 * `--test-isolation`
 * `--test-name-pattern`
@@ -4908,7 +4958,6 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`--env-file-if-exists`]: #--env-file-if-existsfile
 [`--env-file`]: #--env-filefile
 [`--experimental-sea-config`]: single-executable-applications.md#1-generating-single-executable-preparation-blobs
-[`--experimental-vfs`]: #--experimental-vfs
 [`--heap-prof-dir`]: #--heap-prof-dir
 [`--import`]: #--importmodule
 [`--no-require-module`]: #--no-require-module
@@ -4927,6 +4976,7 @@ node --stack-trace-limit=12 -p -e "Error.stackTraceLimit" # prints 12
 [`CRYPTO_secure_malloc_init`]: https://www.openssl.org/docs/man3.0/man3/CRYPTO_secure_malloc_init.html
 [`ERR_INVALID_TYPESCRIPT_SYNTAX`]: errors.md#err_invalid_typescript_syntax
 [`ERR_RX_MEMORY_NOT_SUPPORTED`]: errors.md#err_rx_memory_not_supported
+[`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`]: errors.md#err_unsupported_node_modules_type_stripping
 [`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`]: errors.md#err_unsupported_typescript_syntax
 [`ERR_WEBASSEMBLY_NOT_SUPPORTED`]: errors.md#err_webassembly_not_supported
 [`NODE_OPTIONS`]: #node_optionsoptions

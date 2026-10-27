@@ -1032,7 +1032,14 @@ class TestApiCallbacks {
 
   template <typename T>
   static TestApiCallbacks* FromInfo(const T& info) {
-    void* data = v8::External::Cast(*info.Data())->Value(kTestApiCallbacksTag);
+    v8::Local<v8::Data> callback_data;
+    if constexpr (requires { info.DataV2(); }) {
+      callback_data = info.DataV2();
+    } else {
+      callback_data = info.Data();
+    }
+    void* data =
+        v8::External::Cast(*callback_data)->Value(kTestApiCallbacksTag);
     return reinterpret_cast<TestApiCallbacks*>(data);
   }
 
@@ -2948,9 +2955,11 @@ TEST(DeoptUntrackedFunction) {
   iprofiler->DeleteProfile(iprofile);
 }
 
-using v8::platform::tracing::TraceBuffer;
 using v8::platform::tracing::TraceConfig;
+#if !defined(V8_USE_PERFETTO)
+using v8::platform::tracing::TraceBuffer;
 using v8::platform::tracing::TraceObject;
+#endif  // !defined(V8_USE_PERFETTO)
 
 namespace {
 

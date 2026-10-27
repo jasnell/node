@@ -349,7 +349,7 @@ TRACE_PROCESSOR_SHELL_DEPS = deps/perfetto/VERSION
 endif
 
 $(TRACE_PROCESSOR_SHELL_PATH): $(TRACE_PROCESSOR_SHELL_DEPS)
-	@tools/perfetto/get_trace_processor $@
+	@$(PYTHON) tools/perfetto/get_trace_processor.py $@
 
 .PHONY: test
 # This does not run tests of third-party libraries inside deps.
@@ -402,12 +402,7 @@ ifeq ($(OSTYPE),os400)
 DOCBUILDSTAMP_PREREQS := $(DOCBUILDSTAMP_PREREQS) out/$(BUILDTYPE)/node.exp
 endif
 
-DOC_KIT ?= tools/doc/node_modules/@doc-kit/cli/bin/cli.mjs
-ifeq ($(V),1)
-DOC_KIT_LOG_LEVEL ?= debug
-else
-DOC_KIT_LOG_LEVEL ?= info
-endif
+DOC_KIT ?= tools/doc/node_modules/@node-core/doc-kit/bin/cli.mjs
 
 node_use_openssl_and_icu = $(call available-node,"-p" \
 			 "process.versions.openssl != undefined && process.versions.icu != undefined")
@@ -876,7 +871,7 @@ VERSION=v$(RAWVER)
 
 .PHONY: doc-only
 .NOTPARALLEL: doc-only
-doc-only: $(apidoc_dirs) $(apidocs_html) $(apidocs_json) out/doc/api/all.json out/doc/llms.txt out/doc/apilinks.json  ## Builds the docs with the local or the global Node.js binary.
+doc-only: $(apidoc_dirs) $(apidocs_html) $(apidocs_json) out/doc/api/all.html out/doc/api/all.json out/doc/llms.txt out/doc/apilinks.json  ## Builds the docs with the local or the global Node.js binary.
 
 .PHONY: doc
 doc: $(NODE_EXE) doc-only ## Build Node.js, and then build the documentation with the new binary.
@@ -913,10 +908,15 @@ $(apidocs_html) $(apidocs_json) out/doc/api/all.html out/doc/api/all.json &: $(a
 	else \
 		$(call available-node, \
 			$(DOC_KIT) generate \
-			--log-level $(DOC_KIT_LOG_LEVEL) \
-			--config-file tools/doc/web.doc-kit.config.mjs \
+			-t legacy-html-all \
+			-t legacy-json-all \
+			-i doc/api/*.md \
+			--ignore $(skip_apidoc_files) \
+			-o out/doc/api \
+			-c ./CHANGELOG.md \
 			-v $(VERSION) \
-			$(if $(JOBS),-p $(JOBS)) \
+			--index doc/api/index.md \
+			--type-map doc/type-map.json \
 		) \
 	fi
 endif
@@ -927,11 +927,13 @@ out/doc/llms.txt: $(apidoc_sources) tools/doc/node_modules | out/doc
 	else \
 		$(call available-node, \
 			$(DOC_KIT) generate \
-			--log-level $(DOC_KIT_LOG_LEVEL) \
-			--config-file tools/doc/web.doc-kit.config.mjs \
 			-t llms-txt \
+			-i doc/api/*.md \
+			--ignore $(skip_apidoc_files) \
 			-o $(@D) \
+			-c ./CHANGELOG.md \
 			-v $(VERSION) \
+			--type-map doc/type-map.json \
 		) \
 	fi
 
@@ -941,10 +943,12 @@ out/doc/apilinks.json: $(wildcard lib/*.js) tools/doc/node_modules | out/doc
 	else \
 		$(call available-node, \
 			$(DOC_KIT) generate \
-			--log-level $(DOC_KIT_LOG_LEVEL) \
-			--config-file tools/doc/api-links.doc-kit.config.mjs \
+			-t api-links \
+			-i lib/*.js \
 			-o $(@D) \
+			-c ./CHANGELOG.md \
 			-v $(VERSION) \
+			--type-map doc/type-map.json \
 		) \
 	fi
 
@@ -958,7 +962,6 @@ node.1: doc/api/cli.md tools/doc/node_modules
 	else \
 		$(call available-node, \
 			$(DOC_KIT) generate \
-			--log-level $(DOC_KIT_LOG_LEVEL) \
 			-v $(VERSION) \
 			--config-file tools/doc/man-page.doc-kit.config.mjs \
 			-o doc \
@@ -989,7 +992,7 @@ ifndef DISTTYPE
 DISTTYPE=release
 endif
 ifeq ($(DISTTYPE),release)
-FULLVERSION=$(VERSION)
+FULLVERSION=v$(shell $(PYTHON) tools/getnodeversion.py --full)
 else # ifeq ($(DISTTYPE),release)
 ifeq ($(DISTTYPE),custom)
 ifndef CUSTOMTAG
@@ -1336,8 +1339,8 @@ endif
 	$(RM) -r $(TARNAME)/tools/eslint/node_modules
 	$(RM) -r $(TARNAME)/tools/osx-*
 	$(RM) -r $(TARNAME)/tools/osx-pkg.pmdoc
-	find $(TARNAME)/deps/v8/test/* -type d ! -regex '.*/test/torque$$' | xargs $(RM) -r
-	find $(TARNAME)/deps/v8/test -type f ! -regex '.*/test/torque/.*' | xargs $(RM)
+	find $(TARNAME)/deps/v8/test/* -type d ! -regex '.*/test/torque$$' ! -regex '.*/test/mkgrokdump$$' | xargs $(RM) -r
+	find $(TARNAME)/deps/v8/test -type f ! -regex '.*/test/torque/.*' ! -regex '.*/test/mkgrokdump/.*' | xargs $(RM)
 	find $(TARNAME)/deps/zlib/contrib/* -type d ! -regex '.*/contrib/optimizations$$' | xargs $(RM) -r
 	find $(TARNAME)/ -name "eslint.config*" -maxdepth 2 | xargs $(RM)
 	find $(TARNAME)/ -type l | xargs $(RM)
@@ -1502,7 +1505,6 @@ tools/.manpagelintstamp: doc/node.1 doc/api/cli.md tools/doc/node_modules
 		$(RM) -r tools/doc/.manpagecheck && \
 		$(call available-node, \
 			$(DOC_KIT) generate \
-			--log-level $(DOC_KIT_LOG_LEVEL) \
 			-v $(VERSION) \
 			--config-file tools/doc/man-page.doc-kit.config.mjs \
 		) \

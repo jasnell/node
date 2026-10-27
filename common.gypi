@@ -26,7 +26,13 @@
     'node_module_version%': '',
     'node_with_ltcg%': '',
     'node_shared_openssl%': 'false',
+    'node_shared_openssl_include_dirs%': [],
     'openssl_is_boringssl%': 'false',
+
+    'node_shared_libuv_include_dirs%': [],
+    'node_shared_sqlite%': 'false',
+    'node_shared_sqlite_include_dirs%': [],
+    'node_shared_zlib_include_dirs%': [],
 
     'node_tag%': '',
     'uv_library%': 'static_library',
@@ -44,7 +50,7 @@
 
     # Reset this number to 0 on major V8 upgrades.
     # Increment by one for each non-official patch applied to deps/v8.
-    'v8_embedder_string': '-node.14',
+    'v8_embedder_string': '-node.10',
 
     ##### V8 defaults for Node.js #####
 

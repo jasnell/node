@@ -911,9 +911,8 @@ Argon2 is not supported by the current version of OpenSSL being used.
 
 ### `ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED`
 
-An OpenSSL engine was requested (for example, through the `clientCertEngine` or
-`privateKeyEngine` TLS options) that is not supported by the version of OpenSSL
-being used, likely due to the compile-time flag `OPENSSL_NO_ENGINE`.
+An OpenSSL engine-based TLS or HTTPS option was used after support for custom
+engines reached End-of-Life in Node.js.
 
 <a id="ERR_CRYPTO_ECDH_INVALID_FORMAT"></a>
 
@@ -929,13 +928,6 @@ class `getPublicKey()` method.
 An invalid value for the `key` argument has been passed to the
 `crypto.ECDH()` class `computeSecret()` method. It means that the public
 key lies outside of the elliptic curve.
-
-<a id="ERR_CRYPTO_ENGINE_UNKNOWN"></a>
-
-### `ERR_CRYPTO_ENGINE_UNKNOWN`
-
-An invalid crypto engine identifier was passed to
-[`require('node:crypto').setEngine()`][].
 
 <a id="ERR_CRYPTO_FIPS_FORCED"></a>
 
@@ -1083,7 +1075,9 @@ The given crypto key object's type is invalid for the attempted operation.
 ### `ERR_CRYPTO_INVALID_MAC`
 
 <!-- YAML
-added: v26.9.0
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 An invalid MAC algorithm was specified.
@@ -1166,7 +1160,9 @@ OpenSSL with KEM support.
 ### `ERR_CRYPTO_MAC_FINALIZED`
 
 <!-- YAML
-added: v26.9.0
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 An operation was attempted on a `Mac` object after finalization was attempted
@@ -1177,7 +1173,9 @@ or an underlying MAC update failed.
 ### `ERR_CRYPTO_MAC_NOT_SUPPORTED`
 
 <!-- YAML
-added: v26.9.0
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 Node.js was built without support for the OpenSSL `EVP_MAC` API.
@@ -1187,7 +1185,9 @@ Node.js was built without support for the OpenSSL `EVP_MAC` API.
 ### `ERR_CRYPTO_MAC_UPDATE_FAILED`
 
 <!-- YAML
-added: v26.9.0
+added:
+  - v26.9.0
+  - v24.22.0
 -->
 
 [`mac.update()`][] failed for an unspecified reason.
@@ -2969,7 +2969,7 @@ was already in progress to load it asynchronously.
 ### `ERR_RX_MEMORY_NOT_SUPPORTED`
 
 <!-- YAML
-added: REPLACEME
+added: v26.12.0
 -->
 
 A feature requiring runtime allocation of executable memory was used in an
@@ -3937,6 +3937,17 @@ removed: v15.0.0
 
 The native call from `process.cpuUsage` could not be processed.
 
+<a id="ERR_CRYPTO_ENGINE_UNKNOWN"></a>
+
+### `ERR_CRYPTO_ENGINE_UNKNOWN`
+
+<!-- YAML
+removed: REPLACEME
+-->
+
+An invalid crypto engine identifier was passed to
+`require('node:crypto').setEngine()`.
+
 <a id="ERR_CRYPTO_HASH_DIGEST_NO_UTF16"></a>
 
 ### `ERR_CRYPTO_HASH_DIGEST_NO_UTF16`
@@ -4832,7 +4843,6 @@ An error occurred trying to allocate memory. This should never happen.
 [`process.send()`]: process.md#processsendmessage-sendhandle-options-callback
 [`process.setUncaughtExceptionCaptureCallback()`]: process.md#processsetuncaughtexceptioncapturecallbackfn
 [`readable._read()`]: stream.md#readable_readsize
-[`require('node:crypto').setEngine()`]: crypto.md#cryptosetengineengine-flags
 [`require()`]: modules.md#requireid
 [`server.close()`]: net.md#serverclosecallback
 [`server.listen()`]: net.md#serverlisten

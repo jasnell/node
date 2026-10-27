@@ -2,7 +2,9 @@
 
 <!-- YAML
 changes:
-  - version: v26.10.0
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -122,15 +124,15 @@ WICG proposal:
 
 Algorithms:
 
-* `'AES-OCB'`[^openssl30]
+* `'AES-OCB'`[^noboringssl]
 * `'Argon2d'`[^openssl32]
 * `'Argon2i'`[^openssl32]
 * `'Argon2id'`[^openssl32]
 * `'ChaCha20-Poly1305'`
 * `'cSHAKE128'`
 * `'cSHAKE256'`
-* `'KMAC128'`[^openssl30]
-* `'KMAC256'`[^openssl30]
+* `'KMAC128'`[^noboringssl]
+* `'KMAC256'`[^noboringssl]
 * `'KT128'`
 * `'KT256'`
 * `'ML-DSA-44'`[^openssl35]
@@ -1101,7 +1103,9 @@ The algorithms currently supported include:
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: v26.10.0
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -1170,7 +1174,9 @@ Derives the public key from a given private key.
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: v26.10.0
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version: v24.8.0
@@ -1240,7 +1246,9 @@ The {CryptoKey} (secret key) generating algorithms supported include:
 <!-- YAML
 added: v15.0.0
 changes:
-  - version: v26.10.0
+  - version:
+    - v26.10.0
+    - v24.22.0
     pr-url: https://github.com/nodejs/node/pull/65759
     description: Hybrid KEM algorithms are now supported.
   - version:
@@ -2768,7 +2776,7 @@ added:
 
 [^modern-algos]: See [Modern Algorithms in the Web Cryptography API][]
 
-[^openssl30]: Requires OpenSSL >= 3.0
+[^noboringssl]: Not available when Node.js is built against BoringSSL
 
 [^openssl32]: Requires OpenSSL >= 3.2
 

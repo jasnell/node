@@ -85,7 +85,7 @@ MaglevGraphOptimizer::GetDeoptFrameForLazyDeopt(bool can_throw) {
 }
 
 DeoptFrame* MaglevGraphOptimizer::GetDeoptFrameForEagerDeopt() {
-  CHECK(current_node()->properties().has_eager_deopt_info());
+  CHECK(CanEagerDeopt());
   DeoptFrame* frame = &current_node()->eager_deopt_info()->top_frame();
 
   auto* eager_scope = reducer_.current_eager_deopt_scope();
@@ -524,9 +524,12 @@ void MaglevGraphOptimizer::PreProcessNode(Node* node,
 }
 
 void MaglevGraphOptimizer::PostProcessNode(Node* node) {
-  if (node->opcode() != Opcode::kAllocationBlock &&
-      (node->properties().can_allocate() || node->properties().can_deopt() ||
-       node->properties().can_throw())) {
+  if (auto* allocation_block = node->TryCast<AllocationBlock>()) {
+    // This allocation is now the most recent young allocation, so it is the
+    // only block that subsequent allocations may be folded into.
+    reducer_.SetCurrentAllocationBlock(allocation_block);
+  } else if (node->properties().can_allocate() ||
+             node->properties().can_deopt() || node->properties().can_throw()) {
     reducer_.ClearCurrentAllocationBlock();
   }
 #ifdef DEBUG
@@ -685,11 +688,54 @@ ValueNode* MaglevGraphOptimizer::GetConstantWithRepresentation(
   }
 }
 
+namespace {
+
+// Returns the type check that `alt` is guaranteed to have already performed
+// on its tagged input node.
+NodeType GuaranteedInputType(UseRepresentation repr, ValueNode* alt) {
+  switch (repr) {
+    case UseRepresentation::kInt32:
+    case UseRepresentation::kFloat64:
+      return NodeType::kNumber;
+    case UseRepresentation::kHoleyFloat64:
+      return NodeType::kNumberOrUndefined;
+    // Unlike Int32/Float64, a Truncate node doesn't have a single fixed check,
+    // it depends on its assumed_input_type.
+    case UseRepresentation::kTruncatedInt32:
+      if (auto* t = alt->TryCast<TruncateCheckedNumberOrOddballToInt32>()) {
+        return t->assumed_input_type();
+      }
+      if (auto* t = alt->TryCast<TruncateUnsafeNumberOrOddballToInt32>()) {
+        return t->assumed_input_type();
+      }
+      return NodeType::kNumberOrOddball;
+    case UseRepresentation::kTagged:
+    case UseRepresentation::kTaggedForNumberToString:
+    case UseRepresentation::kUint32:
+    case UseRepresentation::kNonTruncated:
+      UNREACHABLE();
+  }
+  UNREACHABLE();
+}
+
+}  // namespace
+
+bool MaglevGraphOptimizer::CanReuseAlternative(
+    ValueNode* node, ValueNode* alt, UseRepresentation repr,
+    std::optional<NodeType> assumed_input_type) {
+  if (!assumed_input_type.has_value()) return true;
+  // We cannot replace a stricter check with a weaker one, as subsequent
+  // operations might rely on this node to deopt invalid inputs.
+  return reducer_.CheckType(node, *assumed_input_type) ||
+         NodeTypeIs(GuaranteedInputType(repr, alt), *assumed_input_type);
+}
+
 MaybeReduceResult MaglevGraphOptimizer::GetUntaggedValueWithRepresentation(
     ValueNode* node, UseRepresentation use_repr,
     std::optional<NodeType> assumed_input_type) {
   DCHECK_NE(use_repr, UseRepresentation::kTagged);
-  if (node->value_representation() == ValueRepresentationFromUse(use_repr)) {
+  if (node->value_representation() == ValueRepresentationFromUse(use_repr) &&
+      CanReuseAlternative(node, node, use_repr, assumed_input_type)) {
     return node;
   }
   if (node->Is<ReturnedValue>()) {
@@ -707,8 +753,11 @@ MaybeReduceResult MaglevGraphOptimizer::GetUntaggedValueWithRepresentation(
     // Check if we already have a canonical conversion.
     NodeInfo* node_info =
         known_node_aspects().GetOrCreateInfoFor(broker(), node);
-    auto& alternative = node_info->alternative();
-    if (ValueNode* alt = alternative.get(use_repr)) return alt;
+    if (ValueNode* alternative = node_info->alternative().get(use_repr);
+        alternative &&
+        CanReuseAlternative(node, alternative, use_repr, assumed_input_type)) {
+      return alternative;
+    }
     // If `node` is itself tagging an untagged value, convert that value
     // directly instead of untagging the tagged result.
     if (node->is_conversion()) {
@@ -720,8 +769,17 @@ MaybeReduceResult MaglevGraphOptimizer::GetUntaggedValueWithRepresentation(
   // TODO(victorgomes): The GetXXX functions may emit a conversion node that
   // might eager deopt. We need to find a correct eager deopt frame for them if
   // current_node_ does not have a deopt info.
-  if (!current_node_->properties().has_eager_deopt_info()) {
+  if (!CanEagerDeopt()) {
     return {};
+  }
+  if (node->is_holey_float64() && assumed_input_type.has_value() &&
+      NodeTypeIs(*assumed_input_type, NodeType::kNumberOrBoolean)) {
+    // HoleyFloat64 can hold the hole or undefined, whereas the replaced node
+    // checked that the input is a number (or boolean, which cannot occur in
+    // HoleyFloat64). Convert to Float64 first so CheckedHoleyFloat64ToFloat64
+    // preserves the check that subsequent operations may rely on.
+    GET_VALUE_OR_ABORT(
+        node, reducer_.GetFloat64ForToNumber(node, *assumed_input_type));
   }
   switch (use_repr) {
     case UseRepresentation::kInt32:
@@ -1423,9 +1481,9 @@ ProcessResult MaglevGraphOptimizer::VisitReduceInterruptBudgetForReturn(
   return ProcessResult::kContinue;
 }
 
-ProcessResult MaglevGraphOptimizer::VisitThrowReferenceErrorIfHole(
-    ThrowReferenceErrorIfHole* node, const ProcessingState& state) {
-  switch (node->ValueInput().node()->IsTheHole()) {
+ProcessResult MaglevGraphOptimizer::VisitThrowReferenceErrorIfTdzHole(
+    ThrowReferenceErrorIfTdzHole* node, const ProcessingState& state) {
+  switch (node->ValueInput().node()->IsTdzHole()) {
     case Tribool::kTrue: {
       return ThrowAndTruncate(Throw::kThrowAccessedUninitializedVariable,
                               reducer_.GetConstant(node->name()));
@@ -1439,9 +1497,9 @@ ProcessResult MaglevGraphOptimizer::VisitThrowReferenceErrorIfHole(
   UNREACHABLE();
 }
 
-ProcessResult MaglevGraphOptimizer::VisitThrowSuperNotCalledIfHole(
-    ThrowSuperNotCalledIfHole* node, const ProcessingState& state) {
-  switch (node->ValueInput().node()->IsTheHole()) {
+ProcessResult MaglevGraphOptimizer::VisitThrowSuperNotCalledIfTdzHole(
+    ThrowSuperNotCalledIfTdzHole* node, const ProcessingState& state) {
+  switch (node->ValueInput().node()->IsTdzHole()) {
     case Tribool::kTrue: {
       return ThrowAndTruncate(Throw::kThrowSuperNotCalled);
     }
@@ -1454,9 +1512,9 @@ ProcessResult MaglevGraphOptimizer::VisitThrowSuperNotCalledIfHole(
   return ProcessResult::kContinue;
 }
 
-ProcessResult MaglevGraphOptimizer::VisitThrowSuperAlreadyCalledIfNotHole(
-    ThrowSuperAlreadyCalledIfNotHole* node, const ProcessingState& state) {
-  switch (node->ValueInput().node()->IsTheHole()) {
+ProcessResult MaglevGraphOptimizer::VisitThrowSuperAlreadyCalledIfNotTdzHole(
+    ThrowSuperAlreadyCalledIfNotTdzHole* node, const ProcessingState& state) {
+  switch (node->ValueInput().node()->IsTdzHole()) {
     case Tribool::kTrue:
       // It is the hole; removing.
       return RemoveCurrentNode();
@@ -2950,7 +3008,31 @@ ProcessResult MaglevGraphOptimizer::VisitNumberToString(
 
 ProcessResult MaglevGraphOptimizer::VisitUpdateJSArrayLength(
     UpdateJSArrayLength* node, const ProcessingState& state) {
-  // TODO(b/424157317): Optimize.
+  ValueNode* length = node->LengthInput().node();
+  ValueNode* index = node->IndexInput().node();
+
+  if (auto result = reducer_.TryFoldInt32Condition(
+          AssertCondition::kUnsignedLessThan, index, length)) {
+    if (result.value()) {
+      return ReplaceWith(length);
+    }
+  }
+
+  const auto r_index = GetRange(index);
+  const auto r_length = GetRange(length);
+  if (r_index && r_length) {
+    if (const auto result = TryFoldCompareWithRanges(
+            AssertCondition::kUnsignedLessThan, *r_index, *r_length)) {
+      if (result.value()) {
+        return ReplaceWith(length);
+      }
+    }
+    if (r_index->IsUint32() && r_length->IsUint32() &&
+        IsRangeLessEqual(index, length)) {
+      return ReplaceWith(length);
+    }
+  }
+
   return ProcessResult::kContinue;
 }
 
@@ -3650,7 +3732,7 @@ ProcessResult MaglevGraphOptimizer::VisitBranchIfToBooleanTrue(
     // or a CheckNotHole before, which should have been constant-folded into
     // unconditional deopt/throw if their input is a hole.
     DCHECK_IMPLIES(node->input_node(0)->Is<HeapConstant>(),
-                   !node->input_node(0)->Cast<HeapConstant>()->IsTheHole());
+                   !node->input_node(0)->Cast<HeapConstant>()->IsAnyHole());
 
     bool condition =
         FromConstantToBool(reducer_.local_isolate(), node->input_node(0));

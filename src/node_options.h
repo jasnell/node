@@ -215,8 +215,9 @@ class EnvironmentOptions : public Options {
   DEFINE_BOOL_FIELD(experimental_websocket) = true;
   DEFINE_BOOL_FIELD(experimental_sqlite) = HAVE_SQLITE;
   DEFINE_BOOL_FIELD(experimental_stream_iter) = EXPERIMENTALS_DEFAULT_VALUE;
-  DEFINE_BOOL_FIELD(experimental_vfs) = EXPERIMENTALS_DEFAULT_VALUE;
+  DEFINE_BOOL_FIELD(experimental_vfs) = true;
   DEFINE_BOOL_FIELD(vfs_load) = false;
+  DEFINE_BOOL_FIELD(sea_vfs_archive) = false;
   DEFINE_BOOL_FIELD(webstorage) = HAVE_SQLITE;
   DEFINE_BOOL_FIELD(experimental_dtls) = EXPERIMENTALS_DEFAULT_VALUE;
   DEFINE_BOOL_FIELD(experimental_quic) = EXPERIMENTALS_DEFAULT_VALUE;
@@ -265,6 +266,7 @@ class EnvironmentOptions : public Options {
   DEFINE_BOOL_FIELD(test_randomize) = false;
   DEFINE_BOOL_FIELD(has_test_random_seed) = false;
   DEFINE_BOOL_FIELD(test_only) = false;
+  DEFINE_BOOL_FIELD(test_forbid_only) = false;
   DEFINE_BOOL_FIELD(test_udp_no_try_send) = false;
   DEFINE_BOOL_FIELD(coverage_include_all) = false;
   DEFINE_BOOL_FIELD(throw_deprecation) = false;
@@ -297,6 +299,8 @@ class EnvironmentOptions : public Options {
   DEFINE_BOOL_FIELD(tls_max_v1_2) = false;
   DEFINE_BOOL_FIELD(tls_max_v1_3) = false;
   DEFINE_BOOL_FIELD(strip_types) = HAVE_AMARO;
+  DEFINE_BOOL_FIELD(experimental_strip_private_modules) =
+      EXPERIMENTALS_DEFAULT_VALUE;
   DEFINE_BOOL_FIELD(report_exclude_env) = false;
   DEFINE_BOOL_FIELD(report_exclude_network) = false;
 #if HAVE_INSPECTOR
@@ -441,7 +445,7 @@ class PerProcessOptions : public Options {
   DEFINE_BOOL_FIELD(force_fips_crypto) = false;
   std::string force_fips_crypto_policy = "provider";
 #endif  // HAVE_OPENSSL
-#if OPENSSL_VERSION_MAJOR >= 3
+#if HAVE_OPENSSL && !defined(OPENSSL_IS_BORINGSSL)
   DEFINE_BOOL_FIELD(openssl_legacy_provider) = false;
   DEFINE_BOOL_FIELD(openssl_shared_config) = false;
 #endif

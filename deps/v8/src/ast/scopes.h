@@ -121,10 +121,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   // to REPL_GLOBAL. Should only be called on REPL scripts.
   void RewriteReplGlobalVariables();
 
-  // Mark all unresolved variables added after taking the snapshot as inside a
-  // try/catch.
-  void MarkUnresolvedVariablesAsInsideTryCatch();
-
   class Snapshot final {
    public:
     inline explicit Snapshot(Scope* scope);
@@ -145,9 +141,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
     }
 
     void Reparent(DeclarationScope* new_parent);
-    // Mark all unresolved variables added after taking the snapshot as inside a
-    // try/catch.
-    void MarkUnresolvedVariablesAsInsideTryCatch();
 
    private:
     Scope* outer_scope_;
@@ -580,12 +573,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   DeclarationScope* GetClosureScope();
   const DeclarationScope* GetClosureScope() const;
 
-  // Returns the function kind of the closure scope, even if the scope is fully
-  // deserialized and its closure scope isn't available.
-  FunctionKind scope_closure_function_kind() const;
-
-  bool HasOuterGenerator() const;
-
   // Returns true if this scope is an outer scope of the given scope, up to
   // and including the closure scope of the given scope.
   bool IsOuterScopeUpToClosureScopeOf(Scope* scope) const;
@@ -814,8 +801,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
                                     bool force_context_allocation = false);
   static void ResolvePreparsedVariable(VariableProxy* proxy, Scope* scope,
                                        Scope* end);
-  static void UpdateVariableMaybeAssigned(Variable* var, VariableProxy* proxy,
-                                          Scope* current_scope);
   void ResolveTo(VariableProxy* proxy, Variable* var, int access_position);
   void ResolveVariable(VariableProxy* proxy);
   V8_WARN_UNUSED_RESULT bool ResolveVariablesRecursively(Scope* end);
@@ -846,8 +831,7 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   template <typename IsolateT>
   void AllocateScopeInfosRecursively(
       IsolateT* isolate, MaybeHandle<ScopeInfo> outer_scope,
-      std::unordered_map<int, IndirectHandle<ScopeInfo>>& scope_infos_to_reuse,
-      FunctionKind closure_function_kind);
+      std::unordered_map<int, IndirectHandle<ScopeInfo>>& scope_infos_to_reuse);
 
   // Construct a scope based on the scope info.
   Scope(Zone* zone, ScopeType type, AstValueFactory* ast_value_factory,
@@ -1403,6 +1387,13 @@ class V8_EXPORT_PRIVATE DeclarationScope : public Scope {
     return ClassScopeHasPrivateBrandField::decode(flags_);
   }
 
+  bool class_initializer_allows_await() const {
+    return ClassInitializerAllowsAwaitField::decode(flags_);
+  }
+  void set_class_initializer_allows_await(bool value) {
+    flags_ = ClassInitializerAllowsAwaitField::update(flags_, value);
+  }
+
  private:
   V8_INLINE void AllocateParameter(Variable* var, int index);
 
@@ -1446,6 +1437,8 @@ class V8_EXPORT_PRIVATE DeclarationScope : public Scope {
       HasThisDeclarationField::Next<bool, 1>;
   using ClassScopeHasPrivateBrandField =
       NeedsPrivateNameContextChainRecalcField::Next<bool, 1>;
+  using ClassInitializerAllowsAwaitField =
+      ClassScopeHasPrivateBrandField::Next<bool, 1>;
 
 #if DEBUG
   bool is_being_lazily_parsed_;

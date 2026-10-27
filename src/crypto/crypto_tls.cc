@@ -73,36 +73,6 @@ namespace crypto {
 
 namespace {
 
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(4, 1)
-int VerifyCertChain(X509_STORE_CTX* ctx, void*) {
-  X509_VERIFY_PARAM* param = X509_STORE_CTX_get0_param(ctx);
-  const unsigned int flags = X509_VERIFY_PARAM_get_hostflags(param);
-  if (!(flags & (X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT |
-                 X509_CHECK_FLAG_NEVER_CHECK_SUBJECT))) {
-    // tls.checkServerIdentity() falls back to the CN when no DNS SAN exists.
-    // OpenSSL 4.1 requires this flag to apply name constraints to that CN.
-    ncrypto::DeleteFnPtr<GENERAL_NAMES, GENERAL_NAMES_free> names(
-        static_cast<GENERAL_NAMES*>(
-            X509_get_ext_d2i(X509_STORE_CTX_get0_cert(ctx),
-                             NID_subject_alt_name,
-                             nullptr,
-                             nullptr)));
-    bool has_dns_san = false;
-    for (int i = 0; names && i < sk_GENERAL_NAME_num(names.get()); i++) {
-      if (sk_GENERAL_NAME_value(names.get(), i)->type == GEN_DNS) {
-        has_dns_san = true;
-        break;
-      }
-    }
-    if (!has_dns_san) {
-      X509_VERIFY_PARAM_set_hostflags(
-          param, flags | X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT);
-    }
-  }
-  return X509_verify_cert(ctx) > 0 ? 1 : 0;
-}
-#endif
-
 // Our custom implementation of the certificate verify callback
 // used when establishing a TLS handshake. Because we cannot perform
 // I/O quickly enough with X509_STORE_CTX_ APIs in this callback,
@@ -111,7 +81,7 @@ int VerifyCertChain(X509_STORE_CTX* ctx, void*) {
 // that the user user Connection::VerifyError after the `secure`
 // callback has been made.
 int VerifyCallback(int preverify_ok, X509_STORE_CTX* ctx) {
-  // From https://www.openssl.org/docs/man1.1.1/man3/SSL_verify_cb:
+  // From https://www.openssl.org/docs/man3.0/man3/SSL_verify_cb:
   //
   //   If VerifyCallback returns 1, the verification process is continued. If
   //   VerifyCallback always returns 1, the TLS/SSL handshake will not be
@@ -360,9 +330,10 @@ int TLSExtStatusCallback(SSL* s, void* arg) {
 void ConfigureSecureContext(SecureContext* sc) {
   // OCSP stapling
   sc->ctx().setStatusCallback(TLSExtStatusCallback);
-#if !defined(OPENSSL_IS_BORINGSSL) && OPENSSL_VERSION_PREREQ(4, 1)
-  SSL_CTX_set_cert_verify_callback(sc->ctx().get(), VerifyCertChain, nullptr);
-#endif
+  // The cert-verify callback (SPKI blocklist and the OpenSSL 4.1 CN name
+  // constraint handling) is installed once per SSL_CTX in
+  // SecureContext::Init, so that it also covers contexts created without a
+  // TLSWrap.
 }
 
 inline bool Set(
@@ -573,9 +544,9 @@ void TLSWrap::InitSSL() {
   SSL_set_mode(ssl_.get(), SSL_MODE_RELEASE_BUFFERS);
 #endif  // SSL_MODE_RELEASE_BUFFERS
 
-  // This is default in 1.1.1, but set it anyway, Cycle() doesn't currently
-  // re-call ClearIn() if SSL_read() returns SSL_ERROR_WANT_READ, so data can be
-  // left sitting in the incoming enc_in_ and never get processed.
+  // Set SSL_MODE_AUTO_RETRY explicitly because Cycle() doesn't currently
+  // re-call ClearIn() if SSL_read() returns SSL_ERROR_WANT_READ, so data can
+  // be left sitting in the incoming enc_in_ and never get processed.
   // - https://wiki.openssl.org/index.php/TLS1.3#Non-application_data_records
   SSL_set_mode(ssl_.get(), SSL_MODE_AUTO_RETRY);
 
@@ -707,8 +678,8 @@ void TLSWrap::SSLInfoCallback(const SSL* ssl_, int where, int ret) {
     }
   }
 
-  // SSL_CB_HANDSHAKE_START and SSL_CB_HANDSHAKE_DONE are called
-  // sending HelloRequest in OpenSSL-1.1.1.
+  // SSL_CB_HANDSHAKE_START and SSL_CB_HANDSHAKE_DONE are called when sending
+  // HelloRequest.
   // We need to check whether this is in a renegotiation state or not.
   if (where & SSL_CB_HANDSHAKE_DONE && !SSL_renegotiate_pending(ssl)) {
     Debug(c, "SSLInfoCallback(SSL_CB_HANDSHAKE_DONE);");
@@ -880,20 +851,14 @@ void TLSWrap::ClearOut() {
   MarkPopErrorOnReturn mark_pop_error_on_return;
 
   char out[kClearOutChunkSize];
+  int length = 0;
   int read;
-  for (;;) {
-    {
-      SSLLibraryCallScope ssl_library_call_scope(this);
-      read = SSL_read(ssl_.get(), out, sizeof(out));
-    }
-    Debug(this, "Read %d bytes of cleartext output", read);
 
-    if (read <= 0)
-      break;
-
+  // Emits out[0, length). Returns false if JS destroyed the SSL context.
+  auto emit = [&]() {
     char* current = out;
-    while (read > 0) {
-      int avail = read;
+    while (length > 0) {
+      int avail = length;
 
       uv_buf_t buf = EmitAlloc(avail);
       if (static_cast<int>(buf.len) < avail)
@@ -906,12 +871,44 @@ void TLSWrap::ClearOut() {
       // check that ssl_ != nullptr afterwards.
       if (ssl_ == nullptr) {
         Debug(this, "Returning from read loop, ssl_ == nullptr");
-        return;
+        return false;
       }
 
-      read -= avail;
+      length -= avail;
       current += avail;
     }
+    return true;
+  };
+
+  for (;;) {
+    {
+      SSLLibraryCallScope ssl_library_call_scope(this);
+      read = SSL_read(ssl_.get(), out + length, kClearOutChunkSize - length);
+    }
+    Debug(this, "Read %d bytes of cleartext output", read);
+
+    if (read <= 0) break;
+    length += read;
+
+    // SSL_read() returns at most one record. If the next record is already
+    // buffered, decrypt it into the same chunk instead of emitting one read
+    // per record. This is limited to application data records that are too
+    // long to be empty: other record types can trigger callbacks, e.g. for
+    // renegotiation, that have to run after the preceding data has been
+    // emitted, and SSL_read() skips over empty records to whatever follows.
+    // With read-ahead disabled, enc_in_ is at a record boundary after a
+    // successful read. The header need not be followed by a complete record:
+    // SSL_read() can return WANT_READ, and the path below emits the batch.
+    size_t pending;
+    const unsigned char* next = reinterpret_cast<const unsigned char*>(
+        NodeBIO::FromBIO(enc_in_)->Peek(&pending));
+    if (length < kClearOutChunkSize && pending >= SSL3_RT_HEADER_LENGTH &&
+        next[0] == SSL3_RT_APPLICATION_DATA &&
+        (next[3] << 8 | next[4]) > SSL3_RT_MAX_ENCRYPTED_OVERHEAD) {
+      continue;
+    }
+
+    if (!emit()) return;
   }
 
   // We need to check whether an error occurred or the connection was
@@ -919,13 +916,15 @@ void TLSWrap::ClearOut() {
   // See node#1642 and SSL_read(3SSL) for details. SSL_get_error must be
   // called immediately after SSL_read, without calling into JS, which may
   // change OpenSSL's error queue, modify ssl_, or even destroy ssl_
-  // altogether.
+  // altogether. Data that was read before the failure is emitted once the
+  // error has been captured, before it is reported.
   if (read <= 0) {
     HandleScope handle_scope(env()->isolate());
     Local<Value> error;
     int err = SSL_get_error(ssl_.get(), read);
     switch (err) {
       case SSL_ERROR_ZERO_RETURN:
+        if (!emit()) return;
         if (!flags_.eof) {
           flags_.eof = true;
           EmitRead(UV_EOF);
@@ -952,9 +951,9 @@ void TLSWrap::ClearOut() {
             return;
 
           const char* ls = ERR_lib_error_string(ssl_err);
-#if NCRYPTO_USE_OPENSSL3_PROVIDER
+#if NCRYPTO_USE_OPENSSL_PROVIDER
           const char* fs = nullptr;
-#else
+#elif NCRYPTO_USE_BORINGSSL
           const char* fs = ERR_func_error_string(ssl_err);
 #endif
           const char* rs = ERR_reason_error_string(ssl_err);
@@ -975,7 +974,13 @@ void TLSWrap::ClearOut() {
         break;
 
       default:
+        emit();
         return;
+    }
+
+    if (!emit()) {
+      Debug(this, "Got SSL error (%d) but not calling onerror", err);
+      return;
     }
 
     Debug(this, "Got SSL error (%d), calling onerror", err);
